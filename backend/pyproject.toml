@@ -1,0 +1,50 @@
+[tool.poetry]
+name = "libretiles-backend"
+version = "0.1.0"
+description = "Libre Tiles — Django backend for a web-based Scrabble game with AI opponents via Vercel AI Gateway."
+authors = ["Libre Tiles Contributors"]
+readme = "../README.md"
+packages = [{ include = "config" }, { include = "gamecore" }, { include = "game" }, { include = "accounts" }, { include = "catalog" }, { include = "billing" }]
+
+[tool.poetry.dependencies]
+python = ">=3.11,<3.14"
+django = "^5.1"
+djangorestframework = "^3.15"
+djangorestframework-simplejwt = "^5.3"
+django-cors-headers = "^4.4"
+psycopg = { version = "^3.2", extras = ["binary"] }
+httpx = ">=0.27.0,<1.0.0"
+python-dotenv = "^1.0.1"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.2.0"
+pytest-django = "^4.8"
+pytest-asyncio = "^1.2.0"
+ruff = "^0.5.0"
+mypy = "^1.10.0"
+django-stubs = "^5.0"
+djangorestframework-stubs = "^3.15"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+plugins = ["mypy_django_plugin.main", "mypy_drf_plugin.main"]
+
+[tool.django-stubs]
+django_settings_module = "config.settings"
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.settings"
+addopts = "-q"
+asyncio_mode = "auto"
+markers = [
+    "internet: tests requiring live API calls",
+]
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"

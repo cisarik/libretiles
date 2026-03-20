@@ -1,0 +1,81 @@
+# =============================================================================
+# Libre Tiles — .gitignore
+# =============================================================================
+# This directory is published as a standalone Git repo (not tied to scrabgpt_sk).
+# =============================================================================
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+*.whl
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# ---- Django ----
+*.sqlite3
+backend/staticfiles/
+backend/media/
+
+# ---- Environment variables (NEVER commit secrets) ----
+.env
+.env.local
+.env.production
+.env.*.local
+backend/.env
+frontend/.env.local
+# .env.example and .env.local.example ARE committed (templates)
+
+# ---- IDE ----
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.cursor/
+
+# ---- OS ----
+.DS_Store
+Thumbs.db
+
+# ---- Node / Next.js ----
+node_modules/
+.next/
+out/
+.turbo/
+*.tsbuildinfo
+next-env.d.ts
+
+# ---- Package managers ----
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+
+# ---- Testing / QA ----
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+coverage/
+
+# ---- Docker ----
+docker-compose.override.yml
+
+# ---- Vercel ----
+.vercel/
+
+# ---- Misc ----
+*.log
+*.bak
+*.tmp
