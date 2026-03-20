@@ -5,6 +5,9 @@ import { useParams, useRouter } from "next/navigation";
 import {
   DndContext,
   DragEndEvent,
+  DragOverlay,
+  DragOverEvent,
+  DragStartEvent,
   PointerSensor,
   TouchSensor,
   useSensor,
@@ -22,6 +25,18 @@ import { AIThinkingOverlay } from "@/components/game/AIThinkingOverlay";
 import { useGameStore } from "@/hooks/useGameStore";
 import { api } from "@/lib/api";
 import type { GameState, MoveResult, AICandidate } from "@/lib/types";
+import { Tile } from "@/components/tiles/Tile";
+
+type RackDragData = {
+  letter: string;
+  index: number;
+  origin: "rack";
+};
+
+type DragPreviewTarget = {
+  row: number;
+  col: number;
+};
 
 async function consumeAIStream(
   response: Response,
@@ -311,11 +326,13 @@ export default function GamePage() {
   const [aiApproved, setAiApproved] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
+  const [activeDragTile, setActiveDragTile] = useState<RackDragData | null>(null);
+  const [dragPreviewTarget, setDragPreviewTarget] = useState<DragPreviewTarget | null>(null);
 
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
     useSensor(TouchSensor, {
-      activationConstraint: { delay: 150, tolerance: 5 },
+      activationConstraint: { delay: 90, tolerance: 10 },
     }),
   );
 
@@ -479,16 +496,55 @@ export default function GamePage() {
     }
   }, [aiApproved, gameState, aiThinking, triggerAIMove]);
 
+  const clearDragState = useCallback(() => {
+    setActiveDragTile(null);
+    setDragPreviewTarget(null);
+  }, []);
+
+  const getValidPreviewTarget = useCallback((row: number, col: number) => {
+    const boardLetter = gameState?.board?.[row]?.[col];
+    if (boardLetter && boardLetter !== ".") return null;
+    if (pendingTiles.some((t) => t.row === row && t.col === col)) return null;
+    return { row, col };
+  }, [gameState, pendingTiles]);
+
+  const handleDragStart = useCallback((event: DragStartEvent) => {
+    const activeData = event.active.data.current as RackDragData | undefined;
+    if (!activeData || activeData.origin !== "rack") {
+      clearDragState();
+      return;
+    }
+
+    setActiveDragTile(activeData);
+  }, [clearDragState]);
+
+  const handleDragOver = useCallback((event: DragOverEvent) => {
+    if (!activeDragTile) return;
+
+    const overData = event.over?.data.current as { row: number; col: number } | undefined;
+    if (!overData) {
+      setDragPreviewTarget(null);
+      return;
+    }
+
+    setDragPreviewTarget(getValidPreviewTarget(overData.row, overData.col));
+  }, [activeDragTile, getValidPreviewTarget]);
+
+  const handleDragCancel = useCallback(() => {
+    clearDragState();
+  }, [clearDragState]);
+
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
+    const activeData = active.data.current as RackDragData | undefined;
+
+    clearDragState();
     if (!over) return;
+
     const overData = over.data.current as { row: number; col: number } | undefined;
-    const activeData = active.data.current as { letter: string; index: number; origin: string } | undefined;
     if (!overData || !activeData || activeData.origin !== "rack") return;
     const { row, col } = overData;
-    const boardLetter = gameState?.board?.[row]?.[col];
-    if (boardLetter && boardLetter !== ".") return;
-    if (pendingTiles.some((t) => t.row === row && t.col === col)) return;
+    if (!getValidPreviewTarget(row, col)) return;
 
     if (activeData.letter === "?") {
       openBlankPicker(row, col, activeData.index);
@@ -599,6 +655,13 @@ export default function GamePage() {
   const isMyTurn = gameState?.current_turn_slot === 0;
   const isAITurn = gameState?.current_turn_slot === 1 && !gameState?.game_over;
   const showAIPrompt = isAITurn && !aiApproved && !aiThinking;
+  const boardDragPreview = activeDragTile && dragPreviewTarget
+    ? {
+        ...dragPreviewTarget,
+        letter: activeDragTile.letter,
+        isBlank: activeDragTile.letter === "?",
+      }
+    : null;
 
   if (!token) {
     return (
@@ -615,7 +678,13 @@ export default function GamePage() {
   }
 
   return (
-    <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
+    <DndContext
+      sensors={sensors}
+      onDragStart={handleDragStart}
+      onDragOver={handleDragOver}
+      onDragCancel={handleDragCancel}
+      onDragEnd={handleDragEnd}
+    >
       <div className="min-h-screen bg-gradient-to-br from-stone-950 via-stone-900 to-stone-950 text-stone-100">
         <div className="max-w-2xl mx-auto px-4 py-4 flex flex-col gap-3">
           {/* Header */}
@@ -635,7 +704,10 @@ export default function GamePage() {
           </div>
 
           <ScorePanel />
-          <Board />
+          <Board
+            dragPreview={boardDragPreview}
+            isDraggingTile={!!activeDragTile}
+          />
           <TileRack />
 
           {/* AI Turn prompt */}
@@ -703,6 +775,18 @@ export default function GamePage() {
 
       <AIThinkingOverlay />
       <BlankPicker onSelect={handleBlankSelect} />
+      <DragOverlay>
+        {activeDragTile ? (
+          <div className="pointer-events-none -translate-y-4 scale-[1.04] drop-shadow-2xl">
+            <Tile
+              letter={activeDragTile.letter}
+              isBlank={activeDragTile.letter === "?"}
+              isDragging
+              size="lg"
+            />
+          </div>
+        ) : null}
+      </DragOverlay>
 
       {/* Toast overlays */}
       <AnimatePresence>

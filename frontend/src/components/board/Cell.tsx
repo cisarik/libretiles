@@ -2,7 +2,7 @@
 
 import { useDroppable } from "@dnd-kit/core";
 import { motion } from "framer-motion";
-import { PREMIUM_BOARD, PREMIUM_COLORS, PREMIUM_LABELS } from "@/lib/constants";
+import { PREMIUM_BOARD, PREMIUM_LABELS } from "@/lib/constants";
 import { Tile } from "@/components/tiles/Tile";
 
 interface CellProps {
@@ -12,6 +12,8 @@ interface CellProps {
   isBlank: boolean;
   isPending: boolean;
   isLastMove: boolean;
+  dragPreviewLetter: string | null;
+  dragPreviewIsBlank: boolean;
   onCellClick: (row: number, col: number) => void;
 }
 
@@ -22,14 +24,16 @@ export function Cell({
   isBlank,
   isPending,
   isLastMove,
+  dragPreviewLetter,
+  dragPreviewIsBlank,
   onCellClick,
 }: CellProps) {
   const premium = PREMIUM_BOARD[row][col];
-  const colors = PREMIUM_COLORS[premium];
   const label = PREMIUM_LABELS[premium];
   const isCenter = row === 7 && col === 7;
+  const isPreviewTarget = !letter && !!dragPreviewLetter;
 
-  const { setNodeRef, isOver } = useDroppable({
+  const { setNodeRef } = useDroppable({
     id: `cell-${row}-${col}`,
     data: { row, col },
   });
@@ -37,18 +41,19 @@ export function Cell({
   return (
     <div
       ref={setNodeRef}
+      data-premium={premium || undefined}
       onClick={() => onCellClick(row, col)}
-      className={`
-        relative flex items-center justify-center aspect-square
-        border border-stone-700/30 rounded-sm transition-colors duration-150
-        ${!letter ? colors.bg : ""}
-        ${isOver && !letter ? "bg-amber-400/30 ring-1 ring-amber-400" : ""}
-        ${isLastMove && letter ? "ring-1 ring-emerald-400/50" : ""}
-        ${!letter && !premium ? "bg-stone-800/40" : ""}
-      `}
+      className={[
+        "board-cell",
+        premium ? "" : "board-cell--plain",
+        letter ? "board-cell--occupied" : "board-cell--empty",
+        isPreviewTarget ? "board-cell--preview-target" : "",
+        isLastMove && letter ? "board-cell--last-move" : "",
+      ].filter(Boolean).join(" ")}
     >
       {letter ? (
         <motion.div
+          className="board-cell__content"
           initial={isPending ? { scale: 0, rotate: -10 } : false}
           animate={{ scale: 1, rotate: 0 }}
           transition={{ type: "spring", stiffness: 500, damping: 30 }}
@@ -60,12 +65,25 @@ export function Cell({
             size="sm"
           />
         </motion.div>
+      ) : dragPreviewLetter ? (
+        <motion.div
+          className="board-cell__drag-preview"
+          initial={{ opacity: 0, scale: 0.72, y: 5 }}
+          animate={{ opacity: 1, scale: 0.96, y: 0 }}
+          transition={{ type: "spring", stiffness: 420, damping: 28 }}
+        >
+          <Tile
+            letter={dragPreviewLetter}
+            isBlank={dragPreviewIsBlank}
+            size="sm"
+          />
+        </motion.div>
       ) : label ? (
-        <span className={`text-[0.5rem] font-semibold ${colors.text} opacity-70`}>
+        <span className="board-cell__label">
           {label}
         </span>
       ) : isCenter ? (
-        <span className="text-lg opacity-30">★</span>
+        <span className="board-cell__star">★</span>
       ) : null}
     </div>
   );

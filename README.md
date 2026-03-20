@@ -93,14 +93,25 @@ Then set `DB_ENGINE=postgresql` in `backend/.env` and re-run `migrate`.
 ### Startup Scripts (recommended)
 
 ```bash
-# Start everything with one command (both backend + frontend):
+# Start everything in detached dev mode (both backend + frontend):
 cd libretiles
-./scripts/start-all.sh
+./scripts/libretiles.sh
 
-# Or start separately:
+# Check status / logs / restart / stop:
+./scripts/libretiles.sh status
+./scripts/libretiles.sh logs
+./scripts/libretiles.sh restart
+./scripts/libretiles.sh stop
+
+# Shortcut for restart:
+./scripts/reload.sh
+
+# Or run services separately in foreground:
 ./scripts/start-backend.sh   # Terminal 1
 ./scripts/start-frontend.sh  # Terminal 2
 ```
+
+`libretiles.sh` keeps PID and log files under `./.dev/`, adopts already-running Libre Tiles dev processes on ports `8000` and `3000`, and prevents accidental double-starts that leave ports busy.
 
 The scripts handle `.env` creation, dependency installation, migrations, and model seeding automatically.
 

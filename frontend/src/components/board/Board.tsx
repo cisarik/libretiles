@@ -1,13 +1,30 @@
 "use client";
 
+import { useRef } from "react";
 import { BOARD_SIZE } from "@/lib/constants";
 import { Cell } from "./Cell";
 import { useGameStore } from "@/hooks/useGameStore";
+import { usePremiumBoardLighting } from "@/hooks/usePremiumBoardLighting";
 
-export function Board() {
+interface BoardDragPreview {
+  row: number;
+  col: number;
+  letter: string;
+  isBlank: boolean;
+}
+
+interface BoardProps {
+  dragPreview: BoardDragPreview | null;
+  isDraggingTile: boolean;
+}
+
+export function Board({ dragPreview, isDraggingTile }: BoardProps) {
   const gameState = useGameStore((s) => s.gameState);
   const pendingTiles = useGameStore((s) => s.pendingTiles);
   const removePendingTile = useGameStore((s) => s.removePendingTile);
+  const boardRef = useRef<HTMLDivElement | null>(null);
+
+  usePremiumBoardLighting(boardRef, isDraggingTile);
 
   const grid = gameState?.board ?? Array(BOARD_SIZE).fill(".".repeat(BOARD_SIZE));
   const blanks = new Set(
@@ -27,9 +44,13 @@ export function Board() {
   };
 
   return (
-    <div className="relative p-2 bg-stone-900/60 backdrop-blur-sm rounded-xl shadow-2xl shadow-black/50">
+    <div
+      ref={boardRef}
+      data-dragging={isDraggingTile ? "true" : "false"}
+      className="premium-board-shell relative p-2"
+    >
       <div
-        className="grid gap-[1px]"
+        className="premium-board-grid grid gap-[1px]"
         style={{
           gridTemplateColumns: `repeat(${BOARD_SIZE}, 1fr)`,
           aspectRatio: "1",
@@ -45,6 +66,11 @@ export function Board() {
               : boardLetter !== "."
                 ? boardLetter
                 : null;
+            const showDragPreview =
+              dragPreview?.row === row &&
+              dragPreview?.col === col &&
+              !letter &&
+              !pending;
 
             return (
               <Cell
@@ -55,6 +81,8 @@ export function Board() {
                 isBlank={pending ? pending.letter === "?" : blanks.has(key)}
                 isPending={!!pending}
                 isLastMove={false}
+                dragPreviewLetter={showDragPreview ? dragPreview.letter : null}
+                dragPreviewIsBlank={showDragPreview ? dragPreview.isBlank : false}
                 onCellClick={handleCellClick}
               />
             );

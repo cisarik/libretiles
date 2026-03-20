@@ -34,7 +34,8 @@ function DraggableTile({
       exit={{ scale: 0, y: -20 }}
       transition={{ type: "spring", stiffness: 400, damping: 25, delay: index * 0.05 }}
       onClick={isExchangeMode ? onSelect : undefined}
-      className={isDragging ? "opacity-30" : ""}
+      className={isDragging ? "opacity-0" : ""}
+      style={{ touchAction: isExchangeMode ? "auto" : "none" }}
     >
       <Tile
         letter={letter}

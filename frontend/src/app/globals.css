@@ -24,3 +24,312 @@ body {
   color: var(--foreground);
   font-family: var(--font-sans);
 }
+
+.premium-board-shell {
+  --board-light-x: 50%;
+  --board-light-y: 50%;
+  --board-sheen-angle: 140deg;
+  --board-glow-strength: 0.34;
+  --board-light-core-size: 42%;
+  --board-light-field-size: 78%;
+  --board-premium-field-size: 70%;
+  --board-shadow-x: 0px;
+  --board-shadow-y: 18px;
+  --board-ambient-x: 0px;
+  --board-ambient-y: 0px;
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  contain: paint;
+  border-radius: 1.35rem;
+  border: 1px solid rgba(111, 83, 49, 0.42);
+  background:
+    radial-gradient(circle at var(--board-light-x) var(--board-light-y), rgba(255, 255, 255, 0.05), transparent var(--board-light-field-size)),
+    linear-gradient(180deg, rgba(24, 16, 10, 0.1), rgba(9, 6, 4, 0.18)),
+    url("/drevo.jpeg");
+  background-position: center;
+  background-size: auto, auto, 150% 150%;
+  box-shadow:
+    0 24px 60px rgba(0, 0, 0, 0.46),
+    var(--board-shadow-x) var(--board-shadow-y) 34px rgba(0, 0, 0, 0.24),
+    inset 0 1px 0 rgba(255, 239, 213, 0.08),
+    inset 0 -1px 0 rgba(58, 37, 17, 0.34);
+  transform: translateZ(0);
+}
+
+.premium-board-shell::before,
+.premium-board-shell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.premium-board-shell::before {
+  inset: -12%;
+  z-index: 0;
+  background:
+    radial-gradient(circle at var(--board-light-x) var(--board-light-y), rgba(255, 255, 255, calc(0.03 + var(--board-glow-strength) * 0.04)), transparent var(--board-light-core-size)),
+    conic-gradient(
+      from calc(var(--board-sheen-angle) - 34deg) at 50% 50%,
+      rgba(255, 255, 255, 0.02),
+      transparent 22%,
+      rgba(255, 255, 255, 0.05),
+      transparent 72%,
+      rgba(255, 255, 255, 0.02)
+    );
+  opacity: 0.7;
+  transform: translate3d(var(--board-ambient-x), var(--board-ambient-y), 0);
+  animation: premium-board-ambient 18s ease-in-out infinite alternate;
+}
+
+.premium-board-shell::after {
+  z-index: 0;
+  background:
+    linear-gradient(
+      var(--board-sheen-angle),
+      rgba(255, 255, 255, 0.05),
+      transparent 20%,
+      transparent 64%,
+      rgba(0, 0, 0, 0.12)
+    ),
+    radial-gradient(circle at 50% 50%, transparent 56%, rgba(0, 0, 0, 0.24) 100%);
+  opacity: 0.5;
+}
+
+.premium-board-grid {
+  position: relative;
+  z-index: 1;
+}
+
+.premium-board-shell[data-dragging="true"]::before,
+.premium-board-shell[data-dragging="true"]::after {
+  animation: none;
+  opacity: 0;
+}
+
+.premium-board-shell[data-dragging="true"] .board-cell::before,
+.premium-board-shell[data-dragging="true"] .board-cell::after {
+  opacity: 0;
+}
+
+.premium-board-shell[data-dragging="true"] .board-cell--preview-target {
+  border-color: rgba(255, 255, 255, 0.08);
+  box-shadow: none;
+}
+
+.premium-board-shell[data-dragging="true"] .board-cell__drag-preview {
+  filter: none;
+}
+
+.board-cell {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 1 / 1;
+  overflow: hidden;
+  border-radius: 0.3rem;
+  border: 1px solid rgba(68, 64, 60, 0.36);
+  background:
+    linear-gradient(165deg, rgba(255, 255, 255, 0.018), rgba(0, 0, 0, 0.16)),
+    rgba(41, 37, 36, 0.52);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.015);
+  contain: paint;
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease,
+    background-color 120ms ease,
+    opacity 100ms linear;
+}
+
+.board-cell::before,
+.board-cell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  transition: opacity 100ms linear;
+}
+
+.board-cell > * {
+  position: relative;
+  z-index: 1;
+}
+
+.board-cell--plain::after {
+  background:
+    radial-gradient(circle at var(--board-light-x) var(--board-light-y), rgba(255, 255, 255, 0.024), transparent calc(var(--board-light-field-size) - 10%));
+  opacity: calc(0.08 + var(--board-glow-strength) * 0.04);
+}
+
+.board-cell--plain {
+  border-color: rgba(112, 83, 51, 0.24);
+  background:
+    linear-gradient(180deg, rgba(22, 15, 10, 0.1), rgba(8, 5, 3, 0.18)),
+    linear-gradient(140deg, rgba(255, 245, 228, 0.02), transparent 44%, rgba(0, 0, 0, 0.08));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 245, 228, 0.06),
+    inset 0 -1px 0 rgba(60, 39, 18, 0.18);
+}
+
+.board-cell--plain::before {
+  background:
+    repeating-linear-gradient(
+      115deg,
+      rgba(255, 255, 255, 0.018) 0 1px,
+      transparent 1px 6px
+    ),
+    linear-gradient(
+      90deg,
+      rgba(0, 0, 0, 0.04),
+      transparent 24%,
+      transparent 76%,
+      rgba(255, 255, 255, 0.018)
+    );
+  opacity: 0.38;
+}
+
+.board-cell[data-premium] {
+  --premium-rgb: 255 255 255;
+  --premium-text: 255 255 255;
+  background:
+    linear-gradient(160deg, rgba(255, 255, 255, 0.05), rgba(0, 0, 0, 0.2) 74%),
+    rgb(var(--premium-rgb) / 0.16);
+  border-color: rgb(var(--premium-rgb) / 0.18);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.34),
+    0 0 8px rgb(var(--premium-rgb) / 0.045);
+}
+
+.board-cell[data-premium]::before {
+  background:
+    linear-gradient(
+      var(--board-sheen-angle),
+      rgba(255, 255, 255, 0.14),
+      rgba(255, 255, 255, 0.04) 24%,
+      transparent 58%,
+      rgba(0, 0, 0, 0.08) 100%
+    );
+  opacity: calc(0.16 + var(--board-glow-strength) * 0.08);
+}
+
+.board-cell[data-premium]::after {
+  background:
+    radial-gradient(circle at var(--board-light-x) var(--board-light-y), rgb(var(--premium-rgb) / 0.12), transparent var(--board-premium-field-size)),
+    radial-gradient(
+      circle at calc(100% - var(--board-light-x)) calc(100% - var(--board-light-y)),
+      rgba(0, 0, 0, 0.1),
+      transparent 66%
+    );
+  opacity: calc(0.14 + var(--board-glow-strength) * 0.06);
+}
+
+.board-cell[data-premium="TW"] {
+  --premium-rgb: 245 158 11;
+  --premium-text: 252 211 77;
+}
+
+.board-cell[data-premium="DW"] {
+  --premium-rgb: 244 63 94;
+  --premium-text: 253 164 175;
+}
+
+.board-cell[data-premium="TL"] {
+  --premium-rgb: 16 185 129;
+  --premium-text: 110 231 183;
+}
+
+.board-cell[data-premium="DL"] {
+  --premium-rgb: 14 165 233;
+  --premium-text: 125 211 252;
+}
+
+.board-cell--occupied[data-premium]::before {
+  opacity: calc(0.1 + var(--board-glow-strength) * 0.04);
+}
+
+.board-cell--occupied[data-premium]::after {
+  opacity: calc(0.08 + var(--board-glow-strength) * 0.04);
+}
+
+.board-cell--preview-target {
+  border-color: rgb(var(--premium-rgb, 251 191 36) / 0.2);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.04),
+    0 0 24px rgb(var(--premium-rgb, 251 191 36) / 0.16);
+}
+
+.board-cell--preview-target::before {
+  background:
+    radial-gradient(circle at var(--board-light-x) var(--board-light-y), rgba(255, 255, 255, 0.18), transparent 62%),
+    linear-gradient(
+      var(--board-sheen-angle),
+      rgb(var(--premium-rgb, 251 191 36) / 0.22),
+      transparent 56%
+    );
+  opacity: 0.9;
+}
+
+.board-cell--preview-target::after {
+  opacity: calc(0.32 + var(--board-glow-strength) * 0.12);
+}
+
+.board-cell__drag-preview {
+  position: relative;
+  z-index: 2;
+  pointer-events: none;
+  filter: drop-shadow(0 10px 16px rgba(0, 0, 0, 0.28));
+}
+
+.board-cell--last-move {
+  box-shadow:
+    inset 0 0 0 1px rgba(52, 211, 153, 0.65),
+    0 0 22px rgba(16, 185, 129, 0.18);
+}
+
+.board-cell__content {
+  position: relative;
+  z-index: 1;
+}
+
+.board-cell__label {
+  font-size: 0.52rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgb(var(--premium-text) / 0.98);
+  opacity: 0.88;
+  text-shadow:
+    0 1px 0 rgba(0, 0, 0, 0.28),
+    0 0 5px rgb(var(--premium-rgb) / 0.1);
+}
+
+.board-cell__star {
+  font-size: 1rem;
+  color: rgba(231, 229, 228, 0.45);
+  text-shadow: 0 0 12px rgba(255, 255, 255, 0.06);
+}
+
+@keyframes premium-board-ambient {
+  0% {
+    opacity: 0.62;
+  }
+
+  100% {
+    opacity: 0.76;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .premium-board-shell::before {
+    animation: none;
+  }
+
+  .board-cell::before,
+  .board-cell::after {
+    transition: opacity 180ms ease;
+  }
+}

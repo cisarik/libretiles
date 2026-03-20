@@ -33,7 +33,7 @@ This document is for **automated coding agents** and humans who continue develop
    npm run dev
    ```
 
-3. Or from the repo root: `./scripts/start-all.sh` (see [README.md](README.md)).
+3. Or from the repo root: `./scripts/libretiles.sh` (see [README.md](README.md)).
 
 ## Code quality
 
