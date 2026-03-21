@@ -9,8 +9,6 @@ import { usePremiumBoardLighting } from "@/hooks/usePremiumBoardLighting";
 interface BoardDragPreview {
   row: number;
   col: number;
-  letter: string;
-  isBlank: boolean;
 }
 
 interface BoardProps {
@@ -47,10 +45,10 @@ export function Board({ dragPreview, isDraggingTile }: BoardProps) {
     <div
       ref={boardRef}
       data-dragging={isDraggingTile ? "true" : "false"}
-      className="premium-board-shell relative p-2"
+      className="premium-board-shell relative p-2.5 sm:p-3"
     >
       <div
-        className="premium-board-grid grid gap-[1px]"
+        className="premium-board-grid grid gap-[2px]"
         style={{
           gridTemplateColumns: `repeat(${BOARD_SIZE}, 1fr)`,
           aspectRatio: "1",
@@ -81,8 +79,7 @@ export function Board({ dragPreview, isDraggingTile }: BoardProps) {
                 isBlank={pending ? pending.letter === "?" : blanks.has(key)}
                 isPending={!!pending}
                 isLastMove={false}
-                dragPreviewLetter={showDragPreview ? dragPreview.letter : null}
-                dragPreviewIsBlank={showDragPreview ? dragPreview.isBlank : false}
+                isPreviewTarget={showDragPreview}
                 onCellClick={handleCellClick}
               />
             );

@@ -93,6 +93,7 @@ class Move(models.Model):
         ("place", "Place tiles"),
         ("exchange", "Exchange tiles"),
         ("pass", "Pass turn"),
+        ("give_up", "Give up"),
     ]
 
     game = models.ForeignKey(GameSession, on_delete=models.CASCADE, related_name="moves")

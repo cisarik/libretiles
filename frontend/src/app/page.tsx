@@ -17,6 +17,11 @@ export default function Home() {
 
   const setToken = useGameStore((s) => s.setToken);
   const setStartingDraw = useGameStore((s) => s.setStartingDraw);
+  const setStartingRack = useGameStore((s) => s.setStartingRack);
+  const selectedModelId = useGameStore((s) => s.selectedModelId);
+  const setSelectedModelId = useGameStore((s) => s.setSelectedModelId);
+  const setCreditBalance = useGameStore((s) => s.setCreditBalance);
+  const resetGameUi = useGameStore((s) => s.resetGameUi);
 
   const handleAuth = async () => {
     setError("");
@@ -31,9 +36,34 @@ export default function Home() {
       }
       const { access } = await api.login({ username, password });
       setToken(access);
+      const profile = await api.me(access);
+      setCreditBalance(profile.credit_balance);
 
-      const result = (await api.createGame(access, { game_mode: "vs_ai" })) as CreateGameResponse;
+      const models = await api.getModels();
+      const fallbackModelId = models[0]?.model_id ?? null;
+      const preferredModelId = profile.preferred_ai_model_id || selectedModelId;
+      const resolvedSelection = models.some((model) => model.model_id === preferredModelId)
+        ? preferredModelId
+        : fallbackModelId;
+
+      if (!resolvedSelection) {
+        throw new Error("No active AI models are available.");
+      }
+
+      if (resolvedSelection !== selectedModelId) {
+        setSelectedModelId(resolvedSelection);
+      }
+
+      const result = (await api.createGame(access, {
+        game_mode: "vs_ai",
+        ai_model_model_id: resolvedSelection,
+      })) as CreateGameResponse;
+      if (result.ai_model_id) {
+        setSelectedModelId(result.ai_model_id);
+      }
+      resetGameUi();
       setStartingDraw(result.starting_draw);
+      setStartingRack(result.human_rack);
       router.push(`/draw/${result.game_id}`);
     } catch (err) {
       setError(

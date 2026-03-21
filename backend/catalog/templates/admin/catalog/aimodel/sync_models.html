@@ -1,0 +1,105 @@
+{% extends "admin/base_site.html" %}
+
+{% block extrastyle %}
+  {{ block.super }}
+  <style>
+    .sync-grid {
+      display: grid;
+      gap: 16px;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      margin: 20px 0 24px;
+    }
+    .sync-card,
+    .sync-panel {
+      background: var(--body-bg);
+      border: 1px solid var(--hairline-color);
+      border-radius: 16px;
+      padding: 18px 20px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+    }
+    .sync-card h3,
+    .sync-panel h2 {
+      margin: 0 0 6px;
+    }
+    .sync-stat {
+      font-size: 28px;
+      font-weight: 700;
+    }
+    .sync-actions {
+      display: flex;
+      gap: 12px;
+      margin-top: 18px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .sync-actions .button {
+      margin: 0;
+    }
+    .sync-checkbox {
+      display: inline-flex;
+      gap: 8px;
+      align-items: center;
+    }
+  </style>
+{% endblock %}
+
+{% block breadcrumbs %}
+  <div class="breadcrumbs">
+    <a href="{% url 'admin:index' %}">Home</a>
+    &rsaquo; <a href="{% url 'admin:app_list' app_label=opts.app_label %}">{{ opts.app_config.verbose_name }}</a>
+    &rsaquo; <a href="{{ changelist_url }}">AI models</a>
+    &rsaquo; Sync gateway models
+  </div>
+{% endblock %}
+
+{% block content %}
+  <div id="content-main">
+    <div class="sync-panel">
+      <h1>{{ title }}</h1>
+      <p>{{ subtitle }}</p>
+      <p>
+        Latest successful sync:
+        {% if latest_sync_at %}
+          <strong>{{ latest_sync_at }}</strong>
+        {% else %}
+          <strong>never</strong>
+        {% endif %}
+      </p>
+    </div>
+
+    <div class="sync-grid">
+      <div class="sync-card">
+        <h3>Total models</h3>
+        <div class="sync-stat">{{ stats.total_models }}</div>
+      </div>
+      <div class="sync-card">
+        <h3>Active</h3>
+        <div class="sync-stat">{{ stats.active_models }}</div>
+      </div>
+      <div class="sync-card">
+        <h3>Gateway available</h3>
+        <div class="sync-stat">{{ stats.gateway_available_models }}</div>
+      </div>
+      <div class="sync-card">
+        <h3>Gateway managed</h3>
+        <div class="sync-stat">{{ stats.gateway_managed_models }}</div>
+      </div>
+    </div>
+
+    <div class="sync-panel">
+      <h2>Run sync</h2>
+      <p>Fetch the latest Vercel AI Gateway catalog and update the Django model registry.</p>
+      <form method="post" action="{{ sync_url }}">
+        {% csrf_token %}
+        <label class="sync-checkbox" for="activate-new">
+          <input id="activate-new" type="checkbox" name="activate_new" value="1">
+          Activate newly discovered models immediately
+        </label>
+        <div class="sync-actions">
+          <button type="submit" class="button default">Sync now</button>
+          <a href="{{ changelist_url }}" class="button">Back to models</a>
+        </div>
+      </form>
+    </div>
+  </div>
+{% endblock %}

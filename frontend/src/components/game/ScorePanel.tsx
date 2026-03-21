@@ -34,7 +34,7 @@ export function ScorePanel() {
   const aiSlot = slots.find((s) => s.is_ai);
 
   return (
-    <div className="flex items-center justify-center gap-8 p-4 bg-stone-900/60 backdrop-blur-sm rounded-xl shadow-xl">
+    <div className="relative flex items-center justify-center gap-8 rounded-[1.4rem] border border-white/8 bg-stone-900/62 p-4 shadow-[0_20px_48px_rgba(0,0,0,0.22)] backdrop-blur-sm sm:gap-10 sm:p-5">
       <AnimatedScore
         score={humanSlot?.score ?? 0}
         label={humanSlot?.username ?? "You"}

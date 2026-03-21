@@ -136,10 +136,7 @@ export function AIThinkingOverlay() {
   const validSorted = [...aiCandidates]
     .filter((c) => c.valid)
     .sort((a, b) => b.score - a.score);
-
-  const invalidRecent = [...aiCandidates]
-    .filter((c) => !c.valid)
-    .slice(-2);
+  const rejectedCount = Math.max(aiCandidates.length - validSorted.length, 0);
 
   const bestCandidate = validSorted[0] ?? null;
 
@@ -213,18 +210,11 @@ export function AIThinkingOverlay() {
                     rank={i + 1}
                   />
                 ))}
-                {/* Recent invalid attempts (faded) */}
-                {invalidRecent.map((c, i) => (
-                  <WordCandidate
-                    key={`invalid-${c.word}-${c.score}-${i}`}
-                    word={c.word}
-                    score={c.score}
-                    valid={false}
-                    isBest={false}
-                    isNew={c === aiCandidates[aiCandidates.length - 1]}
-                    rank={0}
-                  />
-                ))}
+                {validSorted.length === 0 && rejectedCount > 0 && (
+                  <div className="rounded-xl border border-white/6 bg-stone-800/28 px-3 py-3 text-center text-xs text-stone-500">
+                    Filtering weak or invalid lines before showing a serious move...
+                  </div>
+                )}
                 <div ref={feedEndRef} />
               </div>
             ) : (
@@ -253,7 +243,7 @@ export function AIThinkingOverlay() {
             <div className="flex items-center justify-between text-[10px] text-stone-600 border-t border-stone-800/50 pt-2">
               <span>{aiCandidates.length} tried</span>
               <span>{validSorted.length} valid</span>
-              <span>{invalidRecent.length + (validSorted.length > 0 ? validSorted.length : 0) < aiCandidates.length ? `${aiCandidates.length - validSorted.length} rejected` : ""}</span>
+              <span>{rejectedCount > 0 ? `${rejectedCount} rejected` : ""}</span>
             </div>
           </motion.div>
         </motion.div>

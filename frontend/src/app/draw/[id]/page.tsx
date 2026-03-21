@@ -1,88 +1,98 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { motion, AnimatePresence } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
+import { Board } from "@/components/board/Board";
+import { Tile } from "@/components/tiles/Tile";
 import { useGameStore } from "@/hooks/useGameStore";
 
-type Phase = "bag" | "flip" | "compare" | "result" | "redirect";
-type Particle = { id: number; x: string; y: string };
+type DrawStage = "board" | "flip" | "compare" | "result" | "rack";
 
-function TileCard({
+function StartTile({
   letter,
   revealed,
-  delay,
   isWinner,
+  label,
   side,
 }: {
   letter: string;
   revealed: boolean;
-  delay: number;
   isWinner: boolean;
+  label: string;
   side: "left" | "right";
 }) {
-  const display = letter === "?" ? "★" : letter;
+  const displayLetter = letter === "?" ? "★" : letter;
 
   return (
-    <div className="relative perspective-[600px]">
+    <div className="flex flex-col items-center gap-3">
       <motion.div
-        initial={{ y: -200, rotate: side === "left" ? -30 : 30, opacity: 0 }}
-        animate={{ y: 0, rotate: 0, opacity: 1 }}
-        transition={{
-          type: "spring",
-          stiffness: 200,
-          damping: 15,
-          delay,
-        }}
-        className="w-24 h-28 sm:w-28 sm:h-32"
+        initial={{ opacity: 0, y: 36, rotate: side === "left" ? -8 : 8, scale: 0.9 }}
+        animate={{ opacity: 1, y: 0, rotate: 0, scale: 1 }}
+        transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
+        className="relative h-28 w-24 sm:h-32 sm:w-28"
+        style={{ perspective: "1000px" }}
       >
         <motion.div
-          animate={{ rotateY: revealed ? 180 : 0 }}
-          transition={{ duration: 0.6, delay: delay + 0.3 }}
-          className="relative w-full h-full"
+          animate={{ rotateY: revealed ? 180 : 0, y: isWinner && revealed ? [-1, -7, -4] : 0 }}
+          transition={{
+            rotateY: { duration: 0.68, ease: [0.22, 1, 0.36, 1] },
+            y: { duration: 0.62, delay: 0.26, ease: [0.22, 1, 0.36, 1] },
+          }}
+          className="relative h-full w-full"
           style={{ transformStyle: "preserve-3d" }}
         >
-          {/* Back face (tile back) */}
           <div
-            className="absolute inset-0 rounded-xl bg-gradient-to-br from-amber-700 to-amber-900
-              border-2 border-amber-600/50 shadow-xl flex items-center justify-center"
+            className="absolute inset-0 rounded-[1.25rem] border border-amber-500/24 bg-gradient-to-br from-stone-800 via-stone-900 to-black shadow-[0_24px_44px_rgba(0,0,0,0.46)]"
             style={{ backfaceVisibility: "hidden" }}
           >
-            <div className="w-10 h-10 rounded-lg bg-amber-800/60 border border-amber-600/30" />
+            <div className="absolute inset-2 rounded-[1rem] border border-white/5 bg-white/[0.03]" />
+            <div className="absolute inset-0 flex items-center justify-center">
+              <div className="h-10 w-10 rounded-2xl border border-amber-200/10 bg-amber-100/6" />
+            </div>
           </div>
 
-          {/* Front face (letter) */}
           <div
-            className={`absolute inset-0 rounded-xl border-2 shadow-xl flex items-center justify-center
-              ${
-                isWinner
-                  ? "bg-gradient-to-br from-amber-100 to-amber-200 border-amber-400 shadow-amber-400/30"
-                  : "bg-gradient-to-br from-stone-100 to-stone-200 border-stone-300"
-              }`}
+            className={`absolute inset-0 rounded-[1.25rem] border shadow-[0_24px_44px_rgba(0,0,0,0.42)]
+              ${isWinner
+                ? "border-amber-300/60 bg-gradient-to-br from-amber-50 via-[#fff3ce] to-amber-200"
+                : "border-stone-200/65 bg-gradient-to-br from-stone-100 via-[#f5efe1] to-stone-200"}`}
             style={{ backfaceVisibility: "hidden", transform: "rotateY(180deg)" }}
           >
-            <span
-              className={`text-4xl sm:text-5xl font-black ${
-                isWinner ? "text-amber-700" : "text-stone-700"
-              }`}
-            >
-              {display}
-            </span>
+            <div className="absolute inset-[7px] rounded-[1rem] border border-black/5" />
+            <div className="absolute inset-0 flex items-center justify-center">
+              <span className={`text-[3rem] font-black leading-none ${isWinner ? "text-amber-800" : "text-stone-700"}`}>
+                {displayLetter}
+              </span>
+            </div>
           </div>
         </motion.div>
+
+        {isWinner && revealed && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.7 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.5, delay: 0.25 }}
+            className="absolute -inset-4 -z-10 rounded-[1.6rem] bg-amber-400/20 blur-2xl"
+          />
+        )}
       </motion.div>
 
-      {/* Winner glow */}
-      {isWinner && revealed && (
-        <motion.div
-          initial={{ opacity: 0, scale: 0.8 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ delay: delay + 1.2 }}
-          className="absolute -inset-3 rounded-2xl bg-amber-400/20 blur-xl -z-10"
-        />
-      )}
+      <span className="text-xs font-semibold uppercase tracking-[0.28em] text-stone-400">
+        {label}
+      </span>
     </div>
   );
+}
+
+function describeResult(humanTile: string, aiTile: string, humanFirst: boolean) {
+  if (humanTile === "?" || aiTile === "?") {
+    return humanFirst ? "Blank wins the draw." : "AI drew the blank.";
+  }
+
+  return humanFirst
+    ? `${humanTile} is closer to A than ${aiTile}.`
+    : `${aiTile} is closer to A than ${humanTile}.`;
 }
 
 export default function DrawPage() {
@@ -91,41 +101,37 @@ export default function DrawPage() {
   const gameId = params.id as string;
 
   const startingDraw = useGameStore((s) => s.startingDraw);
+  const setStartingDraw = useGameStore((s) => s.setStartingDraw);
+  const startingRack = useGameStore((s) => s.startingRack);
   const selectedModelId = useGameStore((s) => s.selectedModelId);
-  const [phase, setPhase] = useState<Phase>("bag");
-  const [showResult, setShowResult] = useState(false);
-  const [particles] = useState<Particle[]>(() =>
-    Array.from({ length: 20 }, (_, id) => ({
-      id,
-      x: `${Math.random() * 100}vw`,
-      y: `${Math.random() * 100}vh`,
-    })),
-  );
+
+  const [stage, setStage] = useState<DrawStage>("board");
 
   const humanTile = startingDraw?.human_tile ?? "?";
   const aiTile = startingDraw?.ai_tile ?? "?";
   const humanFirst = startingDraw?.human_first ?? true;
+  const revealed = stage !== "board";
 
-  const humanVal = humanTile === "?" ? "" : humanTile;
-  const aiVal = aiTile === "?" ? "" : aiTile;
+  const rackSlots = useMemo(
+    () => Array.from({ length: 7 }, (_, index) => startingRack?.[index] ?? ""),
+    [startingRack],
+  );
 
   useEffect(() => {
     if (!startingDraw) {
-      router.push(`/game/${gameId}`);
+      router.replace(`/game/${gameId}`);
       return;
     }
 
     const timers = [
-      window.setTimeout(() => setPhase("flip"), 800),
-      window.setTimeout(() => setPhase("compare"), 2200),
+      window.setTimeout(() => setStage("flip"), 820),
+      window.setTimeout(() => setStage("compare"), 1900),
+      window.setTimeout(() => setStage("result"), 3000),
+      window.setTimeout(() => setStage("rack"), 3720),
       window.setTimeout(() => {
-        setPhase("result");
-        setShowResult(true);
-      }, 3000),
-      window.setTimeout(() => {
-        setPhase("redirect");
-        router.push(`/game/${gameId}`);
-      }, 5000),
+        setStartingDraw(null);
+        router.replace(`/game/${gameId}`);
+      }, 5600),
     ];
 
     return () => {
@@ -133,139 +139,146 @@ export default function DrawPage() {
         window.clearTimeout(timer);
       }
     };
-  }, [startingDraw, gameId, router]);
-
-  const revealed = phase !== "bag";
+  }, [gameId, router, setStartingDraw, startingDraw]);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-stone-950 via-stone-900 to-stone-950 flex flex-col items-center justify-center p-4">
-      {/* Title */}
+    <div className="min-h-screen overflow-hidden bg-[#040404] text-stone-100">
       <motion.div
-        initial={{ opacity: 0, y: -20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="text-center mb-10"
-      >
-        <h2 className="text-xl text-stone-400 font-medium">Starting Draw</h2>
-        <p className="text-stone-500 text-sm mt-1">
-          Closest to A goes first
-        </p>
-      </motion.div>
+        initial={{ opacity: 1 }}
+        animate={{ opacity: 0 }}
+        transition={{ duration: 0.68, ease: [0.22, 1, 0.36, 1] }}
+        className="pointer-events-none fixed inset-0 z-[80] bg-black"
+      />
 
-      {/* Tiles */}
-      <div className="flex items-center gap-8 sm:gap-16">
-        {/* Human tile */}
-        <div className="flex flex-col items-center gap-3">
-          <TileCard
-            letter={humanTile}
-            revealed={revealed}
-            delay={0.2}
-            isWinner={humanFirst}
-            side="left"
-          />
-          <motion.span
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.5 }}
-            className="text-stone-300 font-semibold text-sm"
-          >
-            You
-          </motion.span>
-        </div>
-
-        {/* VS */}
+      <div className="mx-auto flex min-h-screen max-w-[1080px] flex-col items-center justify-center gap-5 px-4 py-5 sm:gap-6 sm:px-5">
         <motion.div
-          initial={{ scale: 0 }}
-          animate={{ scale: 1 }}
-          transition={{ type: "spring", stiffness: 300, delay: 0.4 }}
-          className="text-stone-600 text-2xl font-bold"
+          initial={{ opacity: 0, y: -12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.45, delay: 0.18 }}
+          className="text-center"
         >
-          vs
+          <div className="text-[0.7rem] uppercase tracking-[0.34em] text-stone-500">
+            Starting Draw
+          </div>
+          <h1 className="mt-2 text-2xl font-black tracking-tight text-stone-50 sm:text-3xl">
+            Deciding who opens the board
+          </h1>
+          <p className="mt-2 text-sm text-stone-400">
+            Closest tile to A starts. Fresh rack already loaded.
+          </p>
+          <div className="mt-3 inline-flex items-center rounded-full border border-white/8 bg-white/[0.03] px-4 py-1.5 font-mono text-[0.72rem] text-stone-400">
+            {selectedModelId}
+          </div>
         </motion.div>
 
-        {/* AI tile */}
-        <div className="flex flex-col items-center gap-3">
-          <TileCard
-            letter={aiTile}
-            revealed={revealed}
-            delay={0.5}
-            isWinner={!humanFirst}
-            side="right"
-          />
-          <motion.span
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.8 }}
-            className="text-stone-300 font-semibold text-sm"
-          >
-            AI
-          </motion.span>
-        </div>
+        <motion.div
+          initial={{ opacity: 0, scale: 0.985, y: 20 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          transition={{ duration: 0.55, delay: 0.12, ease: [0.22, 1, 0.36, 1] }}
+          className="w-full max-w-[940px]"
+        >
+          <div className="relative">
+            <Board dragPreview={null} isDraggingTile={false} />
+
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center px-4">
+              <div className="flex w-full max-w-[680px] flex-col items-center gap-6 sm:gap-8">
+                <div className="flex items-center gap-6 sm:gap-12">
+                  <StartTile
+                    letter={humanTile}
+                    revealed={revealed}
+                    isWinner={humanFirst}
+                    label="You"
+                    side="left"
+                  />
+
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.8 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    transition={{ duration: 0.35, delay: 0.45 }}
+                    className="rounded-full border border-white/8 bg-black/24 px-4 py-2 text-sm font-black uppercase tracking-[0.3em] text-stone-500 sm:px-5"
+                  >
+                    VS
+                  </motion.div>
+
+                  <StartTile
+                    letter={aiTile}
+                    revealed={revealed}
+                    isWinner={!humanFirst}
+                    label="AI"
+                    side="right"
+                  />
+                </div>
+
+                <AnimatePresence mode="wait">
+                  {stage === "result" || stage === "rack" ? (
+                    <motion.div
+                      key="result"
+                      initial={{ opacity: 0, y: 18, scale: 0.94 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: -10 }}
+                      transition={{ duration: 0.42, ease: [0.22, 1, 0.36, 1] }}
+                      className="rounded-[1.4rem] border border-white/10 bg-black/36 px-6 py-4 text-center shadow-[0_26px_50px_rgba(0,0,0,0.34)] backdrop-blur-md"
+                    >
+                      <div className={`text-lg font-black sm:text-xl ${humanFirst ? "text-amber-300" : "text-sky-300"}`}>
+                        {humanFirst ? "You start this game" : "AI opens this game"}
+                      </div>
+                      <p className="mt-2 text-sm text-stone-300">
+                        {describeResult(humanTile, aiTile, humanFirst)}
+                      </p>
+                    </motion.div>
+                  ) : (
+                    <motion.div
+                      key="pre-result"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      className="text-center text-sm text-stone-500"
+                    >
+                      Tiles drawn from the bag...
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            </div>
+          </div>
+        </motion.div>
+
+        <motion.div
+          initial={{ opacity: 0, y: 18 }}
+          animate={{ opacity: stage === "rack" ? 1 : 0.48, y: stage === "rack" ? 0 : 18 }}
+          transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+          className="w-full max-w-[940px] rounded-[1.9rem] border border-white/8 bg-stone-950/56 px-5 py-4 shadow-[0_22px_54px_rgba(0,0,0,0.28)] backdrop-blur-sm"
+        >
+          <div className="mb-3 text-center text-[0.7rem] font-semibold uppercase tracking-[0.34em] text-stone-500">
+            Opening Rack
+          </div>
+          <div className="flex justify-center gap-2 sm:gap-2.5">
+            {rackSlots.map((letter, index) => (
+              <motion.div
+                key={`${letter || "slot"}-${index}`}
+                initial={{ opacity: 0, y: 16, scale: 0.94 }}
+                animate={{
+                  opacity: stage === "rack" ? 1 : 0.8,
+                  y: stage === "rack" ? 0 : 12,
+                  scale: 1,
+                }}
+                transition={{
+                  duration: 0.24,
+                  delay: stage === "rack" ? index * 0.045 : 0,
+                  ease: [0.22, 1, 0.36, 1],
+                }}
+              >
+                <Tile
+                  letter={letter}
+                  isBlank={letter === "?"}
+                  size="lg"
+                  hoverable={false}
+                />
+              </motion.div>
+            ))}
+          </div>
+        </motion.div>
       </div>
-
-      {/* Result announcement */}
-      <AnimatePresence>
-        {showResult && (
-          <motion.div
-            initial={{ opacity: 0, y: 30, scale: 0.8 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ type: "spring", stiffness: 300, damping: 20 }}
-            className="mt-10 text-center"
-          >
-            <motion.div
-              animate={{ scale: [1, 1.05, 1] }}
-              transition={{ repeat: Infinity, duration: 1.5 }}
-              className={`text-2xl font-bold ${
-                humanFirst ? "text-amber-300" : "text-sky-300"
-              }`}
-            >
-              {humanFirst ? "You go first!" : "AI goes first!"}
-            </motion.div>
-            <div className="text-stone-500 text-sm mt-2">
-              {humanTile === "?" ? "★ (blank)" : `"${humanTile}"`}
-              {" vs "}
-              {aiTile === "?" ? "★ (blank)" : `"${aiTile}"`}
-              {" — "}
-              {humanFirst
-                ? `${humanVal || "blank"} is ${aiVal ? "closer to A" : "a blank (wins)"}`
-                : `${aiVal || "blank"} is ${humanVal ? "closer to A" : "a blank (wins)"}`}
-            </div>
-            <div className="text-stone-600 text-xs mt-3 font-mono">
-              {selectedModelId}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Particles background */}
-      {showResult && (
-        <div className="fixed inset-0 pointer-events-none overflow-hidden -z-10">
-          {particles.map((particle, i) => (
-            <motion.div
-              key={particle.id}
-              className={`absolute w-1.5 h-1.5 rounded-full ${
-                humanFirst ? "bg-amber-400/40" : "bg-sky-400/40"
-              }`}
-              initial={{
-                x: "50vw",
-                y: "50vh",
-                opacity: 0,
-              }}
-              animate={{
-                x: particle.x,
-                y: particle.y,
-                opacity: [0, 0.6, 0],
-                scale: [0, 1, 0],
-              }}
-              transition={{
-                duration: 2,
-                delay: i * 0.08,
-                ease: "easeOut",
-              }}
-            />
-          ))}
-        </div>
-      )}
     </div>
   );
 }

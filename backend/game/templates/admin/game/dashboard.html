@@ -1,0 +1,193 @@
+{% extends "admin/base_site.html" %}
+
+{% block extrastyle %}
+  {{ block.super }}
+  <style>
+    .ops-actions {
+      display: flex;
+      gap: 12px;
+      margin: 12px 0 22px;
+      flex-wrap: wrap;
+    }
+    .ops-grid {
+      display: grid;
+      gap: 16px;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      margin-bottom: 26px;
+    }
+    .ops-card,
+    .ops-panel {
+      background: var(--body-bg);
+      border: 1px solid var(--hairline-color);
+      border-radius: 16px;
+      padding: 18px 20px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+    }
+    .ops-card h3,
+    .ops-panel h2 {
+      margin: 0 0 8px;
+    }
+    .ops-value {
+      font-size: 28px;
+      font-weight: 700;
+    }
+    .ops-layout {
+      display: grid;
+      gap: 18px;
+      grid-template-columns: 1.25fr 1fr;
+    }
+    .ops-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    .ops-table th,
+    .ops-table td {
+      padding: 10px 0;
+      border-bottom: 1px solid var(--hairline-color);
+      text-align: left;
+      vertical-align: top;
+    }
+    .ops-table th:last-child,
+    .ops-table td:last-child {
+      text-align: right;
+    }
+    .ops-muted {
+      color: var(--body-quiet-color);
+    }
+    @media (max-width: 1100px) {
+      .ops-layout {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+{% endblock %}
+
+{% block breadcrumbs %}
+  <div class="breadcrumbs">
+    <a href="{% url 'admin:index' %}">Home</a>
+    &rsaquo; <a href="{% url 'admin:app_list' app_label=opts.app_label %}">{{ opts.app_config.verbose_name }}</a>
+    &rsaquo; Operations dashboard
+  </div>
+{% endblock %}
+
+{% block content %}
+  <div id="content-main">
+    <h1>{{ title }}</h1>
+    <div class="ops-actions">
+      <a href="{{ balances_url }}" class="button default">Edit balances</a>
+      <a href="{{ users_url }}" class="button">Users</a>
+      <a href="{{ model_sync_url }}" class="button">Sync models</a>
+      <a href="{{ model_catalog_url }}" class="button">Model catalog</a>
+    </div>
+
+    <div class="ops-grid">
+      {% for card in summary_cards %}
+        <div class="ops-card">
+          <h3>{{ card.label }}</h3>
+          <div class="ops-value">{{ card.value }}</div>
+        </div>
+      {% endfor %}
+    </div>
+
+    <div class="ops-layout">
+      <div class="ops-panel">
+        <h2>Recent games</h2>
+        <table class="ops-table">
+          <thead>
+            <tr>
+              <th>Game</th>
+              <th>Players</th>
+              <th>Status</th>
+              <th>Model</th>
+              <th>Moves</th>
+              <th>Updated</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in recent_game_rows %}
+              <tr>
+                <td><strong>{{ row.public_id }}</strong><div class="ops-muted">{{ row.scoreline }}</div></td>
+                <td>{{ row.players }}</td>
+                <td>{{ row.status }}</td>
+                <td>{{ row.model }}</td>
+                <td>{{ row.moves }}</td>
+                <td>{{ row.updated_at }}</td>
+              </tr>
+            {% empty %}
+              <tr><td colspan="6">No games yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="ops-panel">
+        <h2>Token totals</h2>
+        <table class="ops-table">
+          <tbody>
+            <tr><th>Input tokens</th><td>{{ token_totals.input_tokens }}</td></tr>
+            <tr><th>Output tokens</th><td>{{ token_totals.output_tokens }}</td></tr>
+            <tr><th>Total tokens</th><td>{{ token_totals.total_tokens }}</td></tr>
+            <tr><th>Total charged credits</th><td>${{ total_credits_spent }}</td></tr>
+            <tr><th>Total charged USD</th><td>${{ total_usd_spent }}</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="ops-layout" style="margin-top: 18px;">
+      <div class="ops-panel">
+        <h2>Top models by spend</h2>
+        <table class="ops-table">
+          <thead>
+            <tr>
+              <th>Model</th>
+              <th>Moves</th>
+              <th>Games</th>
+              <th>Total tokens</th>
+              <th>USD</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in model_rows %}
+              <tr>
+                <td><strong>{{ row.model_id }}</strong><div class="ops-muted">{{ row.input_tokens }} in / {{ row.output_tokens }} out</div></td>
+                <td>{{ row.moves }}</td>
+                <td>{{ row.games }}</td>
+                <td>{{ row.total_tokens }}</td>
+                <td>${{ row.charged_usd }}</td>
+              </tr>
+            {% empty %}
+              <tr><td colspan="5">No AI moves logged yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="ops-panel">
+        <h2>Recent AI turns</h2>
+        <table class="ops-table">
+          <thead>
+            <tr>
+              <th>Game / move</th>
+              <th>Model</th>
+              <th>Tokens</th>
+              <th>USD</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in recent_ai_rows %}
+              <tr>
+                <td><strong>{{ row.game_id }}</strong><div class="ops-muted">Move #{{ row.seq }} · {{ row.created_at }}</div></td>
+                <td>{{ row.model_id }}</td>
+                <td>{{ row.total_tokens }}<div class="ops-muted">{{ row.input_tokens }} in / {{ row.output_tokens }} out</div></td>
+                <td>${{ row.charged_usd }}</td>
+              </tr>
+            {% empty %}
+              <tr><td colspan="4">No AI turns logged yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+{% endblock %}

@@ -2,12 +2,15 @@ from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from billing.services import charge_ai_move
+
 from . import services
 from .serializers import (
     ApplyAIMoveSerializer,
     CreateGameSerializer,
     ExchangeSerializer,
     SubmitMoveSerializer,
+    UpdateGameAIModelSerializer,
     ValidateMoveSerializer,
     ValidateWordsSerializer,
 )
@@ -23,6 +26,7 @@ class CreateGameView(APIView):
             user_id=request.user.id,
             game_mode=ser.validated_data["game_mode"],
             ai_model_id=ser.validated_data.get("ai_model_id"),
+            ai_model_model_id=ser.validated_data.get("ai_model_model_id"),
             variant_slug=ser.validated_data["variant_slug"],
         )
         return Response(result, status=status.HTTP_201_CREATED)
@@ -77,6 +81,17 @@ class PassView(APIView):
         return Response(result)
 
 
+class GiveUpView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, game_id):  # type: ignore[no-untyped-def]
+        result = services.submit_give_up(game_id=game_id, user_id=request.user.id)
+        if not result["ok"]:
+            return Response(result, status=status.HTTP_400_BAD_REQUEST)
+        result["state"] = services.get_game_state_for_slot(game_id, result.get("slot", 0))
+        return Response(result)
+
+
 class AIContextView(APIView):
     """Provides compact game state for Vercel AI Gateway route."""
 
@@ -85,6 +100,20 @@ class AIContextView(APIView):
     def get(self, request, game_id):  # type: ignore[no-untyped-def]
         context = services.get_ai_context(game_id)
         return Response(context)
+
+
+class GameAIModelView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def patch(self, request, game_id):  # type: ignore[no-untyped-def]
+        serializer = UpdateGameAIModelSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        result = services.set_game_ai_model(
+            game_id=game_id,
+            user_id=request.user.id,
+            ai_model_model_id=serializer.validated_data["ai_model_model_id"],
+        )
+        return Response(result, status=200 if result.get("ok") else 400)
 
 
 class ValidateMoveView(APIView):
@@ -151,5 +180,27 @@ class ApplyAIMoveView(APIView):
                 game_id,
                 viewer_slot_obj.slot if viewer_slot_obj else 0,
             )
+            session = (
+                __import__("game.models", fromlist=["GameSession"])
+                .GameSession.objects.select_related("ai_model")
+                .get(public_id=game_id)
+            )
+            billing = charge_ai_move(
+                user=request.user,
+                game=session,
+                ai_model=session.ai_model,
+                ai_metadata=ser.validated_data.get("ai_metadata"),
+            )
+            result["billing"] = billing
+            if ser.validated_data.get("ai_metadata"):
+                last_move = (
+                    __import__("game.models", fromlist=["Move"])
+                    .Move.objects.filter(game__public_id=game_id)
+                    .order_by("-seq")
+                    .first()
+                )
+                if last_move and isinstance(last_move.ai_metadata, dict):
+                    last_move.ai_metadata["billing"] = billing
+                    last_move.save(update_fields=["ai_metadata"])
 
         return Response(result, status=200 if result.get("ok") else 400)

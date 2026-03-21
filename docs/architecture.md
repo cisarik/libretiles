@@ -148,20 +148,26 @@ The user prompt provides:
 ### Model Routing
 
 ```
-Frontend Settings ──► Zustand store (selectedModelId) ──► /api/ai/move POST body
-                                                              │
-                                                    ai-gateway.ts getModel()
-                                                              │
-                                                    ┌─────────┴──────────┐
-                                                    │                    │
-                                            AI_GATEWAY_API_KEY?   OPENAI_API_KEY
-                                                    │                    │
-                                            AI Gateway            Direct OpenAI
-                                            (production)          (local dev)
+Frontend Settings ──► create game request (`ai_model_model_id`)
+                              │
+                              ▼
+                    Django resolves active `catalog.AIModel`
+                              │
+                              ▼
+                    `GameSession.ai_model` becomes source of truth
+                              │
+                              ▼
+                    `/api/game/{id}/ai-context/` returns locked model id
+                              │
+                              ▼
+                    `/api/ai/move` calls `getModel(session.ai_model_id)`
+                              │
+                     requested model + actual response model are stored in `Move.ai_metadata`
 ```
 
 - **Production** (Vercel): `AI_GATEWAY_API_KEY` + `AI_GATEWAY_BASE_URL` are set. Model IDs use `provider/model` format. All requests go through the Vercel AI Gateway.
 - **Local dev**: Falls back to direct provider SDK. The `provider/` prefix is stripped from model IDs.
+- **Catalog sync**: `python manage.py sync_gateway_models` fetches the latest public Vercel AI Gateway catalog from `https://ai-gateway.vercel.sh/v1/models`, updates technical metadata on `catalog.AIModel`, and marks missing models unavailable.
 
 ## Word Validation Pipeline
 
@@ -200,7 +206,7 @@ Tier 1 covers 172,823 words and handles nearly all cases. Tier 3 provides a fall
 ### Core entities
 
 - **User** (accounts) -- custom user with preferred AI model
-- **AIModel** (catalog) -- provider, model_id, display_name, cost, quality_tier
+- **AIModel** (catalog) -- provider, model_id, display_name, cost, quality_tier, gateway metadata, availability sync
 - **GameSession** (game) -- board state JSON, bag, turn tracking, game status
 - **PlayerSlot** (game) -- links users (or AI) to game positions with rack + score
 - **Move** (game) -- move history with placements, words, score, AI metadata
@@ -238,3 +244,91 @@ Game state is stored in `GameSession.state_json` as a JSON blob managed by `game
 - Django Admin behind superuser auth
 - No secrets in .env.example or .env.local.example files
 - `.gitignore` excludes all env files, databases, and build artifacts
+
+## Handoff Notes (March 2026)
+
+These notes are for the next Codex agent continuing AI gameplay and billing work.
+
+### Current AI routing state
+
+- User model selection is persisted locally in Zustand and synchronized into the active game session via `PATCH /api/game/{id}/ai-model/` before the AI move route generates a turn.
+- `maxOutputTokens` is no longer hardcoded in the Next.js route:
+  - Django exposes `AI_MOVE_MAX_OUTPUT_TOKENS` and `AI_MOVE_TIMEOUT_SECONDS` via `/api/game/{id}/ai-context/`
+  - the AI route clamps and uses the backend-provided output-token budget as the source of truth
+  - longer searches also get a less aggressive auto-finalize window to avoid cutting candidate exploration too early
+- The game header now exposes a lightweight audit trail:
+  - requested model (frontend selection)
+  - session model (backend game source of truth)
+  - response model (actual model reported by the AI provider)
+- Relevant files:
+  - `frontend/src/app/game/[id]/page.tsx`
+  - `frontend/src/app/api/ai/move/route.ts`
+  - `backend/game/services.py`
+
+### Current model catalog policy
+
+- Selectable models are now intentionally conservative:
+  - only `is_active=True` language models are selectable by default
+  - synced gateway models are preferred over unsynced entries
+  - tool-capable models are preferred over non-tool models
+  - `openai/gpt-5.4` remains explicitly pinnable even if it falls outside the active top-10
+- Relevant files:
+  - `backend/catalog/selection.py`
+  - `backend/catalog/views.py`
+  - `backend/tests/test_api.py`
+
+### Current AI UX guardrails
+
+- The live AI overlay now hides invalid nonsense word attempts and surfaces only valid candidates plus reject counts.
+- The move prompt was hardened to reduce brute-force dictionary guessing:
+  - stronger lexical plausibility filter
+  - anchor-based search workflow
+  - explicit ban on using tools for random string generation
+  - emphasis on short credible hooks before speculative long strings
+- Relevant files:
+  - `frontend/src/components/game/AIThinkingOverlay.tsx`
+  - `frontend/src/lib/prompts.ts`
+
+### Current billing / insufficient funds behavior
+
+- Before AI generation, the Next.js AI route now checks the authenticated user's backend credit balance.
+- If user credit is empty, the route emits a structured SSE error and the game shows a friendly blocker modal instead of raw console noise.
+- Provider-side "insufficient funds" errors from the upstream AI service are also normalized into a user-friendly modal.
+- Relevant files:
+  - `frontend/src/app/api/ai/move/route.ts`
+  - `frontend/src/app/game/[id]/page.tsx`
+  - `backend/accounts/views.py`
+
+### Current admin operations surface
+
+- Django admin now has a real operations dashboard with:
+  - global game counts
+  - aggregate token usage
+  - AI spend totals
+  - recent games
+  - recent AI turns
+  - top models by spend
+- AI models admin now includes a dedicated sync page with a button that calls the `sync_gateway_models` management command.
+- User credit can now be edited directly in admin from the user detail page or from the credit balance list.
+- Relevant files:
+  - `backend/game/admin.py`
+  - `backend/catalog/admin.py`
+  - `backend/accounts/admin.py`
+  - `backend/billing/admin.py`
+
+### Recommended next priorities
+
+1. Replace prompt-only strengthening with stronger search:
+   - add anchor enumeration and lane generation before model tool calls
+   - rank candidates by board anchor quality, rack leave, and premium access
+2. Finish the real top-up flow:
+   - Stripe / checkout
+   - server-side hard credit floor enforcement before charging
+   - better transaction history UI
+3. Persist AI move diagnostics:
+   - structured reject reasons
+   - per-turn candidate summaries
+   - explicit fallback/pass reasons in the move history
+4. Tighten the first-move and opening game UX:
+   - cleaner start-of-game rack transition
+   - optional move history strip with model + token spend

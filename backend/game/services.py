@@ -13,6 +13,8 @@ from typing import Any
 from django.conf import settings
 from django.utils import timezone
 
+from catalog.models import AIModel
+from catalog.selection import get_selectable_models
 from gamecore.board import BOARD_SIZE, Board
 from gamecore.game import PlayerState, apply_final_scoring, determine_end_reason
 from gamecore.rack import consume_rack
@@ -125,6 +127,7 @@ def create_game(
     user_id: int,
     game_mode: str = "vs_ai",
     ai_model_id: int | None = None,
+    ai_model_model_id: str | None = None,
     variant_slug: str = "english",
 ) -> dict[str, Any]:
     """Create a new game session with starting draw."""
@@ -143,6 +146,12 @@ def create_game(
 
     human_rack = bag.draw(7)
     ai_rack = bag.draw(7)
+    selected_ai_model = None
+    if game_mode == "vs_ai":
+        selected_ai_model = _resolve_ai_model(
+            ai_model_id=ai_model_id,
+            ai_model_model_id=ai_model_model_id,
+        )
 
     session = GameSession.objects.create(
         game_mode=game_mode,
@@ -151,7 +160,7 @@ def create_game(
         bag_seed=seed,
         bag_tiles="".join(bag.tiles),
         current_turn_slot=0 if human_first else 1,
-        ai_model_id=ai_model_id,
+        ai_model=selected_ai_model,
     )
 
     PlayerSlot.objects.create(
@@ -166,6 +175,8 @@ def create_game(
         "starting_draw": {"human_tile": a, "ai_tile": b, "human_first": human_first},
         "human_rack": human_rack,
         "current_turn_slot": session.current_turn_slot,
+        "ai_model_id": selected_ai_model.model_id if selected_ai_model else None,
+        "ai_model_display_name": selected_ai_model.display_name if selected_ai_model else None,
     }
 
 
@@ -187,6 +198,8 @@ def get_game_state(game_id: str) -> dict[str, Any]:
         "game_over": session.game_over,
         "game_end_reason": session.game_end_reason,
         "winner_slot": session.winner_slot,
+        "ai_model_id": session.ai_model.model_id if session.ai_model else None,
+        "ai_model_display_name": session.ai_model.display_name if session.ai_model else None,
         "slots": [
             {
                 "slot": s.slot,
@@ -207,6 +220,34 @@ def get_game_state_for_slot(game_id: str, slot: int) -> dict[str, Any]:
     state = get_game_state(game_id)
     state["my_rack"] = get_player_rack(game_id, slot)
     return state
+
+
+def set_game_ai_model(
+    *,
+    game_id: str,
+    user_id: int,
+    ai_model_model_id: str,
+) -> dict[str, Any]:
+    session = GameSession.objects.select_related("ai_model").get(public_id=game_id)
+    if not session.slots.filter(user_id=user_id).exists():
+        return {"ok": False, "error": "Game not found"}
+
+    selected_ai_model = _resolve_ai_model(
+        ai_model_id=None,
+        ai_model_model_id=ai_model_model_id,
+    )
+    if selected_ai_model is None:
+        return {"ok": False, "error": "Unknown or unavailable AI model"}
+
+    if session.ai_model_id != selected_ai_model.id:
+        session.ai_model = selected_ai_model
+        session.save(update_fields=["ai_model", "updated_at"])
+
+    return {
+        "ok": True,
+        "ai_model_id": selected_ai_model.model_id,
+        "ai_model_display_name": selected_ai_model.display_name,
+    }
 
 
 def get_player_rack(game_id: str, slot: int) -> list[str]:
@@ -432,6 +473,52 @@ def submit_pass(game_id: str, slot: int) -> dict[str, Any]:
     }
 
 
+def submit_give_up(*, game_id: str, user_id: int) -> dict[str, Any]:
+    """Forfeit the current game as the authenticated human player."""
+    session = GameSession.objects.select_for_update().get(public_id=game_id)
+    if session.game_over:
+        return {"ok": False, "error": "Game is already over"}
+
+    player_slot = session.slots.filter(user_id=user_id).first()
+    if player_slot is None:
+        return {"ok": False, "error": "Game not found"}
+
+    winner_slot = 1 - player_slot.slot
+
+    move_seq = session.moves.count() + 1
+    Move.objects.create(
+        game=session,
+        player_slot=player_slot,
+        seq=move_seq,
+        kind="give_up",
+    )
+
+    session.game_over = True
+    session.status = "abandoned"
+    session.game_end_reason = "give_up"
+    session.winner_slot = winner_slot
+    session.finished_at = timezone.now()
+    session.save(
+        update_fields=[
+            "game_over",
+            "status",
+            "game_end_reason",
+            "winner_slot",
+            "finished_at",
+            "updated_at",
+        ]
+    )
+
+    return {
+        "ok": True,
+        "game_over": True,
+        "game_end_reason": session.game_end_reason,
+        "winner_slot": session.winner_slot,
+        "status": session.status,
+        "slot": player_slot.slot,
+    }
+
+
 def get_ai_context(game_id: str) -> dict[str, Any]:
     """Build compact state for AI move generation (called by Vercel API route)."""
     session = GameSession.objects.get(public_id=game_id)
@@ -461,7 +548,10 @@ def get_ai_context(game_id: str) -> dict[str, Any]:
         "ai_state": dict(ai_state),
         "variant": session.variant_slug,
         "ai_model_id": session.ai_model.model_id if session.ai_model else None,
+        "ai_model_display_name": session.ai_model.display_name if session.ai_model else None,
         "is_first_move": _is_board_empty(session),
+        "ai_move_max_output_tokens": settings.AI_MOVE_MAX_OUTPUT_TOKENS,
+        "ai_move_timeout_seconds": settings.AI_MOVE_TIMEOUT_SECONDS,
     }
 
 
@@ -528,6 +618,26 @@ def validate_words(words: list[str]) -> list[dict[str, Any]]:
         {"word": w, "valid": _word_passes_dictionary(contains, w), "source": "collins2019"}
         for w in words
     ]
+
+
+def _resolve_ai_model(
+    *,
+    ai_model_id: int | None,
+    ai_model_model_id: str | None,
+) -> AIModel | None:
+    selectable_models = get_selectable_models()
+
+    if ai_model_model_id:
+        for model in selectable_models:
+            if model.model_id == ai_model_model_id:
+                return model
+
+    if ai_model_id is not None:
+        for model in selectable_models:
+            if model.id == ai_model_id:
+                return model
+
+    return selectable_models[0] if selectable_models else None
 
 
 def _check_endgame(session: GameSession) -> dict[str, Any]:

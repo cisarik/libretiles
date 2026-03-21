@@ -1,3 +1,5 @@
+import type { AIModel, MoveValidationResult, UserProfile } from "@/lib/types";
+
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 interface RequestOptions {
@@ -43,25 +45,18 @@ export const api = {
       body: data,
     }),
 
-  me: (token: string) => request("/api/auth/me/", { token }),
+  me: (token: string) => request<UserProfile>("/api/auth/me/", { token }),
+  updateMe: (token: string, data: Partial<Pick<UserProfile, "preferred_ai_model_id">>) =>
+    request<UserProfile>("/api/auth/me/", { method: "PATCH", body: data, token }),
 
   // Catalog
-  getModels: () =>
-    request<
-      Array<{
-        id: number;
-        provider: string;
-        model_id: string;
-        display_name: string;
-        description: string;
-        quality_tier: string;
-        cost_per_game: string;
-      }>
-    >("/api/catalog/models/"),
+  getModels: () => request<AIModel[]>("/api/catalog/models/"),
 
   // Game
-  createGame: (token: string, data: { game_mode?: string; ai_model_id?: number }) =>
-    request("/api/game/create/", { method: "POST", body: data, token }),
+  createGame: (
+    token: string,
+    data: { game_mode?: string; ai_model_id?: number; ai_model_model_id?: string },
+  ) => request("/api/game/create/", { method: "POST", body: data, token }),
 
   getGameState: (token: string, gameId: string, slot: number = 0) =>
     request(`/api/game/${gameId}/?slot=${slot}`, { token }),
@@ -92,6 +87,12 @@ export const api = {
       token,
     }),
 
+  giveUp: (token: string, gameId: string) =>
+    request(`/api/game/${gameId}/give-up/`, {
+      method: "POST",
+      token,
+    }),
+
   getAIContext: (token: string, gameId: string) =>
     request(`/api/game/${gameId}/ai-context/`, { token }),
 
@@ -99,6 +100,17 @@ export const api = {
     request(`/api/game/${gameId}/validate-words/`, {
       method: "POST",
       body: { words },
+      token,
+    }),
+
+  validateMove: (
+    token: string,
+    gameId: string,
+    placements: Array<{ row: number; col: number; letter: string; blank_as?: string }>,
+  ) =>
+    request<MoveValidationResult>(`/api/game/${gameId}/validate-move/`, {
+      method: "POST",
+      body: { placements },
       token,
     }),
 
@@ -111,6 +123,13 @@ export const api = {
     request(`/api/game/${gameId}/ai-move/`, {
       method: "POST",
       body: { placements, ai_metadata },
+      token,
+    }),
+
+  chargeAITurn: (token: string, gameId: string, ai_metadata?: Record<string, unknown>) =>
+    request("/api/billing/charge-ai-turn/", {
+      method: "POST",
+      body: { game_id: gameId, ai_metadata },
       token,
     }),
 };

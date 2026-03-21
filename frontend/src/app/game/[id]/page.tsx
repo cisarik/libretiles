@@ -10,6 +10,8 @@ import {
   DragStartEvent,
   PointerSensor,
   TouchSensor,
+  defaultDropAnimation,
+  defaultDropAnimationSideEffects,
   useSensor,
   useSensors,
 } from "@dnd-kit/core";
@@ -24,7 +26,15 @@ import { BlankPicker } from "@/components/game/BlankPicker";
 import { AIThinkingOverlay } from "@/components/game/AIThinkingOverlay";
 import { useGameStore } from "@/hooks/useGameStore";
 import { api } from "@/lib/api";
-import type { GameState, MoveResult, AICandidate } from "@/lib/types";
+import { isPlausibleRack } from "@/lib/rack";
+import type {
+  AICandidate,
+  BillingSummary,
+  CreateGameResponse,
+  GameState,
+  MoveResult,
+  MoveValidationResult,
+} from "@/lib/types";
 import { Tile } from "@/components/tiles/Tile";
 
 type RackDragData = {
@@ -43,13 +53,13 @@ async function consumeAIStream(
   callbacks: {
     onCandidate: (c: AICandidate) => void;
     onDone: (data: Record<string, unknown>) => void;
-    onError: (msg: string) => void;
+    onError: (error: { message: string; code?: string; creditBalance?: string | null }) => void;
     onStatus: (msg: string) => void;
   },
 ) {
   const reader = response.body?.getReader();
   if (!reader) {
-    callbacks.onError("No response stream");
+    callbacks.onError({ message: "No response stream" });
     return;
   }
 
@@ -101,7 +111,12 @@ async function consumeAIStream(
         } else if (type === "done") {
           callbacks.onDone(json);
         } else if (type === "error") {
-          callbacks.onError(json.error ?? "AI error");
+          callbacks.onError({
+            message: json.error ?? "AI error",
+            code: typeof json.code === "string" ? json.code : undefined,
+            creditBalance:
+              typeof json.credit_balance === "string" ? json.credit_balance : null,
+          });
         }
       } catch { /* malformed line */ }
     }
@@ -115,7 +130,82 @@ type Toast = {
   message: string;
   words?: string[];
   score?: number;
+  chargedCredits?: string;
+  chargedUsd?: string;
+  remainingCredits?: string;
 };
+
+type AIAuditSummary = {
+  requestedModel: string | null;
+  sessionModel: string | null;
+  responseModel: string | null;
+  candidatesFound: number;
+  timedOut: boolean;
+  autoFinalized: boolean;
+};
+
+type AIBlockerModal = {
+  kind: "user_credit" | "provider_funds";
+  title: string;
+  message: string;
+  creditBalance?: string | null;
+};
+
+function normalizeAIBlocker(
+  message: string,
+  code?: string,
+  creditBalance?: string | null,
+): AIBlockerModal | null {
+  const normalized = message.toLowerCase();
+
+  if (code === "insufficient_user_credit") {
+    return {
+      kind: "user_credit",
+      title: "You are out of credits",
+      message:
+        "AI turns are paused until you top up credit or switch to a cheaper opponent.",
+      creditBalance,
+    };
+  }
+
+  if (
+    code === "insufficient_provider_funds" ||
+    normalized.includes("insufficient funds") ||
+    normalized.includes("top up your credits")
+  ) {
+    return {
+      kind: "provider_funds",
+      title: "AI service is temporarily unavailable",
+      message:
+        "Your own balance is fine. The shared AI provider budget behind this model is currently exhausted. Switch models or try again later.",
+      creditBalance,
+    };
+  }
+
+  return null;
+}
+
+function BillingCaption({
+  chargedCredits,
+  chargedUsd,
+  remainingCredits,
+  tone,
+}: {
+  chargedCredits?: string;
+  chargedUsd?: string;
+  remainingCredits?: string;
+  tone: "sky" | "emerald";
+}) {
+  if (!chargedCredits && !chargedUsd && !remainingCredits) return null;
+
+  return (
+    <p className={`mt-3 text-xs ${tone === "sky" ? "text-sky-300/72" : "text-emerald-300/72"}`}>
+      {chargedUsd ? `Cost ${chargedUsd} USD` : "Cost unavailable"}
+      {chargedCredits ? ` · ${chargedCredits} cr` : ""}
+      {remainingCredits ? ` · balance ${remainingCredits} cr` : ""}
+    </p>
+  );
+}
 
 function ToastOverlay({ toast, onDone }: { toast: Toast; onDone: () => void }) {
   useEffect(() => {
@@ -234,11 +324,19 @@ function ToastOverlay({ toast, onDone }: { toast: Toast; onDone: () => void }) {
             animate={{ y: 0 }}
             className="text-sky-300 font-bold text-lg mb-1"
           >
-            AI Passes
+            {toast.message}
           </motion.div>
           <p className="text-sky-400/60 text-sm">
-            Couldn&apos;t find a valid move — your turn!
+            {toast.message.toLowerCase().includes("exchanged")
+              ? "AI refreshed the rack and spent the turn."
+              : "Couldn't find a valid move - your turn!"}
           </p>
+          <BillingCaption
+            chargedCredits={toast.chargedCredits}
+            chargedUsd={toast.chargedUsd}
+            remainingCredits={toast.remainingCredits}
+            tone="sky"
+          />
         </div>
       </motion.div>
     );
@@ -278,6 +376,12 @@ function ToastOverlay({ toast, onDone }: { toast: Toast; onDone: () => void }) {
               ))}
             </div>
           )}
+          <BillingCaption
+            chargedCredits={toast.chargedCredits}
+            chargedUsd={toast.chargedUsd}
+            remainingCredits={toast.remainingCredits}
+            tone="emerald"
+          />
         </div>
       </motion.div>
     );
@@ -296,14 +400,77 @@ function ToastOverlay({ toast, onDone }: { toast: Toast; onDone: () => void }) {
   );
 }
 
+function AIBlockerOverlay({
+  modal,
+  onClose,
+  onOpenSettings,
+}: {
+  modal: AIBlockerModal;
+  onClose: () => void;
+  onOpenSettings: () => void;
+}) {
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/52 px-4 backdrop-blur-sm"
+    >
+      <motion.div
+        initial={{ opacity: 0, y: 24, scale: 0.94 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{ opacity: 0, y: 16, scale: 0.97 }}
+        transition={{ type: "spring", stiffness: 320, damping: 26 }}
+        className="w-full max-w-md rounded-[1.8rem] border border-amber-300/20 bg-[linear-gradient(180deg,rgba(28,22,16,0.98),rgba(12,10,9,0.98))] p-6 shadow-[0_30px_90px_rgba(0,0,0,0.42)]"
+      >
+        <div className="text-[0.68rem] uppercase tracking-[0.28em] text-amber-200/66">
+          {modal.kind === "user_credit" ? "Credit Required" : "Service Budget"}
+        </div>
+        <h3 className="mt-3 text-2xl font-black tracking-tight text-stone-50">
+          {modal.title}
+        </h3>
+        <p className="mt-3 text-sm leading-6 text-stone-300">
+          {modal.message}
+        </p>
+        {modal.kind === "user_credit" && (
+          <div className="mt-4 rounded-[1.1rem] border border-amber-300/18 bg-amber-400/8 px-4 py-3 text-sm text-amber-100">
+            Balance: <span className="font-black">{modal.creditBalance ?? "0.00"} cr</span>
+          </div>
+        )}
+
+        <div className="mt-6 flex flex-wrap justify-end gap-3">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-full border border-white/10 bg-white/6 px-4 py-2 text-sm font-semibold text-stone-200 transition-all hover:border-white/16 hover:bg-white/8"
+          >
+            Close
+          </button>
+          <button
+            type="button"
+            onClick={onOpenSettings}
+            className="rounded-full border border-amber-300/28 bg-amber-300/14 px-4 py-2 text-sm font-semibold text-amber-100 shadow-[0_10px_24px_rgba(251,191,36,0.10)] transition-all hover:border-amber-200/44 hover:bg-amber-300/18"
+          >
+            Open settings
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
 export default function GamePage() {
   const params = useParams();
   const router = useRouter();
   const gameId = params.id as string;
 
   const token = useGameStore((s) => s.token);
+  const creditBalance = useGameStore((s) => s.creditBalance);
+  const setCreditBalance = useGameStore((s) => s.setCreditBalance);
   const gameState = useGameStore((s) => s.gameState);
   const setGameState = useGameStore((s) => s.setGameState);
+  const setStartingDraw = useGameStore((s) => s.setStartingDraw);
+  const setStartingRack = useGameStore((s) => s.setStartingRack);
   const pendingTiles = useGameStore((s) => s.pendingTiles);
   const addPendingTile = useGameStore((s) => s.addPendingTile);
   const clearPendingTiles = useGameStore((s) => s.clearPendingTiles);
@@ -315,10 +482,12 @@ export default function GamePage() {
   const openBlankPicker = useGameStore((s) => s.openBlankPicker);
   const selectedModelId = useGameStore((s) => s.selectedModelId);
   const aiTimeout = useGameStore((s) => s.aiTimeout);
+  const aiMaxSteps = useGameStore((s) => s.aiMaxSteps);
   const addAICandidate = useGameStore((s) => s.addAICandidate);
   const clearAICandidates = useGameStore((s) => s.clearAICandidates);
   const setAICountdown = useGameStore((s) => s.setAICountdown);
   const setAIStatusMessage = useGameStore((s) => s.setAIStatusMessage);
+  const resetGameUi = useGameStore((s) => s.resetGameUi);
 
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const aiInFlightRef = useRef(false);
@@ -328,11 +497,17 @@ export default function GamePage() {
   const [toast, setToast] = useState<Toast | null>(null);
   const [activeDragTile, setActiveDragTile] = useState<RackDragData | null>(null);
   const [dragPreviewTarget, setDragPreviewTarget] = useState<DragPreviewTarget | null>(null);
+  const [lastAIBilling, setLastAIBilling] = useState<BillingSummary | null>(null);
+  const [lastAIAudit, setLastAIAudit] = useState<AIAuditSummary | null>(null);
+  const [aiBlockerModal, setAIBlockerModal] = useState<AIBlockerModal | null>(null);
+  const [startingNewGame, setStartingNewGame] = useState(false);
+  const [givingUp, setGivingUp] = useState(false);
+  const [newGameTransitioning, setNewGameTransitioning] = useState(false);
 
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(PointerSensor, { activationConstraint: { distance: 3 } }),
     useSensor(TouchSensor, {
-      activationConstraint: { delay: 90, tolerance: 10 },
+      activationConstraint: { delay: 70, tolerance: 8 },
     }),
   );
 
@@ -343,6 +518,21 @@ export default function GamePage() {
   }, [token, gameId, setGameState]);
 
   useEffect(() => { fetchState(); }, [fetchState]);
+
+  useEffect(() => {
+    if (isPlausibleRack(gameState?.my_rack)) {
+      setStartingRack([...gameState.my_rack]);
+    }
+  }, [gameState?.my_rack, setStartingRack]);
+
+  useEffect(() => {
+    if (!token || creditBalance !== null) return;
+    api.me(token)
+      .then((profile) => {
+        setCreditBalance(profile.credit_balance);
+      })
+      .catch(() => {});
+  }, [token, creditBalance, setCreditBalance]);
 
   useEffect(() => {
     return () => { if (countdownRef.current) clearInterval(countdownRef.current); };
@@ -378,6 +568,98 @@ export default function GamePage() {
     setToast(t);
   }, []);
 
+  const handleNewGame = useCallback(async () => {
+    if (!token || startingNewGame) return;
+
+    setStartingNewGame(true);
+    setNewGameTransitioning(true);
+    try {
+      const [result] = await Promise.all([
+        api.createGame(token, {
+          game_mode: "vs_ai",
+          ai_model_model_id: selectedModelId || gameState?.ai_model_id || undefined,
+        }) as Promise<CreateGameResponse>,
+        new Promise((resolve) => window.setTimeout(resolve, 320)),
+      ]);
+      resetGameUi();
+      setAiApproved(false);
+      setAiError(null);
+      setAIBlockerModal(null);
+      setLastAIBilling(null);
+      setLastAIAudit(null);
+      setStartingDraw(result.starting_draw);
+      setStartingRack(result.human_rack);
+      router.replace(`/draw/${result.game_id}`);
+    } catch (err) {
+      setNewGameTransitioning(false);
+      showToast({
+        id: `new-${Date.now()}`,
+        type: "error",
+        message: err instanceof Error ? err.message : "Could not start a new game",
+      });
+    } finally {
+      setStartingNewGame(false);
+    }
+  }, [
+    token,
+    startingNewGame,
+    selectedModelId,
+    gameState?.ai_model_id,
+    resetGameUi,
+    setStartingDraw,
+    setStartingRack,
+    router,
+    showToast,
+  ]);
+
+  const handleGiveUp = useCallback(async () => {
+    if (!token || givingUp || gameState?.game_over || aiThinking) return;
+    if (!window.confirm("Give up this game? The AI will be declared the winner.")) return;
+
+    setGivingUp(true);
+    try {
+      const result = (await api.giveUp(token, gameId)) as MoveResult;
+      if (result.ok && result.state) {
+        setGameState(result.state);
+        setAiApproved(false);
+        setAIThinking(false);
+        clearPendingTiles();
+        setExchangeMode(false);
+        showToast({
+          id: `giveup-${Date.now()}`,
+          type: "error",
+          message: "You gave up the game.",
+        });
+        return;
+      }
+
+      showToast({
+        id: `giveup-${Date.now()}`,
+        type: "error",
+        message: result.error ?? "Could not give up this game",
+      });
+    } catch (err) {
+      showToast({
+        id: `giveup-${Date.now()}`,
+        type: "error",
+        message: err instanceof Error ? err.message : "Could not give up this game",
+      });
+    } finally {
+      setGivingUp(false);
+    }
+  }, [
+    token,
+    givingUp,
+    gameState?.game_over,
+    aiThinking,
+    gameId,
+    setGameState,
+    setAIThinking,
+    clearPendingTiles,
+    setExchangeMode,
+    showToast,
+  ]);
+
   const syncState = useCallback(
     async (state?: GameState) => {
       if (state) {
@@ -395,11 +677,25 @@ export default function GamePage() {
     if (gameState.current_turn_slot !== 1) return;
     if (aiInFlightRef.current) return;
 
+    const availableCredits = creditBalance ? Number.parseFloat(creditBalance) : Number.NaN;
+    if (Number.isFinite(availableCredits) && availableCredits <= 0) {
+      const blocker = normalizeAIBlocker("", "insufficient_user_credit", creditBalance);
+      setAiApproved(false);
+      if (blocker) {
+        setAiError(blocker.message);
+        setAIBlockerModal(blocker);
+      }
+      return;
+    }
+
+    const activeModelId = selectedModelId || gameState.ai_model_id;
+
     aiInFlightRef.current = true;
     clearAICandidates();
     setAIThinking(true);
-    setAIStatusMessage("Exploring legal words and validating the board...");
+    setAIStatusMessage(`Exploring legal words with ${activeModelId}...`);
     setAiError(null);
+    setAIBlockerModal(null);
     startCountdown(aiTimeout);
 
     try {
@@ -409,8 +705,9 @@ export default function GamePage() {
         body: JSON.stringify({
           game_id: gameId,
           token,
-          model_id: selectedModelId,
+          model_id: activeModelId,
           timeout: aiTimeout,
+          max_steps: aiMaxSteps,
         }),
       });
 
@@ -424,13 +721,39 @@ export default function GamePage() {
           doneData = data;
           const result = data as unknown as MoveResult;
           setLastMoveResult(result);
+          setLastAIAudit({
+            requestedModel:
+              typeof data.requested_model === "string" ? data.requested_model : null,
+            sessionModel:
+              typeof data.session_model === "string" ? data.session_model : null,
+            responseModel:
+              typeof data.response_model === "string" ? data.response_model : null,
+            candidatesFound:
+              typeof data.candidates_found === "number" ? data.candidates_found : 0,
+            timedOut: data.timed_out === true,
+            autoFinalized: data.auto_finalized === true,
+          });
           if (result.state) {
             setGameState(result.state);
           }
         },
-        onError: (msg) => {
-          console.error("AI stream error:", msg);
-          setAiError(msg);
+        onError: (error) => {
+          const blocker = normalizeAIBlocker(
+            error.message,
+            error.code,
+            error.creditBalance ?? creditBalance,
+          );
+          setAiApproved(false);
+          if (blocker) {
+            setAiError(blocker.message);
+            setAIBlockerModal(blocker);
+            setAIThinking(false);
+            setAIStatusMessage(null);
+            stopCountdown();
+            return;
+          }
+          console.error("AI stream error:", error.message);
+          setAiError(error.message);
         },
         onStatus: (msg) => {
           setAIStatusMessage(msg);
@@ -442,12 +765,22 @@ export default function GamePage() {
       stopCountdown();
 
       if (doneData) {
+        const billing = (doneData as MoveResult).billing;
+        if (billing?.remaining_credits) {
+          setCreditBalance(billing.remaining_credits);
+        }
+        if (billing) {
+          setLastAIBilling(billing);
+        }
         const action = (doneData as Record<string, unknown>).action as string;
         if (action === "pass") {
           showToast({
             id: `pass-${Date.now()}`,
             type: "ai_pass",
-            message: "AI couldn't find a valid move",
+            message: "AI passes",
+            chargedCredits: billing?.charged_credits,
+            chargedUsd: billing?.charged_usd,
+            remainingCredits: billing?.remaining_credits,
           });
         } else if (action === "place") {
           const bestWord = (doneData as Record<string, unknown>).best_word as string | undefined;
@@ -459,6 +792,18 @@ export default function GamePage() {
             message: `AI played ${bestWord ?? "a word"}`,
             words: words?.map((w) => w.word) ?? (bestWord ? [bestWord] : []),
             score: bestScore ?? (doneData as Record<string, unknown>).points as number | undefined ?? 0,
+            chargedCredits: billing?.charged_credits,
+            chargedUsd: billing?.charged_usd,
+            remainingCredits: billing?.remaining_credits,
+          });
+        } else if (action === "exchange") {
+          showToast({
+            id: `exchange-${Date.now()}`,
+            type: "ai_pass",
+            message: "AI exchanged tiles",
+            chargedCredits: billing?.charged_credits,
+            chargedUsd: billing?.charged_usd,
+            remainingCredits: billing?.remaining_credits,
           });
         }
       }
@@ -468,8 +813,16 @@ export default function GamePage() {
         confetti({ particleCount: 200, spread: 100, origin: { y: 0.6 } });
       }
     } catch (err) {
-      console.error("AI move failed:", err);
-      setAiError(err instanceof Error ? err.message : "AI move failed");
+      const message = err instanceof Error ? err.message : "AI move failed";
+      const blocker = normalizeAIBlocker(message);
+      setAiApproved(false);
+      if (blocker) {
+        setAiError(blocker.message);
+        setAIBlockerModal(blocker);
+      } else {
+        console.error("AI move failed:", err);
+        setAiError(message);
+      }
       setAIThinking(false);
       setAIStatusMessage(null);
       stopCountdown();
@@ -477,8 +830,8 @@ export default function GamePage() {
       aiInFlightRef.current = false;
     }
   }, [
-    token, gameState, gameId, selectedModelId, aiTimeout,
-    setAIThinking, setLastMoveResult, setGameState, setAIStatusMessage, syncState,
+    token, gameState, gameId, selectedModelId, aiTimeout, aiMaxSteps, creditBalance,
+    setCreditBalance, setAIThinking, setLastMoveResult, setGameState, setAIStatusMessage, syncState,
     clearAICandidates, addAICandidate, startCountdown, stopCountdown, showToast,
   ]);
 
@@ -566,10 +919,34 @@ export default function GamePage() {
     }));
 
     try {
+      const validation = (await api.validateMove(token, gameId, placements)) as MoveValidationResult;
+      if (!validation.valid) {
+        const invalidWords = (validation.words ?? [])
+          .filter((word) => !word.valid)
+          .map((word) => word.word);
+
+        if (invalidWords.length > 0) {
+          showToast({
+            id: `invalid-${Date.now()}`,
+            type: "invalid_word",
+            message: validation.reason ?? "Invalid words",
+            words: invalidWords,
+          });
+          return;
+        }
+
+        showToast({
+          id: `err-${Date.now()}`,
+          type: "placement_error",
+          message: validation.reason ?? "Move rejected",
+        });
+        return;
+      }
+
       const result = (await api.submitMove(token, gameId, 0, placements)) as MoveResult;
       setLastMoveResult(result);
-      clearPendingTiles();
       if (result.ok) {
+        clearPendingTiles();
         setAiApproved(true);
         const latest = await syncState(result.state);
         if (latest?.game_over && latest.winner_slot === 0) {
@@ -594,7 +971,6 @@ export default function GamePage() {
         message: result.error ?? "Move rejected",
       });
     } catch (err) {
-      clearPendingTiles();
       showToast({
         id: `err-${Date.now()}`,
         type: "placement_error",
@@ -658,10 +1034,9 @@ export default function GamePage() {
   const boardDragPreview = activeDragTile && dragPreviewTarget
     ? {
         ...dragPreviewTarget,
-        letter: activeDragTile.letter,
-        isBlank: activeDragTile.letter === "?",
       }
     : null;
+  const displayedModelId = selectedModelId || gameState?.ai_model_id;
 
   if (!token) {
     return (
@@ -685,22 +1060,100 @@ export default function GamePage() {
       onDragCancel={handleDragCancel}
       onDragEnd={handleDragEnd}
     >
+      <AnimatePresence>
+        {newGameTransitioning && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.32, ease: [0.22, 1, 0.36, 1] }}
+            className="fixed inset-0 z-[90] bg-black"
+          />
+        )}
+      </AnimatePresence>
+
       <div className="min-h-screen bg-gradient-to-br from-stone-950 via-stone-900 to-stone-950 text-stone-100">
-        <div className="max-w-2xl mx-auto px-4 py-4 flex flex-col gap-3">
-          {/* Header */}
-          <div className="flex items-center justify-between">
-            <div className="text-xs text-stone-500 font-mono">{selectedModelId}</div>
-            <button
-              onClick={() => router.push("/settings")}
-              className="p-2 rounded-lg hover:bg-stone-800 transition-colors text-stone-400 hover:text-stone-200"
-              title="Settings"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24"
-                fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
-                <circle cx="12" cy="12" r="3" />
-              </svg>
-            </button>
+        <div className="mx-auto flex max-w-[980px] flex-col gap-4 px-4 py-4 sm:px-5 sm:py-5">
+          <div className="rounded-[1.6rem] border border-white/8 bg-stone-900/58 p-4 shadow-[0_20px_50px_rgba(0,0,0,0.22)] backdrop-blur-sm">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+              <div className="min-w-0">
+                <div className="text-[0.68rem] uppercase tracking-[0.28em] text-stone-500">
+                  AI opponent
+                </div>
+                <div className="mt-1 text-xl font-black text-stone-50 sm:text-2xl">
+                  {gameState?.ai_model_display_name ?? "GPT opponent"}
+                </div>
+                <div className="mt-1 break-all font-mono text-xs text-stone-500">
+                  {displayedModelId}
+                </div>
+                <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
+                  <span className="rounded-full border border-amber-300/20 bg-amber-400/10 px-3 py-1 font-semibold text-amber-200">
+                    {creditBalance ?? "0.00"} cr
+                  </span>
+                  <span className="text-stone-400">
+                    Session {gameState?.ai_model_id ?? "n/a"}
+                  </span>
+                  {selectedModelId && selectedModelId !== gameState?.ai_model_id && (
+                    <span className="text-sky-300/90">
+                      Next AI turn switches to {selectedModelId}
+                    </span>
+                  )}
+                  {lastAIBilling && (
+                    <>
+                      <span className="text-emerald-300/90">
+                        Last AI cost {lastAIBilling.charged_usd} USD
+                      </span>
+                      <span className="text-stone-500">
+                        {lastAIBilling.total_tokens} tokens
+                      </span>
+                    </>
+                  )}
+                  {lastAIAudit?.responseModel && (
+                    <span className="text-stone-500">
+                      Last response {lastAIAudit.responseModel}
+                    </span>
+                  )}
+                </div>
+                {lastAIAudit && (
+                  <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-[1rem] border border-white/6 bg-black/16 px-3 py-2 text-[0.68rem] text-stone-400">
+                    <span>Requested {lastAIAudit.requestedModel ?? "n/a"}</span>
+                    <span>Session {lastAIAudit.sessionModel ?? "n/a"}</span>
+                    <span>Response {lastAIAudit.responseModel ?? "n/a"}</span>
+                    <span>{lastAIAudit.candidatesFound} candidates</span>
+                    {lastAIAudit.timedOut && <span>Timed out</span>}
+                    {lastAIAudit.autoFinalized && <span>Auto-finalized</span>}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={() => void handleNewGame()}
+                  disabled={startingNewGame}
+                  className="rounded-full border border-amber-300/30 bg-amber-300/12 px-4 py-2 text-sm font-semibold text-amber-100 shadow-[0_10px_24px_rgba(251,191,36,0.10)] transition-all hover:border-amber-200/48 hover:bg-amber-300/18 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {startingNewGame ? "Starting..." : "New game"}
+                </button>
+                <button
+                  onClick={() => void handleGiveUp()}
+                  disabled={givingUp || gameState?.game_over || aiThinking}
+                  className="rounded-full border border-rose-400/22 bg-rose-500/10 px-4 py-2 text-sm font-semibold text-rose-100 shadow-[0_10px_24px_rgba(244,63,94,0.10)] transition-all hover:border-rose-300/40 hover:bg-rose-500/14 disabled:cursor-not-allowed disabled:opacity-45"
+                >
+                  {givingUp ? "Giving up..." : "Give up"}
+                </button>
+                <button
+                  onClick={() => router.push("/settings")}
+                  className="rounded-full border border-white/10 bg-white/5 px-3.5 py-2 text-stone-300 transition-all hover:border-white/18 hover:bg-white/8 hover:text-stone-100"
+                  title="Settings"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24"
+                    fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+                    <circle cx="12" cy="12" r="3" />
+                  </svg>
+                </button>
+              </div>
+            </div>
           </div>
 
           <ScorePanel />
@@ -746,7 +1199,7 @@ export default function GamePage() {
 
           {/* Human controls */}
           {isMyTurn && (
-            <div className="flex justify-center">
+            <div className="w-full">
               <GameControls onPlay={handlePlay} onExchange={handleExchange} onPass={handlePass}
                 disabled={!isMyTurn || gameState?.game_over} />
             </div>
@@ -763,9 +1216,9 @@ export default function GamePage() {
                 <p className="text-stone-400 mb-4">
                   {gameState.slots.map((s) => `${s.username}: ${s.score}`).join(" vs ")}
                 </p>
-                <button onClick={() => router.push("/")}
+                <button onClick={() => void handleNewGame()}
                   className="px-6 py-3 rounded-xl bg-amber-500 text-stone-900 font-semibold hover:bg-amber-400 transition-colors">
-                  New Game
+                  {startingNewGame ? "Starting..." : "New Game"}
                 </button>
               </motion.div>
             )}
@@ -775,9 +1228,23 @@ export default function GamePage() {
 
       <AIThinkingOverlay />
       <BlankPicker onSelect={handleBlankSelect} />
-      <DragOverlay>
+      <DragOverlay
+        adjustScale={false}
+        dropAnimation={{
+          ...defaultDropAnimation,
+          duration: 150,
+          easing: "cubic-bezier(0.22, 1, 0.36, 1)",
+          sideEffects: defaultDropAnimationSideEffects({
+            styles: {
+              active: {
+                opacity: "0.22",
+              },
+            },
+          }),
+        }}
+      >
         {activeDragTile ? (
-          <div className="pointer-events-none -translate-y-4 scale-[1.04] drop-shadow-2xl">
+          <div className="pointer-events-none -translate-y-2 drop-shadow-[0_20px_36px_rgba(0,0,0,0.38)]">
             <Tile
               letter={activeDragTile.letter}
               isBlank={activeDragTile.letter === "?"}
@@ -790,6 +1257,16 @@ export default function GamePage() {
 
       {/* Toast overlays */}
       <AnimatePresence>
+        {aiBlockerModal && (
+          <AIBlockerOverlay
+            modal={aiBlockerModal}
+            onClose={() => setAIBlockerModal(null)}
+            onOpenSettings={() => {
+              setAIBlockerModal(null);
+              router.push("/settings");
+            }}
+          />
+        )}
         {toast && (
           <ToastOverlay
             key={toast.id}

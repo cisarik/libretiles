@@ -1,14 +1,16 @@
-from rest_framework import generics, permissions
+from rest_framework import permissions
+from rest_framework.response import Response
+from rest_framework.views import APIView
 
-from .models import AIModel
+from .selection import get_selectable_models
 from .serializers import AIModelSerializer
 
 
-class AIModelListView(generics.ListAPIView):
-    """Public list of active AI models with pricing."""
+class AIModelListView(APIView):
+    """Public list of selectable AI models with pricing."""
 
-    serializer_class = AIModelSerializer
     permission_classes = [permissions.AllowAny]
 
-    def get_queryset(self):  # type: ignore[no-untyped-def]
-        return AIModel.objects.filter(is_active=True)
+    def get(self, request):  # type: ignore[no-untyped-def]
+        serializer = AIModelSerializer(get_selectable_models(), many=True)
+        return Response(serializer.data)

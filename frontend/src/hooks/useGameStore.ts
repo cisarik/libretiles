@@ -16,6 +16,8 @@ interface GameStore {
   // Auth
   token: string | null;
   setToken: (token: string | null) => void;
+  creditBalance: string | null;
+  setCreditBalance: (balance: string | null) => void;
 
   // AI model selection
   selectedModelId: string;
@@ -28,6 +30,8 @@ interface GameStore {
   // Starting draw
   startingDraw: StartingDraw | null;
   setStartingDraw: (draw: StartingDraw | null) => void;
+  startingRack: string[] | null;
+  setStartingRack: (rack: string[] | null) => void;
 
   // Pending tiles (placed on board but not submitted)
   pendingTiles: PendingTile[];
@@ -49,6 +53,8 @@ interface GameStore {
   // AI timeout (persisted)
   aiTimeout: number;
   setAITimeout: (seconds: number) => void;
+  aiMaxSteps: number;
+  setAIMaxSteps: (steps: number) => void;
 
   // AI candidates (live during thinking)
   aiCandidates: AICandidate[];
@@ -76,6 +82,8 @@ interface GameStore {
   blankPickerTarget: { row: number; col: number; rackIndex: number } | null;
   openBlankPicker: (row: number, col: number, rackIndex: number) => void;
   closeBlankPicker: () => void;
+
+  resetGameUi: () => void;
 }
 
 export const useGameStore = create<GameStore>()(
@@ -83,8 +91,10 @@ export const useGameStore = create<GameStore>()(
     (set) => ({
   token: null,
   setToken: (token) => set({ token }),
+  creditBalance: null,
+  setCreditBalance: (creditBalance) => set({ creditBalance }),
 
-  selectedModelId: process.env.NEXT_PUBLIC_DEFAULT_MODEL || "openai/gpt-4o-mini",
+  selectedModelId: process.env.NEXT_PUBLIC_DEFAULT_MODEL || "openai/gpt-5.4",
   setSelectedModelId: (selectedModelId) => set({ selectedModelId }),
 
   gameState: null,
@@ -92,6 +102,8 @@ export const useGameStore = create<GameStore>()(
 
   startingDraw: null,
   setStartingDraw: (startingDraw) => set({ startingDraw }),
+  startingRack: null,
+  setStartingRack: (startingRack) => set({ startingRack }),
 
   pendingTiles: [],
   addPendingTile: (tile) =>
@@ -120,6 +132,8 @@ export const useGameStore = create<GameStore>()(
 
   aiTimeout: 30,
   setAITimeout: (aiTimeout) => set({ aiTimeout }),
+  aiMaxSteps: 30,
+  setAIMaxSteps: (aiMaxSteps) => set({ aiMaxSteps }),
 
   aiCandidates: [],
   addAICandidate: (candidate) =>
@@ -144,6 +158,21 @@ export const useGameStore = create<GameStore>()(
     set({ blankPickerOpen: true, blankPickerTarget: { row, col, rackIndex } }),
   closeBlankPicker: () =>
     set({ blankPickerOpen: false, blankPickerTarget: null }),
+  resetGameUi: () =>
+    set({
+      gameState: null,
+      pendingTiles: [],
+      exchangeMode: false,
+      exchangeSelected: new Set(),
+      aiThinking: false,
+      aiCandidates: [],
+      aiStatusMessage: null,
+      aiCountdown: 0,
+      lastMoveResult: null,
+      phase: "idle",
+      blankPickerOpen: false,
+      blankPickerTarget: null,
+    }),
 }),
     {
       name: "libretiles-store",
@@ -158,6 +187,7 @@ export const useGameStore = create<GameStore>()(
         token: state.token,
         selectedModelId: state.selectedModelId,
         aiTimeout: state.aiTimeout,
+        aiMaxSteps: state.aiMaxSteps,
       }),
     },
   ),

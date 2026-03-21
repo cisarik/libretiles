@@ -89,14 +89,14 @@ export function usePremiumBoardLighting(
       setStyle("--board-light-x", `${(50 + x * 24).toFixed(2)}%`);
       setStyle("--board-light-y", `${(50 + y * 24).toFixed(2)}%`);
       setStyle("--board-sheen-angle", `${(140 + x * 22 - y * 14).toFixed(2)}deg`);
-      setStyle("--board-glow-strength", `${(0.34 + intensity * 0.22).toFixed(3)}`);
-      setStyle("--board-shadow-x", `${(-x * 10).toFixed(2)}px`);
-      setStyle("--board-shadow-y", `${(18 - y * 6).toFixed(2)}px`);
-      setStyle("--board-ambient-x", `${(x * 10).toFixed(2)}px`);
-      setStyle("--board-ambient-y", `${(y * 10).toFixed(2)}px`);
-      setStyle("--board-light-core-size", `${(42 + intensity * 6).toFixed(2)}%`);
-      setStyle("--board-light-field-size", `${(78 + intensity * 10).toFixed(2)}%`);
-      setStyle("--board-premium-field-size", `${(70 + intensity * 8).toFixed(2)}%`);
+      setStyle("--board-glow-strength", `${(0.42 + intensity * 0.3).toFixed(3)}`);
+      setStyle("--board-shadow-x", `${(-x * 12).toFixed(2)}px`);
+      setStyle("--board-shadow-y", `${(20 - y * 7).toFixed(2)}px`);
+      setStyle("--board-ambient-x", `${(x * 12).toFixed(2)}px`);
+      setStyle("--board-ambient-y", `${(y * 12).toFixed(2)}px`);
+      setStyle("--board-light-core-size", `${(44 + intensity * 8).toFixed(2)}%`);
+      setStyle("--board-light-field-size", `${(80 + intensity * 12).toFixed(2)}%`);
+      setStyle("--board-premium-field-size", `${(72 + intensity * 10).toFixed(2)}%`);
     };
 
     const cancelAnimation = () => {

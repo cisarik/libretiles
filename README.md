@@ -45,6 +45,7 @@ cp .env.example .env                             # create env (edit SECRET_KEY)
 poetry install                                    # install Python dependencies
 poetry run python manage.py migrate               # create database tables
 poetry run python manage.py seed_models           # seed AI model catalog
+poetry run python manage.py sync_gateway_models   # sync latest Gateway model metadata
 poetry run python manage.py createsuperuser       # (optional) admin account
 poetry run python manage.py runserver 0.0.0.0:8000
 ```
@@ -61,6 +62,8 @@ npm run dev                                       # start dev server at :3000
 ```
 
 Open http://localhost:3000, register, choose an AI model, and play.
+
+`sync_gateway_models` fetches the latest public catalog from `https://ai-gateway.vercel.sh/v1/models`, updates technical metadata in `catalog.AIModel`, and keeps newly discovered models inactive by default unless you pass `--activate-new`.
 
 ### Environment Variables
 
@@ -122,6 +125,7 @@ The scripts handle `.env` creation, dependency installation, migrations, and mod
 cd libretiles/backend && cp .env.example .env && poetry install && \
   poetry run python manage.py migrate && \
   poetry run python manage.py seed_models && \
+  poetry run python manage.py sync_gateway_models && \
   poetry run python manage.py runserver 0.0.0.0:8000
 
 # Terminal 2 (frontend):
@@ -176,8 +180,8 @@ libretiles/
 │   ├── config/          # Django settings, URLs, ASGI
 │   ├── gamecore/        # Pure Python Scrabble engine (ported from scrabgpt/core)
 │   ├── accounts/        # User auth (JWT)
-│   ├── catalog/         # AI model catalog (admin-managed)
-│   │   └── management/commands/seed_models.py
+│   ├── catalog/         # AI model catalog (admin-managed + gateway sync)
+│   │   └── management/commands/
 │   ├── game/            # Game sessions, moves, validation, AI tools
 │   ├── billing/         # Credits + transactions (v2)
 │   ├── assets/          # Collins 2019 dictionary, premiums.json, variant data

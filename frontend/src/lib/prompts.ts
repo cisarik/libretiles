@@ -20,6 +20,19 @@ LEGALITY (NON-NEGOTIABLE):
 - Later moves must connect to existing board letters.
 - All created words (main + cross words) must be valid English words in Collins Scrabble Words (2019).
 
+LEXICAL DISCIPLINE (CRITICAL):
+- Do NOT use tools as a brute-force dictionary oracle.
+- Before any tool call, mentally reject letter salads, awkward consonant clusters, and random concatenations that do not look like real English words.
+- Prefer real-looking hooks, extensions, inflections, short tactical plays, and strong stems before speculative long strings.
+- If one candidate family is rejected, do not keep mutating the same nonsense stem.
+- Longer words require higher confidence than short hooks. If uncertain, test a smaller high-confidence move first.
+
+BOARD-ANCHOR SEARCH METHOD:
+1) Scan the board for anchor squares, existing hooks, front hooks, back hooks, and premium lanes.
+2) Build only a small set of high-confidence candidates per anchor.
+3) Prioritize short, credible scoring plays before exotic constructions.
+4) Use blanks for bingos, premium jumps, or clearly superior EV, not random experimentation.
+
 STRATEGIC PRIORITIES:
 1) Generate multiple legal candidates before finalizing.
 2) Track both immediate score and rack leave quality.
@@ -44,15 +57,20 @@ ANTI-BLUNDER RULES:
 - Never choose a move that is lower score and worse leave than another legal candidate.
 - Never open an obvious TW/DW hotspot for opponent without compensating gain.
 - If uncertain between close candidates, prefer the safer board-shape option.
+- If the board is unclear, prefer a real short scoring hook over a speculative longer word.
 
 MANDATORY TOOL WORKFLOW:
-1) FIRST call validateMove with your best candidate placement to check legality and score.
-2) Call validateWords to verify all formed words are in the Collins Scrabble Words (2019) dictionary.
-3) If the first candidate is invalid, try alternative placements.
-4) Evaluate at least 2-3 candidates when possible.
-5) If rack contains '?', you MUST evaluate candidates that consume '?'.
-6) Return ONLY the highest-scoring legal move from evaluated candidates.
-7) If no legal scoring move exists, choose exchange; pass only as last resort.
+1) FIRST identify anchor-based candidates that already look like real English plays.
+2) Call validateMove only for those high-confidence placements.
+3) Call validateWords only for words produced by a legal-looking placement, never for random brainstorming.
+4) If a candidate is rejected, move to a meaningfully different anchor or word family.
+5) Evaluate at least 3 distinct candidate lines when possible:
+   - best short safe hook
+   - best premium attack
+   - best leave/bingo line
+6) If rack contains '?', you MUST evaluate strong candidates that consume '?'.
+7) Return ONLY the highest-EV legal move from evaluated candidates.
+8) If no legal scoring move exists, choose exchange; pass only as last resort.
 
 NO-SCORING FALLBACK:
 - Exchange/pass is forbidden while any legal scoring move exists.
@@ -104,6 +122,11 @@ export function buildMoveUserPrompt(context: {
 TILE VALUES: ${tileValues}
 PREMIUM LEGEND: ${premiumLegend}
 ${context.is_first_move ? "THIS IS THE FIRST MOVE — must cross center (7,7)." : ""}
+
+SEARCH REMINDER:
+- Start from hooks and anchor squares, not from random long words.
+- Prefer credible English stems, extensions, plurals, front hooks, back hooks, and premium conversions.
+- Do not test implausible nonsense strings.
 
 CURRENT BOARD STATE:
 ${context.compact_state}

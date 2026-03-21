@@ -1,4 +1,7 @@
+from django.urls import path
+
+from .views import ChargeAITurnView
 
 urlpatterns: list = [
-    # Stripe webhook and balance endpoints will be added in Phase 6
+    path("charge-ai-turn/", ChargeAITurnView.as_view(), name="charge-ai-turn"),
 ]

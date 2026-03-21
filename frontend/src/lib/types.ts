@@ -33,6 +33,8 @@ export interface GameState {
   game_over: boolean;
   game_end_reason: string;
   winner_slot: number | null;
+  ai_model_id: string | null;
+  ai_model_display_name?: string | null;
   slots: SlotInfo[];
   move_count: number;
   my_rack: string[];
@@ -49,6 +51,19 @@ export interface CreateGameResponse {
   starting_draw: StartingDraw;
   human_rack: string[];
   current_turn_slot: number;
+  ai_model_id: string | null;
+  ai_model_display_name?: string | null;
+}
+
+export interface BillingSummary {
+  charged_credits: string;
+  remaining_credits: string;
+  charged_usd: string;
+  charge_source: string;
+  model_id: string | null;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
 }
 
 export interface MoveResult {
@@ -66,7 +81,16 @@ export interface MoveResult {
   leftover_points?: Record<string, number>;
   winner_slot?: number | null;
   action?: string;
+  billing?: BillingSummary;
   state?: GameState;
+}
+
+export interface MoveValidationResult {
+  valid: boolean;
+  reason?: string;
+  total_score?: number;
+  words?: Array<{ word: string; valid: boolean }>;
+  breakdowns?: Array<{ word: string; score: number; multiplier?: number }>;
 }
 
 export interface AIModel {
@@ -77,6 +101,25 @@ export interface AIModel {
   description: string;
   quality_tier: "basic" | "standard" | "premium" | "elite";
   cost_per_game: string;
+  pricing: Record<string, unknown>;
+  context_window?: number | null;
+  max_tokens?: number | null;
+  input_cost_per_million: string;
+  output_cost_per_million: string;
+  cache_read_cost_per_million: string;
+  cache_write_cost_per_million: string;
+  combined_cost_per_million: string;
+  is_flagship: boolean;
+}
+
+export interface UserProfile {
+  id: number;
+  username: string;
+  email: string;
+  preferred_ai_model_id: string;
+  credit_balance: string;
+  credit_updated_at?: string | null;
+  date_joined: string;
 }
 
 export type PremiumType = "TW" | "DW" | "TL" | "DL" | "";

@@ -21,14 +21,26 @@
 import { NextRequest } from "next/server";
 import { generateText, tool, stepCountIs } from "ai";
 import { z } from "zod";
-import { getModel } from "@/lib/ai-gateway";
+import {
+  canUseDirectOpenAIModel,
+  getDirectModel,
+  getModel,
+  isGatewayConfigured,
+} from "@/lib/ai-gateway";
 import { MOVE_SYSTEM_PROMPT, buildMoveUserPrompt } from "@/lib/prompts";
 
 const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8000";
 const DEFAULT_TIMEOUT_S = 30;
-const MAX_STEPS = 30;
+const DEFAULT_MAX_STEPS = 30;
+const MIN_STEPS = 5;
+const MAX_STEPS = 100;
+const DEFAULT_MAX_OUTPUT_TOKENS = 10000;
+const MIN_MAX_OUTPUT_TOKENS = 2000;
+const MAX_MAX_OUTPUT_TOKENS = 64000;
 const AUTO_FINALIZE_GRACE_MS = 2500;
 const AUTO_FINALIZE_VALID_CAP = 4;
+const EXTENDED_AUTO_FINALIZE_GRACE_MS = 6000;
+const EXTENDED_AUTO_FINALIZE_VALID_CAP = 7;
 
 async function backendPost(path: string, body: unknown, token: string) {
   const res = await fetch(`${BACKEND_URL}${path}`, {
@@ -49,6 +61,31 @@ async function backendGet(path: string, token: string) {
     headers: { Authorization: `Bearer ${token}` },
   });
   return res.json();
+}
+
+async function backendPatch(path: string, body: unknown, token: string) {
+  const res = await fetch(`${BACKEND_URL}${path}`, {
+    method: "PATCH",
+    cache: "no-store",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(body),
+  });
+  return res.json();
+}
+
+async function chargeAITurn(
+  gameId: string,
+  token: string,
+  aiMetadata: Record<string, unknown>,
+) {
+  return backendPost(
+    "/api/billing/charge-ai-turn/",
+    { game_id: gameId, ai_metadata: aiMetadata },
+    token,
+  );
 }
 
 const placementSchema = z.object({
@@ -78,8 +115,97 @@ type Candidate = {
   timestamp: number;
 };
 
+type UsageLike = {
+  inputTokens?: number | { total?: number; noCache?: number; cacheRead?: number; cacheWrite?: number };
+  inputTokenDetails?: { noCacheTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number };
+  outputTokens?: number | { total?: number; text?: number; reasoning?: number };
+  outputTokenDetails?: { textTokens?: number; reasoningTokens?: number };
+  totalTokens?: number;
+  raw?: unknown;
+};
+
+type NormalizedRouteError = {
+  code: "insufficient_user_credit" | "insufficient_provider_funds";
+  message: string;
+};
+
 function sseEvent(data: Record<string, unknown>): string {
   return `data: ${JSON.stringify(data)}\n\n`;
+}
+
+function normalizeRouteError(error: unknown): NormalizedRouteError | null {
+  const message = error instanceof Error ? error.message : String(error);
+  const normalized = message.toLowerCase();
+
+  if (
+    normalized.includes("insufficient funds") ||
+    normalized.includes("add credits to your account") ||
+    normalized.includes("top up your credits")
+  ) {
+    return {
+      code: "insufficient_provider_funds",
+      message:
+        "The shared AI provider budget is temporarily exhausted. Your personal balance is untouched. Switch models or try again later.",
+    };
+  }
+
+  return null;
+}
+
+function normalizeUsage(usage?: UsageLike | null) {
+  if (!usage) return null;
+
+  const inputTokenDetails = usage.inputTokenDetails;
+  const outputTokenDetails = usage.outputTokenDetails;
+  const nestedInput =
+    typeof usage.inputTokens === "object" && usage.inputTokens !== null
+      ? usage.inputTokens
+      : null;
+  const nestedOutput =
+    typeof usage.outputTokens === "object" && usage.outputTokens !== null
+      ? usage.outputTokens
+      : null;
+
+  const inputTokens =
+    nestedInput?.total ??
+    (typeof usage.inputTokens === "number" ? usage.inputTokens : undefined) ??
+    0;
+  const outputTokens =
+    nestedOutput?.total ??
+    (typeof usage.outputTokens === "number" ? usage.outputTokens : undefined) ??
+    0;
+  const cacheReadTokens =
+    nestedInput?.cacheRead ?? inputTokenDetails?.cacheReadTokens ?? 0;
+  const cacheWriteTokens =
+    nestedInput?.cacheWrite ?? inputTokenDetails?.cacheWriteTokens ?? 0;
+  const noCacheTokens =
+    nestedInput?.noCache ??
+    inputTokenDetails?.noCacheTokens ??
+    Math.max(inputTokens - cacheReadTokens - cacheWriteTokens, 0);
+  const textTokens =
+    nestedOutput?.text ?? outputTokenDetails?.textTokens ?? outputTokens;
+  const reasoningTokens =
+    nestedOutput?.reasoning ?? outputTokenDetails?.reasoningTokens ?? 0;
+
+  return {
+    inputTokens,
+    inputTokenDetails: {
+      noCacheTokens,
+      cacheReadTokens,
+      cacheWriteTokens,
+    },
+    outputTokens,
+    outputTokenDetails: {
+      textTokens,
+      reasoningTokens,
+    },
+    totalTokens: usage.totalTokens ?? inputTokens + outputTokens,
+    raw: usage.raw ?? null,
+  };
+}
+
+function clampNumber(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max);
 }
 
 export async function POST(req: NextRequest) {
@@ -89,10 +215,19 @@ export async function POST(req: NextRequest) {
     token: string;
     model_id?: string;
     timeout?: number;
+    max_steps?: number;
   };
 
   const timeoutS = Math.max(15, Math.min(timeout ?? DEFAULT_TIMEOUT_S, 600));
+  const maxSteps = Math.max(
+    MIN_STEPS,
+    Math.min(
+      typeof body.max_steps === "number" ? body.max_steps : DEFAULT_MAX_STEPS,
+      MAX_STEPS,
+    ),
+  );
   const startTime = Date.now();
+  const requestedModelId = model_id || null;
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -112,6 +247,8 @@ export async function POST(req: NextRequest) {
       let autoFinalized = false;
       let autoFinalizeTimer: ReturnType<typeof setTimeout> | null = null;
       const abortController = new AbortController();
+      let autoFinalizeGraceMs = AUTO_FINALIZE_GRACE_MS;
+      let autoFinalizeValidCap = AUTO_FINALIZE_VALID_CAP;
 
       function clearAutoFinalizeTimer() {
         if (autoFinalizeTimer) {
@@ -155,18 +292,18 @@ export async function POST(req: NextRequest) {
               type: "thinking",
               status: "candidate_found",
               message: `Found ${best.word} for ${best.score} points. Checking a few last alternatives...`,
-              auto_finalize_ms: AUTO_FINALIZE_GRACE_MS,
+              auto_finalize_ms: autoFinalizeGraceMs,
               valid_candidates: validCount,
             });
 
-            if (validCount >= AUTO_FINALIZE_VALID_CAP) {
+            if (validCount >= autoFinalizeValidCap) {
               autoFinalized = true;
               abortController.abort();
             } else {
               autoFinalizeTimer = setTimeout(() => {
                 autoFinalized = true;
                 abortController.abort();
-              }, AUTO_FINALIZE_GRACE_MS);
+              }, autoFinalizeGraceMs);
             }
           }
         }
@@ -190,6 +327,40 @@ export async function POST(req: NextRequest) {
       }
 
       try {
+        if (requestedModelId) {
+          const updateResult = await backendPatch(
+            `/api/game/${game_id}/ai-model/`,
+            { ai_model_model_id: requestedModelId },
+            token,
+          );
+          if (updateResult.ok === false) {
+            emit({
+              type: "error",
+              error: updateResult.error ?? "Could not switch AI model",
+            });
+            controller.close();
+            return;
+          }
+        }
+
+        const profile = await backendGet("/api/auth/me/", token).catch(() => null);
+        const availableCredits =
+          typeof profile?.credit_balance === "string"
+            ? Number.parseFloat(profile.credit_balance)
+            : Number.NaN;
+
+        if (Number.isFinite(availableCredits) && availableCredits <= 0) {
+          emit({
+            type: "error",
+            code: "insufficient_user_credit",
+            error:
+              "Your credit balance is empty. Open settings to top up credit or switch to a cheaper AI model.",
+            credit_balance: profile.credit_balance,
+          });
+          controller.close();
+          return;
+        }
+
         // 1. Fetch game context
         const context = await backendGet(
           `/api/game/${game_id}/ai-context/`,
@@ -202,16 +373,47 @@ export async function POST(req: NextRequest) {
           return;
         }
 
-        const model = getModel(model_id);
+        const sessionModelId =
+          typeof context.ai_model_id === "string" ? context.ai_model_id : null;
+        const backendMaxOutputTokens =
+          typeof context.ai_move_max_output_tokens === "number"
+            ? context.ai_move_max_output_tokens
+            : Number.parseInt(String(context.ai_move_max_output_tokens ?? ""), 10);
+        const maxOutputTokens = Number.isFinite(backendMaxOutputTokens)
+          ? clampNumber(
+              backendMaxOutputTokens,
+              MIN_MAX_OUTPUT_TOKENS,
+              MAX_MAX_OUTPUT_TOKENS,
+            )
+          : DEFAULT_MAX_OUTPUT_TOKENS;
+        const useExtendedSearchBudget = timeoutS >= 90 || maxSteps >= 45;
+        autoFinalizeGraceMs = useExtendedSearchBudget
+          ? EXTENDED_AUTO_FINALIZE_GRACE_MS
+          : AUTO_FINALIZE_GRACE_MS;
+        autoFinalizeValidCap = useExtendedSearchBudget
+          ? EXTENDED_AUTO_FINALIZE_VALID_CAP
+          : AUTO_FINALIZE_VALID_CAP;
         const resolvedModelId =
-          model_id ||
+          requestedModelId ||
+          sessionModelId ||
           process.env.NEXT_PUBLIC_DEFAULT_MODEL ||
-          "openai/gpt-4o-mini";
+          "openai/gpt-5.4";
+        const model = getModel(resolvedModelId);
+        let providerPath =
+          isGatewayConfigured() && !canUseDirectOpenAIModel(resolvedModelId)
+            ? "gateway"
+            : isGatewayConfigured()
+              ? "gateway"
+              : "direct_openai";
+        let gatewayFallbackUsed = false;
 
         emit({
           type: "thinking",
           model: resolvedModelId,
           timeout: timeoutS,
+          max_steps: maxSteps,
+          max_output_tokens: maxOutputTokens,
+          provider_path: providerPath,
         });
         emit({
           type: "thinking",
@@ -219,21 +421,12 @@ export async function POST(req: NextRequest) {
           message: "Exploring legal words and validating the board...",
         });
 
-        // 2. Race: generateText vs timeout
-        const timeoutId = setTimeout(() => {
-          abortController.abort();
-        }, timeoutS * 1000);
-
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        let aiResult: any = null;
-        let timedOut = false;
-
-        try {
-          aiResult = await Promise.race([
+        const runGeneration = (activeModel: ReturnType<typeof getModel>) =>
+          Promise.race([
             generateText({
-              model,
-              maxOutputTokens: 4000,
-              temperature: 0.3,
+              model: activeModel,
+              maxOutputTokens,
+              temperature: 0.15,
               system: MOVE_SYSTEM_PROMPT,
               prompt: buildMoveUserPrompt(context),
               abortSignal: abortController.signal,
@@ -242,7 +435,8 @@ export async function POST(req: NextRequest) {
                   description:
                     "Validate a proposed tile placement on the board. Returns " +
                     "legality, all words formed, per-word scores, and total score. " +
-                    "Call this BEFORE finalizing any move.",
+                    "Call this BEFORE finalizing any move. Only use it for " +
+                    "high-confidence English candidates, not random dictionary guesses.",
                   inputSchema: z.object({
                     placements: z
                       .array(placementSchema)
@@ -279,7 +473,8 @@ export async function POST(req: NextRequest) {
                 validateWords: tool({
                   description:
                     "Check if words are valid in the Collins Scrabble Words " +
-                    "(2019) English dictionary (279,496 words).",
+                    "(2019) English dictionary (279,496 words). Use this only " +
+                    "to confirm words formed by a legal placement, never to brainstorm random strings.",
                   inputSchema: z.object({
                     words: z
                       .array(z.string())
@@ -309,7 +504,7 @@ export async function POST(req: NextRequest) {
                   },
                 }),
               },
-              stopWhen: stepCountIs(MAX_STEPS),
+              stopWhen: stepCountIs(maxSteps),
             }),
             new Promise<never>((_, reject) => {
               abortController.signal.addEventListener("abort", () => {
@@ -317,14 +512,53 @@ export async function POST(req: NextRequest) {
               });
             }),
           ]);
+
+        // 2. Race: generateText vs timeout
+        const timeoutId = setTimeout(() => {
+          abortController.abort();
+        }, timeoutS * 1000);
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let aiResult: any = null;
+        let timedOut = false;
+
+        try {
+          aiResult = await runGeneration(model);
         } catch (err) {
-          if (
-            err instanceof DOMException &&
-            err.name === "AbortError"
-          ) {
+          if (err instanceof DOMException && err.name === "AbortError") {
             timedOut = true;
           } else {
-            throw err;
+            const normalizedError = normalizeRouteError(err);
+            const shouldFallbackToDirectOpenAI =
+              normalizedError?.code === "insufficient_provider_funds" &&
+              isGatewayConfigured() &&
+              canUseDirectOpenAIModel(resolvedModelId);
+
+            if (!shouldFallbackToDirectOpenAI) {
+              throw err;
+            }
+
+            emit({
+              type: "thinking",
+              status: "provider_fallback",
+              message:
+                "The shared AI Gateway budget is exhausted. Retrying directly with OpenAI for this model...",
+            });
+
+            try {
+              aiResult = await runGeneration(getDirectModel(resolvedModelId));
+              providerPath = "direct_openai";
+              gatewayFallbackUsed = true;
+            } catch (fallbackError) {
+              if (
+                fallbackError instanceof DOMException &&
+                fallbackError.name === "AbortError"
+              ) {
+                timedOut = true;
+              } else {
+                throw fallbackError;
+              }
+            }
           }
         } finally {
           clearTimeout(timeoutId);
@@ -335,6 +569,7 @@ export async function POST(req: NextRequest) {
         const elapsedMs = Date.now() - startTime;
         let finalPlacements: PlacementData[] = [];
         let finalAction = "place";
+        let exchangeLetters: string[] = [];
 
         if (timedOut) {
           // Use best tracked candidate
@@ -372,21 +607,14 @@ export async function POST(req: NextRequest) {
                 finalPlacements = parsed.placements;
               }
 
-              if (parsed.exchange_letters && finalAction === "exchange") {
-                const exchangeResult = await backendPost(
-                  `/api/game/${game_id}/exchange/`,
-                  { slot: 1, letters: parsed.exchange_letters },
-                  token,
+              if (
+                finalAction === "exchange" &&
+                Array.isArray(parsed.exchange_letters)
+              ) {
+                exchangeLetters = parsed.exchange_letters.filter(
+                  (letter: unknown): letter is string =>
+                    typeof letter === "string" && letter.length === 1,
                 );
-                emit({
-                  type: "done",
-                  action: "exchange",
-                  ...exchangeResult,
-                  elapsed_ms: elapsedMs,
-                  candidates_found: candidates.length,
-                });
-                controller.close();
-                return;
               }
             }
           } catch {
@@ -428,20 +656,70 @@ export async function POST(req: NextRequest) {
           }
         }
 
+        const normalizedUsage = normalizeUsage(
+          (aiResult?.totalUsage as UsageLike | undefined) ??
+            (aiResult?.usage as UsageLike | undefined) ??
+            null,
+        );
+
+        const aiMeta = {
+          requested_model: requestedModelId,
+          session_model: sessionModelId,
+          model: resolvedModelId,
+          provider_path: providerPath,
+          gateway_fallback_used: gatewayFallbackUsed,
+          max_output_tokens: maxOutputTokens,
+          response_model: aiResult?.response?.modelId,
+          response_id: aiResult?.response?.id,
+          response_headers: aiResult?.response?.headers,
+          provider_metadata: aiResult?.providerMetadata,
+          usage: normalizedUsage,
+          steps: aiResult?.steps?.length ?? 0,
+          max_steps: maxSteps,
+          auto_finalize_grace_ms: autoFinalizeGraceMs,
+          auto_finalize_valid_cap: autoFinalizeValidCap,
+          elapsed_ms: elapsedMs,
+          candidates_found: candidates.length,
+          best_score: bestScore,
+          timed_out: timedOut,
+          auto_finalized: autoFinalized,
+          step_models:
+            aiResult?.steps?.map(
+              (step: {
+                stepNumber: number;
+                model: { provider: string; modelId: string };
+                response: { modelId: string };
+              }) => ({
+                step: step.stepNumber,
+                provider: step.model.provider,
+                model_id: step.model.modelId,
+                response_model: step.response.modelId,
+              }),
+            ) ?? [],
+          tool_calls_count:
+            aiResult?.steps?.reduce(
+              (sum: number, s: { toolCalls: unknown[] }) =>
+                sum + s.toolCalls.length,
+              0,
+            ) ?? 0,
+        };
+
         // 4. Apply the final move
-        if (
-          finalPlacements.length === 0 ||
-          finalAction === "pass"
-        ) {
-          const passResult = await backendPost(
-            `/api/game/${game_id}/pass/`,
-            { slot: 1 },
+        if (finalAction === "exchange" && exchangeLetters.length > 0) {
+          const exchangeResult = await backendPost(
+            `/api/game/${game_id}/exchange/`,
+            { slot: 1, letters: exchangeLetters },
             token,
           );
+          const billing = await chargeAITurn(game_id, token, aiMeta);
           emit({
             type: "done",
-            action: "pass",
-            ...passResult,
+            action: "exchange",
+            ...exchangeResult,
+            billing,
+            requested_model: requestedModelId,
+            session_model: sessionModelId,
+            response_model: aiResult?.response?.modelId,
             elapsed_ms: elapsedMs,
             candidates_found: candidates.length,
             timed_out: timedOut,
@@ -451,22 +729,29 @@ export async function POST(req: NextRequest) {
           return;
         }
 
-        const aiMeta = {
-          model: resolvedModelId,
-          usage: aiResult?.usage,
-          steps: aiResult?.steps?.length ?? 0,
-          elapsed_ms: elapsedMs,
-          candidates_found: candidates.length,
-          best_score: bestScore,
-          timed_out: timedOut,
-          auto_finalized: autoFinalized,
-          tool_calls_count:
-            aiResult?.steps?.reduce(
-              (sum: number, s: { toolCalls: unknown[] }) =>
-                sum + s.toolCalls.length,
-              0,
-            ) ?? 0,
-        };
+        if (finalPlacements.length === 0 || finalAction === "pass") {
+          const passResult = await backendPost(
+            `/api/game/${game_id}/pass/`,
+            { slot: 1 },
+            token,
+          );
+          const billing = await chargeAITurn(game_id, token, aiMeta);
+          emit({
+            type: "done",
+            action: "pass",
+            ...passResult,
+            billing,
+            requested_model: requestedModelId,
+            session_model: sessionModelId,
+            response_model: aiResult?.response?.modelId,
+            elapsed_ms: elapsedMs,
+            candidates_found: candidates.length,
+            timed_out: timedOut,
+            auto_finalized: autoFinalized,
+          });
+          controller.close();
+          return;
+        }
 
         // Try the chosen placements; if rejected (invalid words), try next best
         let moveResult = await backendPost(
@@ -496,11 +781,19 @@ export async function POST(req: NextRequest) {
             { slot: 1 },
             token,
           );
+          const billing = await chargeAITurn(game_id, token, {
+            ...aiMeta,
+            fallback: true,
+          });
           emit({
             type: "done",
             action: "pass",
             ...passResult,
+            billing,
             reason: "no valid move accepted",
+            requested_model: requestedModelId,
+            session_model: sessionModelId,
+            response_model: aiResult?.response?.modelId,
             elapsed_ms: elapsedMs,
             candidates_found: candidates.length,
             auto_finalized: autoFinalized,
@@ -519,6 +812,9 @@ export async function POST(req: NextRequest) {
           type: "done",
           action: "place",
           ...moveResult,
+          requested_model: requestedModelId,
+          session_model: sessionModelId,
+          response_model: aiResult?.response?.modelId,
           best_word: appliedWord,
           best_score: appliedScore,
           elapsed_ms: elapsedMs,
@@ -527,6 +823,21 @@ export async function POST(req: NextRequest) {
           auto_finalized: autoFinalized,
         });
       } catch (error) {
+        const normalizedError = normalizeRouteError(error);
+        if (normalizedError) {
+          emit({
+            type: "error",
+            code: normalizedError.code,
+            error: normalizedError.message,
+          });
+          try {
+            controller.close();
+          } catch {
+            // already closed
+          }
+          return;
+        }
+
         console.error("AI move SSE error:", error);
 
         // Try to use best candidate even on error
