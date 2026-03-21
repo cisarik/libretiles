@@ -25,6 +25,113 @@ body {
   font-family: var(--font-sans);
 }
 
+.font-gold-base,
+.font-gold-shiny,
+.font-gold-dark,
+.luxe-amber-display {
+  display: inline-block;
+  font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+}
+
+.font-gold-shiny,
+.luxe-amber-display--bright {
+  background-image:
+    linear-gradient(180deg, #fff8dc 0%, #fcd34d 38%, #f59e0b 72%, #a16207 100%);
+  filter:
+    drop-shadow(0 0 16px rgba(251, 191, 36, 0.2))
+    drop-shadow(0 8px 18px rgba(0, 0, 0, 0.3));
+}
+
+.font-gold-money {
+  display: inline-block;
+  font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
+  background-image:
+    linear-gradient(180deg, #fffdf2 0%, #fde68a 24%, #fbbf24 56%, #f59e0b 76%, #a16207 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  filter:
+    drop-shadow(0 0 18px rgba(251, 191, 36, 0.26))
+    drop-shadow(0 0 34px rgba(245, 158, 11, 0.12))
+    drop-shadow(0 10px 18px rgba(0, 0, 0, 0.34));
+}
+
+.font-gold-dark,
+.luxe-amber-display,
+.luxe-amber-display--deep {
+  background-image:
+    linear-gradient(180deg, #efd598 0%, #ca9437 34%, #9f6518 70%, #4e2e09 100%);
+  filter:
+    drop-shadow(0 0 10px rgba(183, 122, 29, 0.14))
+    drop-shadow(0 8px 16px rgba(0, 0, 0, 0.24));
+}
+
+.board-surface-swatch {
+  position: relative;
+  overflow: hidden;
+  border-radius: 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 245, 228, 0.08),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.22),
+    0 16px 30px rgba(0, 0, 0, 0.2);
+}
+
+.board-surface-swatch::before,
+.board-surface-swatch::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.board-surface-swatch::before {
+  inset: 12%;
+  border-radius: 0.82rem;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.06) 1px, transparent 1px);
+  background-size: 25% 25%;
+  background-position: center;
+  opacity: 0.34;
+}
+
+.board-surface-swatch::after {
+  background:
+    radial-gradient(circle at 22% 22%, rgba(255, 255, 255, 0.16), transparent 36%),
+    linear-gradient(150deg, rgba(255, 255, 255, 0.06), transparent 46%, rgba(0, 0, 0, 0.18));
+}
+
+.board-surface-swatch[data-theme="wood"] {
+  background:
+    radial-gradient(circle at 25% 22%, rgba(255, 241, 214, 0.08), transparent 30%),
+    linear-gradient(180deg, rgba(16, 11, 7, 0.18), rgba(6, 4, 3, 0.28)),
+    url("/drevo.jpeg");
+  background-position: center;
+  background-size: auto, auto, 150% 150%;
+}
+
+.board-surface-swatch[data-theme="black"] {
+  border-color: rgba(179, 138, 74, 0.18);
+  background:
+    radial-gradient(circle at 26% 22%, rgba(255, 228, 163, 0.08), transparent 30%),
+    linear-gradient(150deg, rgba(45, 34, 20, 0.88), rgba(7, 7, 8, 0.96)),
+    linear-gradient(180deg, rgba(0, 0, 0, 0.2), rgba(0, 0, 0, 0.42));
+}
+
+.board-surface-swatch[data-theme="green"] {
+  border-color: rgba(128, 162, 118, 0.18);
+  background:
+    radial-gradient(circle at 26% 22%, rgba(236, 201, 116, 0.07), transparent 30%),
+    linear-gradient(145deg, rgba(20, 41, 30, 0.96), rgba(8, 16, 12, 0.98)),
+    linear-gradient(180deg, rgba(0, 0, 0, 0.16), rgba(0, 0, 0, 0.38));
+}
+
 .premium-board-shell {
   --board-light-x: 50%;
   --board-light-y: 50%;
@@ -55,6 +162,41 @@ body {
     inset 0 1px 0 rgba(255, 239, 213, 0.12),
     inset 0 -1px 0 rgba(58, 37, 17, 0.42);
   transform: translateZ(0);
+}
+
+.premium-board-shell[data-theme="wood"] {
+  background:
+    radial-gradient(circle at var(--board-light-x) var(--board-light-y), rgba(255, 255, 255, 0.06), transparent var(--board-light-field-size)),
+    linear-gradient(180deg, rgba(16, 11, 7, 0.18), rgba(6, 4, 3, 0.28)),
+    url("/drevo.jpeg");
+  background-position: center;
+  background-size: auto, auto, 150% 150%;
+}
+
+.premium-board-shell[data-theme="black"] {
+  border-color: rgba(131, 101, 58, 0.42);
+  background:
+    radial-gradient(circle at var(--board-light-x) var(--board-light-y), rgba(255, 239, 204, 0.05), transparent var(--board-light-field-size)),
+    linear-gradient(145deg, rgba(25, 19, 14, 0.78), rgba(7, 7, 9, 0.98)),
+    linear-gradient(180deg, rgba(0, 0, 0, 0.18), rgba(0, 0, 0, 0.46));
+  box-shadow:
+    0 28px 70px rgba(0, 0, 0, 0.54),
+    var(--board-shadow-x) var(--board-shadow-y) 38px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 243, 220, 0.08),
+    inset 0 -1px 0 rgba(20, 16, 12, 0.42);
+}
+
+.premium-board-shell[data-theme="green"] {
+  border-color: rgba(87, 111, 86, 0.44);
+  background:
+    radial-gradient(circle at var(--board-light-x) var(--board-light-y), rgba(255, 236, 192, 0.05), transparent var(--board-light-field-size)),
+    linear-gradient(145deg, rgba(18, 39, 28, 0.86), rgba(8, 15, 12, 0.98)),
+    linear-gradient(180deg, rgba(0, 0, 0, 0.16), rgba(0, 0, 0, 0.4));
+  box-shadow:
+    0 28px 70px rgba(0, 0, 0, 0.52),
+    var(--board-shadow-x) var(--board-shadow-y) 38px rgba(0, 0, 0, 0.28),
+    inset 0 1px 0 rgba(255, 239, 213, 0.12),
+    inset 0 -1px 0 rgba(58, 37, 17, 0.42);
 }
 
 .premium-board-shell::before,
@@ -120,6 +262,32 @@ body {
     inset 0 18px 22px rgba(0, 0, 0, 0.18),
     inset 0 -10px 14px rgba(0, 0, 0, 0.18),
     0 0 18px rgba(0, 0, 0, 0.14);
+}
+
+.premium-board-shell[data-shiny="false"] {
+  --board-glow-strength: 0;
+}
+
+.premium-board-shell[data-shiny="false"]::before,
+.premium-board-shell[data-shiny="false"]::after {
+  animation: none;
+  opacity: 0;
+}
+
+.premium-board-shell[data-shiny="false"] .board-cell--plain::before {
+  opacity: 0.16;
+}
+
+.premium-board-shell[data-shiny="false"] .board-cell--plain::after {
+  opacity: 0.06;
+}
+
+.premium-board-shell[data-shiny="false"] .board-cell[data-premium]::before {
+  opacity: 0.1;
+}
+
+.premium-board-shell[data-shiny="false"] .board-cell[data-premium]::after {
+  opacity: 0.08;
 }
 
 .board-cell {
@@ -329,6 +497,37 @@ body {
   100% {
     opacity: 0.76;
   }
+}
+
+.ornate-scrollbar {
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(158, 106, 24, 0.82) rgba(18, 14, 12, 0.22);
+}
+
+.ornate-scrollbar::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.ornate-scrollbar::-webkit-scrollbar-track {
+  background: rgba(18, 14, 12, 0.18);
+  border-radius: 999px;
+}
+
+.ornate-scrollbar::-webkit-scrollbar-thumb {
+  border: 2px solid rgba(18, 14, 12, 0.22);
+  border-radius: 999px;
+  background:
+    linear-gradient(180deg, rgba(226, 184, 86, 0.7), rgba(161, 98, 7, 0.72));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 248, 220, 0.18),
+    0 0 10px rgba(245, 158, 11, 0.12);
+}
+
+.ornate-scrollbar::-webkit-scrollbar-thumb:hover {
+  background:
+    linear-gradient(180deg, rgba(252, 211, 77, 0.82), rgba(180, 110, 14, 0.84));
 }
 
 @media (prefers-reduced-motion: reduce) {

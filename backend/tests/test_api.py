@@ -43,8 +43,8 @@ class AuthAPITest(TestCase):
 
 
 class CatalogAPITest(TestCase):
-    def test_list_models_returns_top_ten_sorted_with_pinned_gpt_5_4(self) -> None:
-        for index in range(10):
+    def test_list_models_returns_top_twenty_sorted_with_pinned_gpt_5_4(self) -> None:
+        for index in range(20):
             input_price = Decimal("0.000020") - (Decimal(index) * Decimal("0.000001"))
             output_price = Decimal("0.000040") - (Decimal(index) * Decimal("0.000001"))
             AIModel.objects.create(
@@ -73,9 +73,9 @@ class CatalogAPITest(TestCase):
         resp = self.client.get("/api/catalog/models/")
         assert resp.status_code == 200
         data = resp.json()
-        assert len(data) == 10
+        assert len(data) == 20
         assert any(item["model_id"] == "openai/gpt-5.4" for item in data)
-        assert not any(item["model_id"] == "openai/gpt-5-expensive-9" for item in data)
+        assert not any(item["model_id"] == "openai/gpt-5-expensive-19" for item in data)
         combined_costs = [Decimal(item["combined_cost_per_million"]) for item in data]
         assert combined_costs == sorted(combined_costs, reverse=True)
         assert data[0]["combined_cost_per_million"]

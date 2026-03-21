@@ -20,9 +20,11 @@ export function Board({ dragPreview, isDraggingTile }: BoardProps) {
   const gameState = useGameStore((s) => s.gameState);
   const pendingTiles = useGameStore((s) => s.pendingTiles);
   const removePendingTile = useGameStore((s) => s.removePendingTile);
+  const boardTheme = useGameStore((s) => s.boardTheme);
+  const boardShineEnabled = useGameStore((s) => s.boardShineEnabled);
   const boardRef = useRef<HTMLDivElement | null>(null);
 
-  usePremiumBoardLighting(boardRef, isDraggingTile);
+  usePremiumBoardLighting(boardRef, isDraggingTile || !boardShineEnabled);
 
   const grid = gameState?.board ?? Array(BOARD_SIZE).fill(".".repeat(BOARD_SIZE));
   const blanks = new Set(
@@ -45,6 +47,8 @@ export function Board({ dragPreview, isDraggingTile }: BoardProps) {
     <div
       ref={boardRef}
       data-dragging={isDraggingTile ? "true" : "false"}
+      data-theme={boardTheme}
+      data-shiny={boardShineEnabled ? "true" : "false"}
       className="premium-board-shell relative p-2.5 sm:p-3"
     >
       <div

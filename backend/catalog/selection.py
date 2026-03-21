@@ -5,7 +5,7 @@ from decimal import Decimal, InvalidOperation
 from .models import AIModel
 
 PINNED_MODEL_ID = "openai/gpt-5.4"
-DEFAULT_SELECTABLE_MODEL_LIMIT = 10
+DEFAULT_SELECTABLE_MODEL_LIMIT = 20
 _ZERO = Decimal("0")
 _MILLION = Decimal("1000000")
 

@@ -22,8 +22,9 @@ echo "Installing Node dependencies..."
 npm install --silent
 
 echo ""
-echo "Starting Next.js on http://localhost:3000"
+echo "Starting Next.js on http://0.0.0.0:3000"
+echo "Open the app from your tablet using this machine's LAN IP on port 3000."
 echo "Press Ctrl+C to stop."
 echo ""
 
-npm run dev
+npm run dev:host

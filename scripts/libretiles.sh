@@ -336,7 +336,7 @@ start_service() {
             cmd='exec poetry run python manage.py runserver 0.0.0.0:8000'
             ;;
         frontend)
-            cmd='exec npm run dev'
+            cmd='exec npm run dev:host'
             ;;
         *)
             echo "Unknown service: $service" >&2
@@ -514,7 +514,8 @@ start_all() {
     fi
 
     echo ""
-    echo "Open http://localhost:$FRONTEND_PORT to play."
+    echo "Open http://localhost:$FRONTEND_PORT to play locally."
+    echo "Frontend is also bound to 0.0.0.0:$FRONTEND_PORT for LAN/tablet testing."
     echo "Use ./scripts/libretiles.sh logs to follow output."
     echo "Use ./scripts/libretiles.sh stop to stop services."
 }

@@ -4,11 +4,13 @@ import {
   useEffect,
   useState,
   type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent,
+  type ReactNode,
 } from "react";
 import { useRouter } from "next/navigation";
-import { motion } from "framer-motion";
-import { useGameStore } from "@/hooks/useGameStore";
+import { AnimatePresence, motion } from "framer-motion";
+import { useGameStore, type BoardTheme } from "@/hooks/useGameStore";
 import { api } from "@/lib/api";
 import type { AIModel, CreateGameResponse } from "@/lib/types";
 
@@ -44,6 +46,16 @@ const STEP_CHOICES = [
   { value: 80, label: "80", description: "Max pressure" },
 ];
 
+const BOARD_THEME_CHOICES: Array<{
+  value: BoardTheme;
+  label: string;
+  description: string;
+}> = [
+  { value: "wood", label: "Wood", description: "Classic walnut grain" },
+  { value: "black", label: "Black", description: "Glossy night lacquer" },
+  { value: "green", label: "Green", description: "Dark tournament felt" },
+];
+
 const CLOSE_DELAY_MS = 220;
 
 const MODAL_TRANSITION = {
@@ -59,6 +71,11 @@ const INTERACTIVE_PANEL_STYLE: CSSProperties = {
 const CREDIT_PANEL_STYLE: CSSProperties = {
   backgroundImage:
     "radial-gradient(320px circle at var(--spotlight-x, 48%) var(--spotlight-y, 45%), rgba(255,215,128,0.24), transparent 60%), linear-gradient(145deg, rgba(39,26,12,0.98), rgba(14,11,8,0.98))",
+};
+
+const SELECTED_ROW_CELL_STYLE: CSSProperties = {
+  backgroundImage:
+    "radial-gradient(300px circle at var(--spotlight-x, 18%) var(--spotlight-y, 50%), rgba(251,191,36,0.18), transparent 56%), linear-gradient(180deg, rgba(251,191,36,0.06), rgba(251,191,36,0.03))",
 };
 
 type NoticeTone = "success" | "warning" | "info";
@@ -84,6 +101,13 @@ function formatUsdPerToken(value?: string): string {
   return `$${perToken.toFixed(digits).replace(/0+$/, "").replace(/\.$/, "")}`;
 }
 
+function formatBalanceUsd(value?: string | null): string {
+  if (value == null || value === "") return "$--.--";
+  const numeric = Number.parseFloat(value ?? "");
+  if (!Number.isFinite(numeric)) return "$--.--";
+  return `$${numeric.toFixed(2)}`;
+}
+
 function noticeClasses(tone: NoticeTone): string {
   if (tone === "success") {
     return "border-emerald-400/25 bg-emerald-500/10 text-emerald-100";
@@ -102,34 +126,45 @@ function handleSurfacePointer(event: MouseEvent<HTMLElement>) {
   event.currentTarget.style.setProperty("--spotlight-y", `${y}px`);
 }
 
-function PriceStat({
-  label,
-  value,
-  accent = false,
+function handleSelectKeyDown(
+  event: ReactKeyboardEvent<HTMLElement>,
+  onSelect: () => void,
+) {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  event.preventDefault();
+  onSelect();
+}
+
+function SettingsPanel({
+  title,
+  description,
+  children,
+  className = "",
 }: {
-  label: string;
-  value: string;
-  accent?: boolean;
+  title: string;
+  description?: string;
+  children: ReactNode;
+  className?: string;
 }) {
   return (
-    <div
-      className={`rounded-[1.1rem] border px-3 py-2.5 transition-[border-color,box-shadow,background-color] duration-300 ${
-        accent
-          ? "border-amber-300/25 bg-amber-400/8 shadow-[0_8px_24px_rgba(251,191,36,0.08)]"
-          : "border-white/8 bg-stone-950/70 hover:border-white/12 hover:shadow-[0_12px_28px_rgba(0,0,0,0.22)]"
-      }`}
+    <section
+      className={`relative overflow-hidden rounded-[1.6rem] border border-white/8 p-4 shadow-[0_16px_40px_rgba(0,0,0,0.22)] transition-[border-color,box-shadow,transform] duration-300 hover:border-amber-200/20 hover:shadow-[0_20px_45px_rgba(0,0,0,0.26)] ${className}`}
+      style={INTERACTIVE_PANEL_STYLE}
+      onMouseMove={handleSurfacePointer}
     >
-      <div className="text-[0.62rem] uppercase tracking-[0.28em] text-stone-500">
-        {label}
+      <div className="absolute inset-x-5 top-0 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
+      <div className="mb-4">
+        <h2 className="text-xl font-black uppercase tracking-[0.12em] text-stone-50 sm:text-[1.65rem]">
+          <span className="font-gold-shiny">{title}</span>
+        </h2>
+        {description ? (
+          <p className="mt-2 text-sm uppercase tracking-[0.14em] text-stone-500">
+            {description}
+          </p>
+        ) : null}
       </div>
-      <div
-        className={`mt-1 text-base font-semibold ${
-          accent ? "text-amber-100" : "text-stone-100"
-        }`}
-      >
-        {value}
-      </div>
-    </div>
+      {children}
+    </section>
   );
 }
 
@@ -141,24 +176,14 @@ function ChoiceGrid({
   onSelect,
 }: {
   title: string;
-  description: string;
+  description?: string;
   choices: Array<{ value: number; label: string; description: string }>;
   selectedValue: number;
   onSelect: (value: number) => void;
 }) {
   return (
-    <section
-      className="relative overflow-hidden rounded-[1.6rem] border border-white/8 p-4 shadow-[0_16px_40px_rgba(0,0,0,0.22)] transition-[border-color,box-shadow,transform] duration-300 hover:border-amber-200/20 hover:shadow-[0_20px_45px_rgba(0,0,0,0.26)]"
-      style={INTERACTIVE_PANEL_STYLE}
-      onMouseMove={handleSurfacePointer}
-    >
-      <div className="absolute inset-x-5 top-0 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
-      <div className="mb-3">
-        <h2 className="text-base font-semibold text-stone-50">{title}</h2>
-        <p className="mt-1 text-xs leading-5 text-stone-400">{description}</p>
-      </div>
-
-      <div className="grid grid-cols-3 gap-2 sm:grid-cols-5 lg:grid-cols-3">
+    <SettingsPanel title={title} description={description}>
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(132px,1fr))] gap-3">
         {choices.map((choice) => {
           const isSelected = selectedValue === choice.value;
           return (
@@ -168,27 +193,129 @@ function ChoiceGrid({
               whileHover={{ y: -1.5, scale: 1.01 }}
               whileTap={{ scale: 0.985 }}
               onClick={() => onSelect(choice.value)}
-              className={`rounded-[1.1rem] border px-2.5 py-3 text-left transition-[border-color,box-shadow,background-color,transform] duration-300 ${
+              className={`min-h-[154px] rounded-[1.15rem] border px-4 py-4 text-left transition-[border-color,box-shadow,background-color,transform] duration-300 md:min-h-[162px] ${
                 isSelected
                   ? "border-amber-300/45 bg-amber-400/10 shadow-[0_12px_30px_rgba(251,191,36,0.10)]"
                   : "border-white/8 bg-stone-950/72 hover:border-white/14 hover:shadow-[0_12px_28px_rgba(0,0,0,0.2)]"
               }`}
             >
               <div
-                className={`text-base font-black ${
+                className={`text-lg font-black uppercase tracking-[0.08em] sm:text-[1.65rem] ${
                   isSelected ? "text-amber-100" : "text-stone-100"
                 }`}
               >
                 {choice.label}
               </div>
-              <div className="mt-1 text-[0.66rem] leading-4 text-stone-500">
+              <div className="mt-2 text-[0.92rem] uppercase leading-7 tracking-[0.1em] text-stone-400 sm:text-[0.98rem]">
                 {choice.description}
               </div>
             </motion.button>
           );
         })}
       </div>
-    </section>
+    </SettingsPanel>
+  );
+}
+
+function BoardSurfacePanel({
+  selectedTheme,
+  onSelect,
+}: {
+  selectedTheme: BoardTheme;
+  onSelect: (theme: BoardTheme) => void;
+}) {
+  return (
+    <SettingsPanel
+      title="Board Surface"
+      description="Saved on this device and used in the game board."
+    >
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(170px,1fr))] gap-3">
+        {BOARD_THEME_CHOICES.map((choice) => {
+          const isSelected = selectedTheme === choice.value;
+          return (
+            <motion.button
+              key={choice.value}
+              type="button"
+              whileHover={{ y: -1.5, scale: 1.01 }}
+              whileTap={{ scale: 0.985 }}
+              onClick={() => onSelect(choice.value)}
+              className={`rounded-[1.15rem] border p-3 text-left transition-[border-color,box-shadow,background-color,transform] duration-300 ${
+                isSelected
+                  ? "border-amber-300/45 bg-amber-400/10 shadow-[0_12px_30px_rgba(251,191,36,0.10)]"
+                  : "border-white/8 bg-stone-950/72 hover:border-white/14 hover:shadow-[0_12px_28px_rgba(0,0,0,0.2)]"
+              }`}
+            >
+              <div
+                data-theme={choice.value}
+                className="board-surface-swatch aspect-square w-full"
+              />
+              <div className="mt-3 flex items-center justify-between gap-3">
+                <span className="font-gold-dark text-[1.2rem] font-black leading-none">
+                  {choice.label}
+                </span>
+                {isSelected ? (
+                  <span className="rounded-full border border-amber-300/24 bg-amber-300/12 px-2.5 py-1 text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-amber-100">
+                    Active
+                  </span>
+                ) : null}
+              </div>
+              <div className="mt-2 text-[0.85rem] uppercase tracking-[0.1em] text-stone-400">
+                {choice.description}
+              </div>
+            </motion.button>
+          );
+        })}
+      </div>
+    </SettingsPanel>
+  );
+}
+
+function ShinyEffectPanel({
+  enabled,
+  onToggle,
+}: {
+  enabled: boolean;
+  onToggle: (enabled: boolean) => void;
+}) {
+  return (
+    <SettingsPanel
+      title="Shiny Effect"
+      description="Turn the live sheen off when you want a lighter GPU load."
+    >
+      <div className="grid grid-cols-2 gap-3">
+        {[
+          { value: true, label: "On", description: "Animated board sheen" },
+          { value: false, label: "Off", description: "Lower GPU load" },
+        ].map((choice) => {
+          const isSelected = enabled === choice.value;
+          return (
+            <motion.button
+              key={choice.label}
+              type="button"
+              whileHover={{ y: -1.5, scale: 1.01 }}
+              whileTap={{ scale: 0.985 }}
+              onClick={() => onToggle(choice.value)}
+              className={`min-h-[154px] rounded-[1.15rem] border px-4 py-4 text-left transition-[border-color,box-shadow,background-color,transform] duration-300 ${
+                isSelected
+                  ? "border-amber-300/45 bg-amber-400/10 shadow-[0_12px_30px_rgba(251,191,36,0.10)]"
+                  : "border-white/8 bg-stone-950/72 hover:border-white/14 hover:shadow-[0_12px_28px_rgba(0,0,0,0.2)]"
+              }`}
+            >
+              <div
+                className={`text-[1.45rem] font-black uppercase tracking-[0.08em] ${
+                  isSelected ? "text-amber-100" : "text-stone-100"
+                }`}
+              >
+                {choice.label}
+              </div>
+              <div className="mt-3 text-[0.95rem] uppercase leading-7 tracking-[0.1em] text-stone-400">
+                {choice.description}
+              </div>
+            </motion.button>
+          );
+        })}
+      </div>
+    </SettingsPanel>
   );
 }
 
@@ -203,6 +330,10 @@ export default function SettingsPage() {
   const setAITimeout = useGameStore((s) => s.setAITimeout);
   const aiMaxSteps = useGameStore((s) => s.aiMaxSteps);
   const setAIMaxSteps = useGameStore((s) => s.setAIMaxSteps);
+  const boardTheme = useGameStore((s) => s.boardTheme);
+  const setBoardTheme = useGameStore((s) => s.setBoardTheme);
+  const boardShineEnabled = useGameStore((s) => s.boardShineEnabled);
+  const setBoardShineEnabled = useGameStore((s) => s.setBoardShineEnabled);
 
   const [models, setModels] = useState<AIModel[]>([]);
   const [loading, setLoading] = useState(true);
@@ -211,6 +342,7 @@ export default function SettingsPage() {
   const [notice, setNotice] = useState<Notice>(null);
   const [accountSyncAvailable, setAccountSyncAvailable] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
+  const [modelsExpanded, setModelsExpanded] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -239,7 +371,8 @@ export default function SettingsPage() {
           if (
             profileResult.profile.preferred_ai_model_id &&
             nextModels.some(
-              (model) => model.model_id === profileResult.profile.preferred_ai_model_id,
+              (model) =>
+                model.model_id === profileResult.profile.preferred_ai_model_id,
             )
           ) {
             setSelectedModelId(profileResult.profile.preferred_ai_model_id);
@@ -270,6 +403,21 @@ export default function SettingsPage() {
 
   const selectedModel =
     models.find((model) => model.model_id === selectedModelId) ?? models[0] ?? null;
+  const displayedModels = [...models].sort((left, right) => {
+    const priceDiff =
+      Number.parseFloat(right.combined_cost_per_million) -
+      Number.parseFloat(left.combined_cost_per_million);
+    if (Number.isFinite(priceDiff) && priceDiff !== 0) return priceDiff;
+
+    const contextDiff = (right.context_window ?? 0) - (left.context_window ?? 0);
+    if (contextDiff !== 0) return contextDiff;
+
+    return left.display_name.localeCompare(right.display_name);
+  });
+  const maxContextWindow = Math.max(
+    1,
+    ...displayedModels.map((model) => model.context_window ?? 0),
+  );
 
   async function handleClose() {
     if (isClosing) return;
@@ -365,7 +513,7 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top,rgba(126,84,26,0.20),transparent_28%),linear-gradient(180deg,#0f0c09,#080706)] px-3 py-3 text-stone-100 sm:px-5 sm:py-5">
+    <div className="relative min-h-[100svh] overflow-hidden bg-[radial-gradient(circle_at_top,rgba(126,84,26,0.22),transparent_28%),linear-gradient(180deg,#0f0c09,#080706)] px-3 py-3 text-stone-100 sm:px-4 sm:py-4 xl:px-5 xl:py-5">
       <motion.div
         className="absolute inset-0 bg-black/48 backdrop-blur-[2px]"
         initial={{ opacity: 0 }}
@@ -375,7 +523,7 @@ export default function SettingsPage() {
       />
 
       <motion.div
-        className="relative mx-auto flex max-h-[calc(100vh-1.5rem)] max-w-[1120px] flex-col overflow-hidden rounded-[2.2rem] border border-white/10 bg-[linear-gradient(180deg,rgba(24,20,16,0.96),rgba(11,9,8,0.98))] shadow-[0_30px_100px_rgba(0,0,0,0.5)] backdrop-blur-xl sm:max-h-[calc(100vh-2.5rem)]"
+        className="relative mx-auto flex max-h-[calc(100svh-1rem)] max-w-[1400px] flex-col overflow-hidden rounded-[2rem] border border-white/10 bg-[linear-gradient(180deg,rgba(24,20,16,0.96),rgba(11,9,8,0.98))] shadow-[0_30px_100px_rgba(0,0,0,0.5)] backdrop-blur-xl sm:max-h-[calc(100svh-2rem)] sm:rounded-[2.35rem]"
         initial={{ opacity: 0, y: 28, scale: 0.965 }}
         animate={{
           opacity: isClosing ? 0 : 1,
@@ -388,339 +536,377 @@ export default function SettingsPage() {
         <div className="pointer-events-none absolute inset-x-12 top-0 h-px bg-gradient-to-r from-transparent via-amber-200/70 to-transparent" />
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(251,191,36,0.08),transparent_34%)]" />
 
-        <div className="relative border-b border-white/8 px-4 py-4 sm:px-5">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="relative border-b border-white/8 px-4 py-4 sm:px-5 sm:py-5">
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start xl:grid-cols-[minmax(0,1fr)_360px]">
             <div className="min-w-0">
-              <div className="text-[0.68rem] uppercase tracking-[0.34em] text-amber-200/70">
-                Control Room
-              </div>
-              <div className="mt-1 flex flex-wrap items-center gap-3">
-                <h1 className="text-2xl font-black tracking-tight text-stone-50 sm:text-[2rem]">
+              <div className="flex flex-wrap items-center gap-3">
+                <h1 className="font-gold-shiny text-3xl font-black tracking-tight sm:text-[2.7rem]">
                   Settings
                 </h1>
-                <span className="rounded-full border border-white/8 bg-white/5 px-3 py-1 text-[0.68rem] uppercase tracking-[0.26em] text-stone-400">
-                  Tablet mode
-                </span>
               </div>
-              <p className="mt-2 max-w-2xl text-sm text-stone-400">
-                Compact AI setup with live pricing, subtle motion, and faster in-game decisions.
-              </p>
-            </div>
-
-            <div className="flex flex-wrap gap-2">
-              <motion.button
-                type="button"
-                whileHover={{ y: -1.5 }}
-                whileTap={{ scale: 0.985 }}
-                onClick={() => void handleNewGame()}
-                disabled={startingNewGame}
-                className="rounded-full border border-amber-300/30 bg-amber-300/12 px-4 py-2 text-sm font-semibold text-amber-100 shadow-[0_10px_24px_rgba(251,191,36,0.10)] transition-[border-color,box-shadow,background-color,transform] duration-300 hover:border-amber-200/50 hover:bg-amber-300/18 hover:shadow-[0_12px_28px_rgba(251,191,36,0.16)] disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {startingNewGame ? "Starting..." : "New game"}
-              </motion.button>
-              <motion.button
-                type="button"
-                whileHover={{ y: -1.5 }}
-                whileTap={{ scale: 0.985 }}
-                onClick={() => void handleClose()}
-                className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-stone-200 shadow-[0_10px_24px_rgba(0,0,0,0.18)] transition-[border-color,box-shadow,background-color,transform] duration-300 hover:border-white/16 hover:bg-white/8 hover:shadow-[0_14px_30px_rgba(0,0,0,0.24)]"
-              >
-                Back to game
-              </motion.button>
-            </div>
-          </div>
-
-          {notice && (
-            <motion.div
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.18 }}
-              className={`mt-4 rounded-[1.2rem] border px-4 py-3 text-sm shadow-[0_14px_32px_rgba(0,0,0,0.16)] ${noticeClasses(
-                notice.tone,
-              )}`}
-            >
-              {notice.text}
-            </motion.div>
-          )}
-        </div>
-
-        <div className="relative grid flex-1 min-h-0 gap-4 overflow-hidden p-4 sm:p-5 lg:grid-cols-[minmax(0,1.26fr)_minmax(320px,0.82fr)]">
-          <section className="min-h-0 overflow-y-auto pr-1">
-            <div className="flex flex-col gap-2 pb-4 sm:flex-row sm:items-end sm:justify-between">
-              <div>
-                <div className="text-[0.68rem] uppercase tracking-[0.3em] text-stone-500">
-                  AI Opponent
-                </div>
-                <h2 className="mt-2 text-xl font-black text-stone-50 sm:text-2xl">
-                  Choose the rival
-                </h2>
-                <p className="mt-1 max-w-2xl text-sm leading-6 text-stone-400">
-                  Top synced models only. Prices come from the backend catalog, and credit is deducted from the same numbers.
-                </p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <motion.button
+                  type="button"
+                  whileHover={{ y: -1.5 }}
+                  whileTap={{ scale: 0.985 }}
+                  onClick={() => void handleClose()}
+                  className="rounded-full border border-amber-300/26 bg-[linear-gradient(135deg,rgba(251,191,36,0.12),rgba(255,255,255,0.04))] px-5 py-2.5 shadow-[0_10px_24px_rgba(0,0,0,0.18),0_0_24px_rgba(251,191,36,0.08)] transition-[border-color,box-shadow,background-color,transform] duration-300 hover:border-amber-200/50 hover:bg-[linear-gradient(135deg,rgba(251,191,36,0.18),rgba(255,255,255,0.06))] hover:shadow-[0_14px_30px_rgba(0,0,0,0.24),0_0_30px_rgba(251,191,36,0.14)]"
+                >
+                  <span className="font-gold-shiny text-[1.12rem] font-black leading-none">
+                    Back to game
+                  </span>
+                </motion.button>
+                <motion.button
+                  type="button"
+                  whileHover={{ y: -1.5 }}
+                  whileTap={{ scale: 0.985 }}
+                  onClick={() => void handleNewGame()}
+                  disabled={startingNewGame}
+                  className="rounded-full border border-amber-200/40 bg-[linear-gradient(135deg,rgba(251,191,36,0.18),rgba(245,158,11,0.08))] px-5 py-2.5 shadow-[0_10px_24px_rgba(251,191,36,0.12),0_0_28px_rgba(251,191,36,0.12)] transition-[border-color,box-shadow,background-color,transform] duration-300 hover:border-amber-100/60 hover:bg-[linear-gradient(135deg,rgba(251,191,36,0.24),rgba(245,158,11,0.12))] hover:shadow-[0_12px_28px_rgba(251,191,36,0.18),0_0_34px_rgba(251,191,36,0.18)] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <span className="font-gold-shiny text-[1.12rem] font-black leading-none">
+                    {startingNewGame ? "Starting..." : "New game"}
+                  </span>
+                </motion.button>
               </div>
-              {savingModelId && (
-                <div className="rounded-full border border-amber-300/20 bg-amber-400/10 px-3 py-1.5 text-xs font-medium text-amber-100 shadow-[0_10px_24px_rgba(251,191,36,0.08)]">
-                  Updating {savingModelId}...
-                </div>
+
+              {notice && (
+                <motion.div
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.18 }}
+                  className={`mt-4 rounded-[1.2rem] border px-4 py-3 text-sm shadow-[0_14px_32px_rgba(0,0,0,0.16)] ${noticeClasses(
+                    notice.tone,
+                  )}`}
+                >
+                  {notice.text}
+                </motion.div>
               )}
             </div>
 
-            {loading ? (
-              <div className="grid gap-3 md:grid-cols-2">
-                {Array.from({ length: 6 }).map((_, index) => (
-                  <div
-                    key={index}
-                    className="h-48 animate-pulse rounded-[1.6rem] border border-white/8 bg-stone-900/60"
-                  />
-                ))}
-              </div>
-            ) : models.length > 0 ? (
-              <div className="grid gap-3 md:grid-cols-2">
-                {models.map((model, index) => {
-                  const isSelected = selectedModelId === model.model_id;
-                  const isSaving = savingModelId === model.model_id;
-
-                  return (
-                    <motion.button
-                      key={model.model_id}
-                      type="button"
-                      initial={{ opacity: 0, y: 12 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: index * 0.025 }}
-                      whileHover={{ y: -3, scale: 1.008 }}
-                      whileTap={{ scale: 0.988 }}
-                      onMouseMove={handleSurfacePointer}
-                      onClick={() => void persistModelSelection(model.model_id)}
-                      disabled={Boolean(savingModelId)}
-                      className={`relative overflow-hidden rounded-[1.7rem] border p-4 text-left transition-[border-color,box-shadow,transform,background-color] duration-300 ${
-                        isSelected
-                          ? "border-amber-300/40 shadow-[0_18px_45px_rgba(251,191,36,0.10)]"
-                          : "border-white/8 shadow-[0_18px_42px_rgba(0,0,0,0.20)] hover:border-white/14 hover:shadow-[0_20px_48px_rgba(0,0,0,0.24)]"
-                      } disabled:cursor-not-allowed disabled:opacity-75`}
-                      style={INTERACTIVE_PANEL_STYLE}
-                    >
-                      <div className="absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-white/12 to-transparent" />
-                      <div
-                        className={`pointer-events-none absolute inset-0 rounded-[inherit] transition-opacity duration-300 ${
-                          isSelected ? "opacity-100" : "opacity-0"
-                        }`}
-                        style={{
-                          background:
-                            "linear-gradient(180deg, rgba(251,191,36,0.08), transparent 42%)",
-                        }}
-                      />
-
-                      <div className="relative flex h-full flex-col gap-4">
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="flex min-w-0 items-start gap-3">
-                            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[1rem] border border-white/10 bg-stone-950/78 text-2xl shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]">
-                              {PROVIDER_ICONS[model.provider] || "🔧"}
-                            </div>
-                            <div className="min-w-0">
-                              <div className="flex flex-wrap items-center gap-2">
-                                <div className="truncate text-[1.12rem] font-black text-stone-50">
-                                  {model.display_name}
-                                </div>
-                                {model.is_flagship && (
-                                  <span className="rounded-full border border-amber-300/20 bg-amber-400/12 px-2 py-0.5 text-[0.58rem] font-semibold uppercase tracking-[0.22em] text-amber-100">
-                                    flagship
-                                  </span>
-                                )}
-                              </div>
-                              <div className="mt-1 break-all font-mono text-[0.7rem] text-stone-500">
-                                {model.model_id}
-                              </div>
-                            </div>
-                          </div>
-
-                          <div
-                            className={`rounded-full px-2.5 py-1 text-[0.58rem] font-semibold uppercase tracking-[0.22em] ${
-                              QUALITY_COLORS[model.quality_tier] || QUALITY_COLORS.standard
-                            }`}
-                          >
-                            {isSaving ? "Saving" : isSelected ? "Selected" : model.quality_tier}
-                          </div>
-                        </div>
-
-                        {model.description && (
-                          <p className="min-h-[3.5rem] text-sm leading-6 text-stone-400">
-                            {model.description}
-                          </p>
-                        )}
-
-                        <div className="grid grid-cols-2 gap-2.5">
-                          <PriceStat label="Input / 1M" value={`$${model.input_cost_per_million}`} />
-                          <PriceStat label="Output / 1M" value={`$${model.output_cost_per_million}`} />
-                          <PriceStat label="Cache / 1M" value={`$${model.cache_read_cost_per_million}`} />
-                          <PriceStat
-                            label="$ / token"
-                            value={formatUsdPerToken(model.combined_cost_per_million)}
-                            accent={isSelected}
-                          />
-                        </div>
-
-                        <div className="mt-auto flex items-center justify-between gap-3 pt-1 text-xs text-stone-500">
-                          <span>Context {formatContextWindow(model.context_window)}</span>
-                          <span className={isSelected ? "text-amber-100" : "text-stone-500"}>
-                            {isSelected ? "Active now" : "Click to activate"}
-                          </span>
-                        </div>
-                      </div>
-                    </motion.button>
-                  );
-                })}
-              </div>
-            ) : (
-              <div
-                className="rounded-[1.7rem] border border-white/8 p-5 text-sm text-stone-400 shadow-[0_16px_40px_rgba(0,0,0,0.20)]"
-                style={INTERACTIVE_PANEL_STYLE}
-                onMouseMove={handleSurfacePointer}
-              >
-                No synced models are available yet. Run{" "}
-                <span className="font-mono text-stone-200">
-                  python manage.py sync_gateway_models
-                </span>{" "}
-                first.
-              </div>
-            )}
-          </section>
-
-          <aside className="min-h-0 overflow-y-auto pl-0 lg:pl-1">
-            <div className="space-y-4">
-              <motion.section
-                whileHover={{ y: -2, scale: 1.004 }}
-                className="relative overflow-hidden rounded-[1.8rem] border border-amber-300/20 p-5 shadow-[0_20px_55px_rgba(0,0,0,0.30)] transition-[border-color,box-shadow,transform] duration-300 hover:border-amber-200/28 hover:shadow-[0_24px_60px_rgba(0,0,0,0.34)]"
-                style={CREDIT_PANEL_STYLE}
-                onMouseMove={handleSurfacePointer}
-              >
-                <div className="absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-amber-200/70 to-transparent" />
-                <div className="relative">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <div className="text-[0.68rem] uppercase tracking-[0.3em] text-amber-100/65">
-                        Credit Balance
-                      </div>
-                      <div className="mt-2 text-xs leading-5 text-stone-300/76">
-                        Token spend is converted from the backend pricing table for the selected model.
-                      </div>
-                    </div>
-                    <span className="rounded-full border border-white/10 bg-white/6 px-2.5 py-1 text-[0.58rem] uppercase tracking-[0.22em] text-stone-300">
-                      {accountSyncAvailable ? "Synced" : token ? "Local fallback" : "Device only"}
-                    </span>
-                  </div>
-
-                  <div className="mt-5 flex items-end justify-between gap-4">
-                    <div>
-                      <motion.div
-                        whileHover={{ scale: 1.015 }}
-                        className="text-4xl font-black leading-none sm:text-5xl"
-                        style={{
-                          fontFamily:
-                            '"Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif',
-                          background:
-                            "linear-gradient(180deg, #fff8dc 0%, #fcd34d 38%, #f59e0b 72%, #a16207 100%)",
-                          WebkitBackgroundClip: "text",
-                          color: "transparent",
-                          filter:
-                            "drop-shadow(0 0 16px rgba(251,191,36,0.20)) drop-shadow(0 8px 18px rgba(0,0,0,0.30))",
-                        }}
-                      >
-                        {creditBalance ?? "0.00"} cr
-                      </motion.div>
-                      <div className="mt-2 text-[0.62rem] uppercase tracking-[0.28em] text-amber-100/52">
-                        Live balance in game
-                      </div>
-                    </div>
-
-                    <motion.button
-                      type="button"
-                      whileHover={{ y: -1.5 }}
-                      whileTap={{ scale: 0.985 }}
-                      onClick={handleTopUpCredit}
-                      className="rounded-full border border-amber-300/28 bg-amber-300/12 px-3.5 py-2 text-sm font-semibold text-amber-100 shadow-[0_10px_24px_rgba(251,191,36,0.12)] transition-[border-color,box-shadow,background-color,transform] duration-300 hover:border-amber-200/48 hover:bg-amber-300/18 hover:shadow-[0_12px_30px_rgba(251,191,36,0.16)]"
-                    >
+            <motion.section
+              whileHover={{ y: -2, scale: 1.004 }}
+              className="relative overflow-hidden rounded-[1.8rem] border border-amber-300/20 p-4 shadow-[0_20px_55px_rgba(0,0,0,0.30)] transition-[border-color,box-shadow,transform] duration-300 hover:border-amber-200/28 hover:shadow-[0_24px_60px_rgba(0,0,0,0.34)] lg:w-[340px] lg:justify-self-end xl:w-[360px]"
+              style={CREDIT_PANEL_STYLE}
+              onMouseMove={handleSurfacePointer}
+            >
+              <div className="absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-amber-200/70 to-transparent" />
+              <div className="relative flex items-end justify-between gap-4">
+                <div className="order-1">
+                  <motion.button
+                    type="button"
+                  whileHover={{ y: -1.5 }}
+                  whileTap={{ scale: 0.985 }}
+                  onClick={handleTopUpCredit}
+                    className="group relative overflow-hidden rounded-full border border-amber-100/46 bg-[linear-gradient(135deg,rgba(251,191,36,0.32),rgba(245,158,11,0.18))] px-4 py-2.5 shadow-[0_18px_38px_rgba(251,191,36,0.18),0_0_38px_rgba(251,191,36,0.12)] transition-[border-color,box-shadow,transform,filter] duration-300 hover:border-amber-50/70 hover:shadow-[0_22px_44px_rgba(251,191,36,0.26),0_0_44px_rgba(251,191,36,0.18)]"
+                  >
+                    <span className="pointer-events-none absolute inset-0 bg-[linear-gradient(120deg,transparent,rgba(255,255,255,0.18),transparent)] opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+                    <span className="font-gold-money text-[1.04rem] font-black leading-none">
                       Top up credit
-                    </motion.button>
-                  </div>
-
-                  <div className="mt-4 grid grid-cols-2 gap-2.5">
-                    <PriceStat
-                      label="Current AI"
-                      value={selectedModel?.display_name ?? "No model"}
-                      accent
-                    />
-                    <PriceStat
-                      label="$ / token"
-                      value={
-                        selectedModel
-                          ? formatUsdPerToken(selectedModel.combined_cost_per_million)
-                          : "n/a"
-                      }
-                    />
-                  </div>
+                    </span>
+                  </motion.button>
                 </div>
-              </motion.section>
 
-              <section
-                className="relative overflow-hidden rounded-[1.6rem] border border-white/8 p-4 shadow-[0_16px_40px_rgba(0,0,0,0.22)] transition-[border-color,box-shadow,transform] duration-300 hover:border-amber-200/20 hover:shadow-[0_20px_45px_rgba(0,0,0,0.26)]"
-                style={INTERACTIVE_PANEL_STYLE}
-                onMouseMove={handleSurfacePointer}
-              >
-                <div className="absolute inset-x-5 top-0 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
-                <div className="text-[0.68rem] uppercase tracking-[0.3em] text-stone-500">
-                  Current setup
-                </div>
-                <div className="mt-4 flex items-start gap-3">
-                  <div className="flex h-11 w-11 items-center justify-center rounded-[1rem] border border-white/10 bg-stone-950/78 text-2xl shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]">
-                    {selectedModel ? PROVIDER_ICONS[selectedModel.provider] || "🔧" : "🎯"}
+                <div className="order-2 text-right">
+                  <div className="text-[0.68rem] uppercase tracking-[0.3em] text-amber-100/65">
+                    Credit Balance
                   </div>
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h2 className="text-lg font-black text-stone-50">
-                        {selectedModel?.display_name ?? "Choose a model"}
-                      </h2>
-                      {selectedModel?.quality_tier && (
-                        <span
-                          className={`rounded-full px-2 py-1 text-[0.58rem] font-semibold uppercase tracking-[0.2em] ${
-                            QUALITY_COLORS[selectedModel.quality_tier] || QUALITY_COLORS.standard
-                          }`}
-                        >
-                          {selectedModel.quality_tier}
+                  <motion.div
+                    whileHover={{ scale: 1.015 }}
+                    className="font-gold-shiny mt-2 text-4xl font-black leading-none sm:text-5xl"
+                  >
+                      {formatBalanceUsd(creditBalance)}
+                  </motion.div>
+                </div>
+              </div>
+            </motion.section>
+          </div>
+        </div>
+
+        <div className="ornate-scrollbar relative flex-1 min-h-0 overflow-y-auto p-4 sm:p-5">
+          <div className="flex min-h-0 flex-col gap-4">
+            <section className="min-h-0">
+              <div className="flex min-h-0 flex-col">
+                <div className="pb-4">
+                  <motion.button
+                    type="button"
+                    whileHover={{ y: -1.5 }}
+                    whileTap={{ scale: 0.995 }}
+                    onClick={() => setModelsExpanded((current) => !current)}
+                    className="group relative flex w-full items-center justify-between gap-4 rounded-[1.6rem] border border-white/8 bg-[linear-gradient(180deg,rgba(17,14,11,0.76),rgba(11,9,8,0.82))] px-4 py-4 text-left shadow-[0_16px_40px_rgba(0,0,0,0.2)] transition-[border-color,box-shadow,background-color,transform] duration-300 hover:border-amber-200/24 hover:shadow-[0_20px_45px_rgba(0,0,0,0.24)]"
+                    onMouseMove={handleSurfacePointer}
+                    style={INTERACTIVE_PANEL_STYLE}
+                    aria-expanded={modelsExpanded}
+                    aria-controls="settings-model-table"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-3">
+                        <span className="text-[1.65rem] sm:text-[1.9rem]">🧠</span>
+                        <span className="font-gold-shiny text-3xl font-black tracking-tight sm:text-[2.35rem]">
+                          Choose the rival
                         </span>
-                      )}
+                      </div>
+                      <div className="mt-2 min-w-0 pl-[2.7rem]">
+                        <div className="truncate font-gold-shiny text-[1.35rem] font-black sm:text-[1.55rem]">
+                          {selectedModel?.display_name ?? "No rival selected"}
+                        </div>
+                      </div>
                     </div>
-                    <div className="mt-1 break-all font-mono text-[0.68rem] text-stone-500">
-                      {selectedModel?.model_id ?? "No model selected"}
+
+                    <motion.div
+                      animate={{ rotate: modelsExpanded ? 180 : 0 }}
+                      transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-amber-300/18 bg-white/5 text-amber-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
+                    >
+                      <svg
+                        viewBox="0 0 24 24"
+                        className="h-5 w-5"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2.2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                      >
+                        <path d="m6 9 6 6 6-6" />
+                      </svg>
+                    </motion.div>
+                  </motion.button>
+
+                  {savingModelId && (
+                    <div className="mt-3 inline-flex rounded-full border border-amber-300/20 bg-amber-400/10 px-3 py-1.5 text-xs font-medium text-amber-100 shadow-[0_10px_24px_rgba(251,191,36,0.08)]">
+                      Updating {savingModelId}...
                     </div>
-                    <p className="mt-2 text-xs leading-5 text-stone-400">
-                      Click a card on the left and the next AI turn uses that model.
-                    </p>
-                  </div>
+                  )}
                 </div>
 
-                <div className="mt-4 grid gap-2.5 sm:grid-cols-2">
-                  <PriceStat
-                    label="Input / 1M"
-                    value={selectedModel ? `$${selectedModel.input_cost_per_million}` : "n/a"}
-                  />
-                  <PriceStat
-                    label="Output / 1M"
-                    value={selectedModel ? `$${selectedModel.output_cost_per_million}` : "n/a"}
-                  />
-                  <PriceStat
-                    label="Cache / 1M"
-                    value={selectedModel ? `$${selectedModel.cache_read_cost_per_million}` : "n/a"}
-                  />
-                  <PriceStat
-                    label="Context"
-                    value={selectedModel ? formatContextWindow(selectedModel.context_window) : "n/a"}
-                  />
-                </div>
-              </section>
+                <AnimatePresence initial={false}>
+                  {modelsExpanded ? (
+                    <motion.div
+                      key="models-panel"
+                      id="settings-model-table"
+                      initial={{ height: 0, opacity: 0, y: -10 }}
+                      animate={{ height: "auto", opacity: 1, y: 0 }}
+                      exit={{ height: 0, opacity: 0, y: -10 }}
+                      transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
+                      className="overflow-hidden"
+                    >
+                      <div className="pt-1">
+                        {loading ? (
+                          <div
+                            className="relative overflow-hidden rounded-[1.85rem] border border-white/8 shadow-[0_18px_45px_rgba(0,0,0,0.24)]"
+                            style={INTERACTIVE_PANEL_STYLE}
+                            onMouseMove={handleSurfacePointer}
+                          >
+                            <div className="absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-white/12 to-transparent" />
+                            <div className="border-b border-white/8 px-4 py-3">
+                              <div className="h-4 w-40 animate-pulse rounded-full bg-white/8" />
+                            </div>
+                            <div className="space-y-2 p-3">
+                              {Array.from({ length: 7 }).map((_, index) => (
+                                <div
+                                  key={index}
+                                  className="grid animate-pulse grid-cols-[minmax(0,1fr)_110px_110px] gap-3 rounded-[1.2rem] border border-white/6 bg-black/12 px-3 py-3"
+                                >
+                                  <div className="space-y-2">
+                                    <div className="h-4 w-40 rounded-full bg-white/8" />
+                                    <div className="h-3 w-64 rounded-full bg-white/6" />
+                                  </div>
+                                  <div className="h-4 w-20 justify-self-end rounded-full bg-white/8" />
+                                  <div className="h-4 w-20 justify-self-end rounded-full bg-white/8" />
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ) : models.length > 0 ? (
+                          <div
+                            className="relative overflow-hidden rounded-[1.85rem] border border-white/8 shadow-[0_18px_45px_rgba(0,0,0,0.24)]"
+                            style={INTERACTIVE_PANEL_STYLE}
+                            onMouseMove={handleSurfacePointer}
+                          >
+                            <div className="absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-white/12 to-transparent" />
+                            <div className="ornate-scrollbar overflow-x-auto">
+                              <table className="min-w-[720px] w-full border-separate border-spacing-0">
+                                <thead className="sticky top-0 z-10 backdrop-blur-xl">
+                                  <tr className="bg-[linear-gradient(180deg,rgba(22,19,16,0.98),rgba(15,12,10,0.94))] text-left">
+                                    <th className="border-b border-white/8 px-4 py-3 text-[0.78rem] uppercase tracking-[0.24em] text-stone-400">
+                                      Model
+                                    </th>
+                                    <th className="border-b border-white/8 px-4 py-3 text-right text-[0.78rem] uppercase tracking-[0.24em] text-stone-400">
+                                      Context
+                                    </th>
+                                    <th className="border-b border-white/8 px-4 py-3 text-right text-[0.78rem] uppercase tracking-[0.24em] text-stone-400">
+                                      $ / Price
+                                    </th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {displayedModels.map((model) => {
+                                    const isSelected = selectedModelId === model.model_id;
+                                    const isSaving = savingModelId === model.model_id;
+                                    const contextShare =
+                                      model.context_window && maxContextWindow > 0
+                                        ? Math.max(
+                                            10,
+                                            Math.round((model.context_window / maxContextWindow) * 100),
+                                          )
+                                        : 0;
 
+                                    return (
+                                      <tr
+                                        key={model.model_id}
+                                        tabIndex={savingModelId ? -1 : 0}
+                                        role="button"
+                                        aria-disabled={Boolean(savingModelId)}
+                                        aria-pressed={isSelected}
+                                        onMouseMove={handleSurfacePointer}
+                                        onClick={() => void persistModelSelection(model.model_id)}
+                                        onKeyDown={(event) =>
+                                          handleSelectKeyDown(event, () => {
+                                            void persistModelSelection(model.model_id);
+                                          })
+                                        }
+                                        className={`group cursor-pointer outline-none transition-[background-color,box-shadow,transform] duration-300 ${
+                                          isSelected
+                                            ? "bg-[linear-gradient(90deg,rgba(251,191,36,0.12),rgba(251,191,36,0.03)_42%,transparent)]"
+                                            : "hover:bg-white/[0.035]"
+                                        } ${savingModelId ? "pointer-events-none opacity-75" : ""}`}
+                                      >
+                                        <td
+                                          className={`px-4 py-5 align-top transition-[border-color,box-shadow,background-color] duration-300 group-focus-visible:border-amber-300/24 ${
+                                            isSelected
+                                              ? "border-y border-l border-amber-300/44 shadow-[inset_0_0_0_1px_rgba(251,191,36,0.18)]"
+                                              : "border-b border-white/6 group-hover:border-amber-300/14"
+                                          } rounded-l-[1.35rem]`}
+                                          style={isSelected ? SELECTED_ROW_CELL_STYLE : undefined}
+                                        >
+                                          <div className="flex min-w-0 items-start gap-3">
+                                            <div
+                                              className={`mt-0.5 flex h-12 w-12 shrink-0 items-center justify-center rounded-[1rem] border text-[1.75rem] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] ${
+                                                isSelected
+                                                  ? "border-amber-300/28 bg-amber-200/8"
+                                                  : "border-white/10 bg-stone-950/78"
+                                              }`}
+                                            >
+                                              {PROVIDER_ICONS[model.provider] || "🔧"}
+                                            </div>
+                                            <div className="min-w-0 flex-1">
+                                              <div className="flex flex-wrap items-center gap-2">
+                                                <div className="truncate text-[1.3rem] font-black sm:text-[1.38rem]">
+                                                  <span className={isSelected ? "font-gold-shiny" : "font-gold-dark"}>
+                                                    {model.display_name}
+                                                  </span>
+                                                </div>
+                                                <span
+                                                  className={`rounded-full px-2.5 py-1 text-[0.72rem] font-semibold uppercase tracking-[0.18em] ${
+                                                    QUALITY_COLORS[model.quality_tier] ||
+                                                    QUALITY_COLORS.standard
+                                                  }`}
+                                                >
+                                                  {model.quality_tier}
+                                                </span>
+                                                {model.is_flagship && (
+                                                  <span className="rounded-full border border-amber-300/20 bg-amber-400/12 px-2.5 py-1 text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-amber-100">
+                                                    Flagship
+                                                  </span>
+                                                )}
+                                                {(isSaving || isSelected) && (
+                                                  <span
+                                                    className={`rounded-full border px-2.5 py-1 text-[0.72rem] font-semibold uppercase tracking-[0.18em] ${
+                                                      isSaving
+                                                        ? "border-sky-400/24 bg-sky-400/12 text-sky-100"
+                                                        : "border-amber-300/24 bg-amber-300/12 text-amber-100"
+                                                    }`}
+                                                  >
+                                                    {isSaving ? "Saving" : "Active"}
+                                                  </span>
+                                                )}
+                                              </div>
+                                              <div className="mt-1 break-all font-mono text-[0.82rem] text-stone-500">
+                                                {model.model_id}
+                                              </div>
+                                              {model.description && (
+                                                <p className="mt-2 hidden max-w-3xl text-[1.1rem] leading-9 text-stone-50/95 md:block">
+                                                  {model.description}
+                                                </p>
+                                              )}
+                                            </div>
+                                          </div>
+                                        </td>
+                                        <td
+                                          className={`px-4 py-5 text-right align-middle transition-[border-color,box-shadow,background-color] duration-300 ${
+                                            isSelected
+                                              ? "border-y border-amber-300/44 shadow-[inset_0_0_0_1px_rgba(251,191,36,0.18)]"
+                                              : "border-b border-white/6 group-hover:border-amber-300/14"
+                                          }`}
+                                          style={isSelected ? SELECTED_ROW_CELL_STYLE : undefined}
+                                        >
+                                          <div className="ml-auto flex w-[220px] items-center gap-4 sm:w-[260px]">
+                                            <div className="relative h-3.5 flex-1 overflow-hidden rounded-full border border-white/8 bg-black/68 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+                                              <div
+                                                className={`absolute inset-y-0 left-0 rounded-full ${
+                                                  isSelected
+                                                    ? "bg-[linear-gradient(90deg,rgba(252,211,77,0.72),rgba(245,158,11,0.74))] shadow-[0_0_12px_rgba(251,191,36,0.18)]"
+                                                    : "bg-[linear-gradient(90deg,rgba(255,255,255,0.26),rgba(245,158,11,0.52))]"
+                                                }`}
+                                                style={{ width: `${contextShare}%` }}
+                                              />
+                                            </div>
+                                            <div
+                                              className={`w-16 text-right text-base font-semibold sm:text-[1.15rem] ${
+                                                isSelected ? "text-amber-100" : "text-stone-100"
+                                              }`}
+                                            >
+                                              {formatContextWindow(model.context_window)}
+                                            </div>
+                                          </div>
+                                        </td>
+                                        <td
+                                          className={`px-4 py-5 text-right align-middle transition-[border-color,box-shadow,background-color] duration-300 ${
+                                            isSelected
+                                              ? "border-y border-r border-amber-300/44 shadow-[inset_0_0_0_1px_rgba(251,191,36,0.18)]"
+                                              : "border-b border-white/6 group-hover:border-amber-300/14"
+                                          } rounded-r-[1.35rem]`}
+                                          style={isSelected ? SELECTED_ROW_CELL_STYLE : undefined}
+                                        >
+                                          <div
+                                            className={`text-base font-semibold sm:text-[1.15rem] ${
+                                              isSelected ? "text-amber-100" : "text-stone-100"
+                                            }`}
+                                          >
+                                            {formatUsdPerToken(model.combined_cost_per_million)}
+                                          </div>
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        ) : (
+                          <div
+                            className="rounded-[1.7rem] border border-white/8 p-5 text-sm text-stone-400 shadow-[0_16px_40px_rgba(0,0,0,0.20)]"
+                            style={INTERACTIVE_PANEL_STYLE}
+                            onMouseMove={handleSurfacePointer}
+                          >
+                            No synced models are available yet. Run{" "}
+                            <span className="font-mono text-stone-200">
+                              python manage.py sync_gateway_models
+                            </span>{" "}
+                            first.
+                          </div>
+                        )}
+                      </div>
+                    </motion.div>
+                  ) : null}
+                </AnimatePresence>
+              </div>
+            </section>
+
+            <div className="grid w-full gap-4 xl:grid-cols-2">
               <ChoiceGrid
                 title="AI Thinking Time"
-                description="Longer timeouts usually improve move quality, but they also raise token spend."
                 choices={TIMEOUT_CHOICES}
                 selectedValue={aiTimeout}
                 onSelect={setAITimeout}
@@ -728,13 +914,22 @@ export default function SettingsPage() {
 
               <ChoiceGrid
                 title="Search Steps"
-                description="How many reasoning and tool rounds the route can use before it auto-stops."
                 choices={STEP_CHOICES}
                 selectedValue={aiMaxSteps}
                 onSelect={setAIMaxSteps}
               />
+
+              <BoardSurfacePanel
+                selectedTheme={boardTheme}
+                onSelect={setBoardTheme}
+              />
+
+              <ShinyEffectPanel
+                enabled={boardShineEnabled}
+                onToggle={setBoardShineEnabled}
+              />
             </div>
-          </aside>
+          </div>
         </div>
       </motion.div>
     </div>
