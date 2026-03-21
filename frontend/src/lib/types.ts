@@ -9,6 +9,7 @@ export interface WordResult {
   word: string;
   score: number;
   multiplier?: number;
+  coords?: Array<{ row: number; col: number }>;
 }
 
 export interface SlotInfo {
@@ -38,6 +39,11 @@ export interface GameState {
   slots: SlotInfo[];
   move_count: number;
   my_rack: string[];
+  last_move_cells?: Placement[];
+  last_move_points?: number;
+  last_move_words?: WordResult[];
+  last_move_player_slot?: number | null;
+  last_move_billing?: BillingSummary | null;
 }
 
 export interface StartingDraw {

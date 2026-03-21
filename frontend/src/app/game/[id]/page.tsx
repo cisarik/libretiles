@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useCallback, useRef, useState } from "react";
+import { useEffect, useCallback, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
   DndContext,
@@ -146,6 +146,20 @@ const THEME_FRAME_BORDER: Record<BoardTheme, string> = {
   black: "rgba(131, 101, 58, 0.42)",
   green: "rgba(87, 111, 86, 0.44)",
 };
+
+function humanizeModelId(modelId?: string | null): string | null {
+  if (!modelId) return null;
+  const base = modelId.split("/").pop() ?? modelId;
+  return base
+    .split(/[-_]+/)
+    .filter(Boolean)
+    .map((part) => {
+      if (/^[0-9.]+$/.test(part)) return part;
+      if (part.length <= 3) return part.toUpperCase();
+      return part.charAt(0).toUpperCase() + part.slice(1);
+    })
+    .join(" ");
+}
 
 function normalizeAIBlocker(
   message: string,
@@ -544,6 +558,31 @@ export default function GamePage() {
       })
       .catch(() => {});
   }, [token, creditBalance, setCreditBalance]);
+
+  useEffect(() => {
+    if (!token || !gameState || !selectedModelId) return;
+    if (gameState.ai_model_id === selectedModelId) return;
+
+    let cancelled = false;
+
+    api
+      .updateGameAIModel(token, gameId, { ai_model_model_id: selectedModelId })
+      .then((result) => {
+        if (cancelled || !result.ok) return;
+        const latestState = useGameStore.getState().gameState;
+        if (!latestState) return;
+        setGameState({
+          ...latestState,
+          ai_model_id: result.ai_model_id,
+          ai_model_display_name: result.ai_model_display_name,
+        });
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [token, gameId, gameState, selectedModelId, setGameState]);
 
   useEffect(() => {
     return () => { if (countdownRef.current) clearInterval(countdownRef.current); };
@@ -1031,6 +1070,12 @@ export default function GamePage() {
       }
     : null;
   const frameBorderColor = THEME_FRAME_BORDER[boardTheme];
+  const activeHeaderModelName = useMemo(() => {
+    if (selectedModelId && gameState?.ai_model_id !== selectedModelId) {
+      return humanizeModelId(selectedModelId) ?? gameState?.ai_model_display_name ?? "Choose rival";
+    }
+    return gameState?.ai_model_display_name ?? humanizeModelId(gameState?.ai_model_id) ?? "Choose rival";
+  }, [gameState?.ai_model_display_name, gameState?.ai_model_id, selectedModelId]);
 
   if (!token) {
     return (
@@ -1069,7 +1114,7 @@ export default function GamePage() {
       <div className="min-h-screen bg-gradient-to-br from-stone-950 via-stone-900 to-stone-950 text-stone-100">
         <div className="mx-auto flex max-w-[960px] flex-col gap-3 px-4 py-3 sm:px-5 sm:py-4">
           <ScorePanel
-            aiModelDisplayName={gameState?.ai_model_display_name ?? "Choose rival"}
+            aiModelDisplayName={activeHeaderModelName}
             creditBalance={creditBalance}
             frameBorderColor={frameBorderColor}
             onOpenRivalPicker={() => router.push("/settings?focus=rival")}

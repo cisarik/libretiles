@@ -58,6 +58,16 @@ export const api = {
     data: { game_mode?: string; ai_model_id?: number; ai_model_model_id?: string },
   ) => request("/api/game/create/", { method: "POST", body: data, token }),
 
+  updateGameAIModel: (
+    token: string,
+    gameId: string,
+    data: { ai_model_model_id: string },
+  ) =>
+    request<{ ok: boolean; ai_model_id: string; ai_model_display_name: string }>(
+      `/api/game/${gameId}/ai-model/`,
+      { method: "PATCH", body: data, token },
+    ),
+
   getGameState: (token: string, gameId: string, slot: number = 0) =>
     request(`/api/game/${gameId}/?slot=${slot}`, { token }),
 

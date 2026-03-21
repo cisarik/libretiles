@@ -10,9 +10,33 @@ function formatRoundedCreditUsd(value?: string | null) {
   return `$${Math.round(numeric)}`;
 }
 
+function LuxeHoverText({
+  children,
+  className,
+}: {
+  children: string;
+  className: string;
+}) {
+  return (
+    <span className={`relative inline-grid place-items-center text-center align-middle ${className}`}>
+      <span
+        className="col-start-1 row-start-1 font-gold-shiny transition-opacity duration-200 group-hover:opacity-0"
+      >
+        {children}
+      </span>
+      <span
+        aria-hidden="true"
+        className="pointer-events-none col-start-1 row-start-1 font-white-shiny opacity-0 transition-opacity duration-200 group-hover:opacity-100"
+      >
+        {children}
+      </span>
+    </span>
+  );
+}
+
 function AnimatedScore({ score, label }: { score: number; label: string }) {
   return (
-    <div className="flex flex-col items-center gap-1">
+    <div className="flex w-[5.2rem] flex-col items-center gap-1 sm:w-[5.8rem]">
       <span className="text-[0.9rem] font-semibold uppercase tracking-[0.24em] text-white sm:text-[1rem]">
         {label}
       </span>
@@ -69,60 +93,62 @@ export function ScorePanel({
       className="relative rounded-[1.55rem] border border-white/8 bg-black p-4 shadow-[0_24px_56px_rgba(0,0,0,0.28)] sm:p-5"
       style={frameBorderColor ? { borderColor: frameBorderColor } : undefined}
     >
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] lg:items-center lg:gap-6">
-        <div className="min-w-0">
-          <div className="min-w-0 pt-1">
+      <div className="grid gap-3 lg:grid-cols-[16rem_minmax(0,1fr)_16rem] lg:grid-rows-[auto_auto] lg:items-end lg:gap-x-4 lg:gap-y-2">
+        <div className="min-w-0 lg:col-start-1 lg:row-start-1 lg:self-end">
+          <div className="min-w-0 pt-2 lg:pl-0.5">
             <button
               type="button"
               onClick={onOpenRivalPicker}
-              className="max-w-full truncate font-gold-shiny text-[1.85rem] font-black leading-none transition-opacity hover:opacity-90 sm:text-[2.08rem] lg:text-[2.2rem]"
-              title="Choose the rival"
+              className="group block max-w-full overflow-hidden whitespace-nowrap text-left transition-[opacity,filter] hover:opacity-92 hover:brightness-110"
+              title={aiModelDisplayName ?? "Choose the rival"}
             >
-              {aiModelDisplayName ?? "AI Rival"}
-            </button>
-          </div>
-
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <div className="inline-flex h-[3.2rem] items-center rounded-full border border-amber-300/22 bg-[linear-gradient(145deg,rgba(39,26,12,0.88),rgba(14,11,8,0.92))] px-4 shadow-[0_18px_36px_rgba(0,0,0,0.22)] sm:h-[3.35rem] sm:px-5">
-              <span className="font-gold-money text-[1.72rem] font-black leading-none sm:text-[1.92rem]">
-                {formatRoundedCreditUsd(creditBalance)}
-              </span>
-            </div>
-
-            <button
-              onClick={onOpenSettings}
-              className="inline-flex h-[3.2rem] items-center gap-2 rounded-full border border-amber-300/18 bg-[linear-gradient(145deg,rgba(31,23,16,0.86),rgba(13,10,8,0.92))] px-4 shadow-[0_14px_28px_rgba(0,0,0,0.18)] transition-all hover:border-amber-200/34 hover:bg-[linear-gradient(145deg,rgba(46,32,18,0.92),rgba(17,12,8,0.96))] sm:h-[3.35rem] sm:px-5"
-              title="Settings"
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="18"
-                height="18"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className="text-amber-100/90"
-              >
-                <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
-                <circle cx="12" cy="12" r="3" />
-              </svg>
-              <span className="font-gold-shiny text-[1.38rem] font-black leading-none sm:text-[1.46rem]">
-                Settings
-              </span>
+              <LuxeHoverText className="max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-[1.3rem] font-black leading-none sm:text-[1.42rem] lg:text-[1.48rem]">
+                {aiModelDisplayName ?? "AI Rival"}
+              </LuxeHoverText>
             </button>
           </div>
         </div>
 
-        <div className="flex items-end justify-center gap-5 sm:gap-8 lg:justify-self-center">
+        <div className="flex flex-wrap items-center gap-2 lg:col-start-1 lg:row-start-2 lg:self-end">
+          <div className="inline-flex h-[2.9rem] items-center justify-center rounded-full border border-amber-300/22 bg-[linear-gradient(145deg,rgba(39,26,12,0.88),rgba(14,11,8,0.92))] px-3.5 shadow-[0_18px_36px_rgba(0,0,0,0.22)]">
+            <span className="font-gold-money text-[1.24rem] font-black leading-none sm:text-[1.28rem]">
+              {formatRoundedCreditUsd(creditBalance)}
+            </span>
+          </div>
+
+          <button
+            onClick={onOpenSettings}
+            className="group inline-flex h-[2.9rem] items-center justify-center gap-2 rounded-full border border-amber-300/18 bg-[linear-gradient(145deg,rgba(31,23,16,0.86),rgba(13,10,8,0.92))] px-3.5 shadow-[0_14px_28px_rgba(0,0,0,0.18)] transition-all hover:border-white/42 hover:bg-[linear-gradient(145deg,rgba(78,64,46,0.96),rgba(26,21,16,0.98))] hover:shadow-[0_16px_30px_rgba(255,255,255,0.08),0_0_26px_rgba(255,255,255,0.06)]"
+            title="Settings"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="shrink-0 text-amber-100/90 transition-colors duration-200 group-hover:text-white"
+            >
+              <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+              <circle cx="12" cy="12" r="3" />
+            </svg>
+            <LuxeHoverText className="text-[1.16rem] font-black leading-none sm:text-[1.2rem]">
+              Settings
+            </LuxeHoverText>
+          </button>
+        </div>
+
+        <div className="grid grid-cols-[5.2rem_auto_5.2rem] items-end justify-center gap-3 self-center sm:grid-cols-[5.8rem_auto_5.8rem] sm:gap-5 lg:col-start-2 lg:row-span-2 lg:justify-self-center lg:self-center">
           <AnimatedScore
             score={humanSlot?.score ?? 0}
             label={humanSlot?.username ?? "ITRISY"}
           />
 
-          <div className="pb-1 text-[1.75rem] font-semibold uppercase tracking-[0.16em] text-white sm:text-[2rem]">
+          <div className="pb-1 text-center text-[1.38rem] font-semibold uppercase tracking-[0.14em] text-white sm:text-[1.55rem]">
             vs
           </div>
 
@@ -132,24 +158,24 @@ export function ScorePanel({
           />
         </div>
 
-        <div className="flex flex-wrap items-center justify-center gap-2 lg:justify-end lg:justify-self-end">
+        <div className="flex flex-wrap items-center justify-center gap-2 lg:col-start-3 lg:row-start-2 lg:justify-end lg:self-end">
           <button
             onClick={onGiveUp}
             disabled={disableGiveUp}
-            className="rounded-full border border-rose-400/22 bg-rose-500/10 px-4 py-2.5 shadow-[0_10px_24px_rgba(244,63,94,0.10)] transition-all hover:border-rose-300/40 hover:bg-rose-500/14 disabled:cursor-not-allowed disabled:opacity-45"
+            className="group inline-flex h-[2.9rem] items-center justify-center rounded-full border border-rose-400/22 bg-rose-500/10 px-4 shadow-[0_10px_24px_rgba(244,63,94,0.10)] transition-all hover:border-white/42 hover:bg-[linear-gradient(145deg,rgba(113,24,46,0.5),rgba(55,14,27,0.48))] hover:shadow-[0_14px_28px_rgba(255,255,255,0.07),0_0_24px_rgba(255,255,255,0.04)] disabled:cursor-not-allowed disabled:opacity-45"
           >
-            <span className="font-gold-shiny text-[1.38rem] font-black leading-none sm:text-[1.46rem]">
+            <LuxeHoverText className="text-[1.16rem] font-black leading-none sm:text-[1.2rem]">
               {givingUp ? "Giving up..." : "Give up"}
-            </span>
+            </LuxeHoverText>
           </button>
           <button
             onClick={onNewGame}
             disabled={startingNewGame}
-            className="rounded-full border border-amber-200/40 bg-[linear-gradient(135deg,rgba(251,191,36,0.18),rgba(245,158,11,0.08))] px-4 py-2.5 shadow-[0_10px_24px_rgba(251,191,36,0.12),0_0_28px_rgba(251,191,36,0.12)] transition-all hover:border-amber-100/60 hover:bg-[linear-gradient(135deg,rgba(251,191,36,0.24),rgba(245,158,11,0.12))] hover:shadow-[0_12px_28px_rgba(251,191,36,0.18),0_0_34px_rgba(251,191,36,0.18)] disabled:cursor-not-allowed disabled:opacity-50"
+            className="group inline-flex h-[2.9rem] items-center justify-center rounded-full border border-amber-200/40 bg-[linear-gradient(135deg,rgba(251,191,36,0.18),rgba(245,158,11,0.08))] px-4 shadow-[0_10px_24px_rgba(251,191,36,0.12),0_0_28px_rgba(251,191,36,0.12)] transition-all hover:border-white/48 hover:bg-[linear-gradient(135deg,rgba(255,248,220,0.18),rgba(251,191,36,0.18),rgba(245,158,11,0.12))] hover:shadow-[0_14px_30px_rgba(255,255,255,0.08),0_0_34px_rgba(255,255,255,0.06)] disabled:cursor-not-allowed disabled:opacity-50"
           >
-            <span className="font-gold-shiny text-[1.38rem] font-black leading-none sm:text-[1.46rem]">
+            <LuxeHoverText className="text-[1.16rem] font-black leading-none sm:text-[1.2rem]">
               {startingNewGame ? "Starting..." : "New game"}
-            </span>
+            </LuxeHoverText>
           </button>
         </div>
       </div>

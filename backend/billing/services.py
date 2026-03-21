@@ -12,7 +12,7 @@ from game.models import GameSession
 
 _ZERO = Decimal("0")
 _CENT = Decimal("0.01")
-_USD_PRECISION = Decimal("0.0001")
+_USD_PRECISION = Decimal("0.000001")
 
 
 def ensure_credit_balance(user) -> CreditBalance:  # type: ignore[no-untyped-def]

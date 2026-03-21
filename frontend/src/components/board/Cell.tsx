@@ -53,6 +53,7 @@ export function Cell({
             letter={letter}
             isBlank={isBlank}
             isPending={isPending}
+            isLastMove={isLastMove}
             size="board"
           />
         </div>

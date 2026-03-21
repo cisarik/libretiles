@@ -7,6 +7,7 @@ interface TileProps {
   letter: string;
   isBlank?: boolean;
   isPending?: boolean;
+  isLastMove?: boolean;
   isSelected?: boolean;
   isDragging?: boolean;
   size?: "sm" | "md" | "lg" | "board";
@@ -39,6 +40,7 @@ export function Tile({
   letter,
   isBlank = false,
   isPending = false,
+  isLastMove = false,
   isSelected = false,
   isDragging = false,
   size = "md",
@@ -70,7 +72,9 @@ export function Tile({
         ${isBlank ? "border-dashed border-2 border-amber-400/50" : ""}
         ${isPending
           ? "bg-gradient-to-br from-amber-50 to-amber-100 text-amber-950 ring-2 ring-amber-300 shadow-[0_14px_26px_rgba(251,191,36,0.24)]"
-          : "bg-gradient-to-br from-amber-50 via-[#fff4ce] to-amber-100 text-stone-800"
+          : isLastMove
+            ? "bg-gradient-to-br from-white via-[#fffef6] to-[#f6f3e8] text-stone-900 shadow-[0_16px_30px_rgba(255,255,255,0.26),0_2px_0_rgba(255,255,255,0.44)_inset,0_-2px_0_rgba(212,199,161,0.16)_inset]"
+            : "bg-gradient-to-br from-amber-50 via-[#fff4ce] to-amber-100 text-stone-800"
         }
         ${isSelected
           ? "ring-2 ring-sky-400 -translate-y-1 shadow-[0_14px_26px_rgba(56,189,248,0.22)]"

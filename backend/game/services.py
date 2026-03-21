@@ -36,6 +36,32 @@ from .models import GameSession, Move, PlayerSlot
 _dictionary_fn: Callable[[str], bool] | None = None
 
 
+def _serialize_last_move(session: GameSession) -> dict[str, Any]:
+    last_move = session.moves.order_by("-seq").first()
+    if not last_move or last_move.kind != "place":
+        return {
+            "last_move_cells": [],
+            "last_move_points": 0,
+            "last_move_words": [],
+            "last_move_player_slot": None,
+            "last_move_billing": None,
+        }
+
+    billing: dict[str, Any] | None = None
+    if isinstance(last_move.ai_metadata, dict):
+        maybe_billing = last_move.ai_metadata.get("billing")
+        if isinstance(maybe_billing, dict):
+            billing = maybe_billing
+
+    return {
+        "last_move_cells": last_move.placements or [],
+        "last_move_points": last_move.points,
+        "last_move_words": last_move.words_formed or [],
+        "last_move_player_slot": last_move.player_slot.slot if last_move.player_slot_id else None,
+        "last_move_billing": billing,
+    }
+
+
 def _get_dictionary() -> Callable[[str], bool]:
     """Lazy-load the primary Collins dictionary into memory (once)."""
     global _dictionary_fn
@@ -184,6 +210,7 @@ def get_game_state(game_id: str) -> dict[str, Any]:
     """Return full game state for the frontend."""
     session = GameSession.objects.get(public_id=game_id)
     slots = list(session.slots.all().order_by("slot"))
+    last_move = _serialize_last_move(session)
 
     return {
         "game_id": str(session.public_id),
@@ -212,6 +239,7 @@ def get_game_state(game_id: str) -> dict[str, Any]:
             for s in slots
         ],
         "move_count": session.moves.count(),
+        **last_move,
     }
 
 
@@ -353,8 +381,13 @@ def submit_move(
         kind="place",
         placements=placements_data,
         words_formed=[
-            {"word": bd.word, "score": bd.total, "multiplier": bd.word_multiplier}
-            for bd in breakdowns
+            {
+                "word": bd.word,
+                "score": bd.total,
+                "multiplier": bd.word_multiplier,
+                "coords": [{"row": r, "col": c} for r, c in wf.letters],
+            }
+            for bd, wf in zip(breakdowns, words_found, strict=False)
         ],
         points=total,
     )
