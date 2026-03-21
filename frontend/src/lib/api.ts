@@ -1,6 +1,41 @@
 import type { AIModel, MoveValidationResult, UserProfile } from "@/lib/types";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const DEFAULT_API_BASE = "http://localhost:8000";
+
+function isLoopbackHostname(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+}
+
+function trimTrailingSlash(value: string): string {
+  return value.replace(/\/+$/, "");
+}
+
+function resolveApiBase(): string {
+  const configuredBase = trimTrailingSlash(
+    process.env.NEXT_PUBLIC_API_URL || DEFAULT_API_BASE,
+  );
+
+  if (typeof window === "undefined") {
+    return configuredBase;
+  }
+
+  const currentHostname = window.location.hostname;
+  if (!currentHostname || isLoopbackHostname(currentHostname)) {
+    return configuredBase;
+  }
+
+  try {
+    const configuredUrl = new URL(configuredBase);
+    if (!isLoopbackHostname(configuredUrl.hostname)) {
+      return configuredBase;
+    }
+
+    configuredUrl.hostname = currentHostname;
+    return trimTrailingSlash(configuredUrl.toString());
+  } catch {
+    return configuredBase;
+  }
+}
 
 interface RequestOptions {
   method?: string;
@@ -16,7 +51,7 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
     headers["Authorization"] = `Bearer ${opts.token}`;
   }
 
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await fetch(`${resolveApiBase()}${path}`, {
     method: opts.method || "GET",
     cache: "no-store",
     headers,

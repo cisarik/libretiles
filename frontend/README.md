@@ -15,6 +15,13 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000).
 
+For LAN testing, start the frontend with `npm run dev:host` and open
+`http://<your-machine-ip>:3000` from the tablet or phone. Browser-side API
+calls will reuse that hostname for the Django backend when
+`NEXT_PUBLIC_API_URL` still points at `localhost`.
+Next.js dev assets are allowed for the machine's current LAN IPv4 addresses by
+default. If you need an extra hostname, set `NEXT_DEV_ALLOWED_ORIGINS`.
+
 ## Tech Stack
 
 - **Framework**: Next.js 16 (App Router, Server Actions)
@@ -50,7 +57,9 @@ See [.env.local.example](.env.local.example) for all available variables.
 |---|---|---|
 | `AI_GATEWAY_API_KEY` | Yes* | Vercel AI Gateway key |
 | `AI_GATEWAY_BASE_URL` | Yes* | `https://ai-gateway.vercel.sh/v1` |
-| `NEXT_PUBLIC_API_URL` | Yes | Django backend URL |
+| `NEXT_PUBLIC_API_URL` | Yes | Django backend URL for browser-side requests |
+| `BACKEND_URL` | Yes | Django backend URL for Next.js server-side routes |
+| `NEXT_DEV_ALLOWED_ORIGINS` | No | Extra hostnames/IPs allowed to load Next.js dev assets |
 | `NEXT_PUBLIC_DEFAULT_MODEL` | No | Default AI model (`openai/gpt-4o-mini`) |
 
 *Or use direct provider keys (`OPENAI_API_KEY`, etc.) for local dev without Gateway.
