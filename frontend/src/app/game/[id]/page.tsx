@@ -24,12 +24,11 @@ import { ScorePanel } from "@/components/game/ScorePanel";
 import { GameControls } from "@/components/game/GameControls";
 import { BlankPicker } from "@/components/game/BlankPicker";
 import { AIThinkingOverlay } from "@/components/game/AIThinkingOverlay";
-import { useGameStore } from "@/hooks/useGameStore";
+import { useGameStore, type BoardTheme } from "@/hooks/useGameStore";
 import { api } from "@/lib/api";
 import { isPlausibleRack } from "@/lib/rack";
 import type {
   AICandidate,
-  BillingSummary,
   CreateGameResponse,
   GameState,
   MoveResult,
@@ -135,20 +134,17 @@ type Toast = {
   remainingCredits?: string;
 };
 
-type AIAuditSummary = {
-  requestedModel: string | null;
-  sessionModel: string | null;
-  responseModel: string | null;
-  candidatesFound: number;
-  timedOut: boolean;
-  autoFinalized: boolean;
-};
-
 type AIBlockerModal = {
   kind: "user_credit" | "provider_funds";
   title: string;
   message: string;
   creditBalance?: string | null;
+};
+
+const THEME_FRAME_BORDER: Record<BoardTheme, string> = {
+  wood: "rgba(123, 90, 47, 0.56)",
+  black: "rgba(131, 101, 58, 0.42)",
+  green: "rgba(87, 111, 86, 0.44)",
 };
 
 function normalizeAIBlocker(
@@ -465,6 +461,7 @@ export default function GamePage() {
   const gameId = params.id as string;
 
   const token = useGameStore((s) => s.token);
+  const setToken = useGameStore((s) => s.setToken);
   const creditBalance = useGameStore((s) => s.creditBalance);
   const setCreditBalance = useGameStore((s) => s.setCreditBalance);
   const gameState = useGameStore((s) => s.gameState);
@@ -483,6 +480,7 @@ export default function GamePage() {
   const selectedModelId = useGameStore((s) => s.selectedModelId);
   const aiTimeout = useGameStore((s) => s.aiTimeout);
   const aiMaxSteps = useGameStore((s) => s.aiMaxSteps);
+  const boardTheme = useGameStore((s) => s.boardTheme);
   const addAICandidate = useGameStore((s) => s.addAICandidate);
   const clearAICandidates = useGameStore((s) => s.clearAICandidates);
   const setAICountdown = useGameStore((s) => s.setAICountdown);
@@ -497,8 +495,6 @@ export default function GamePage() {
   const [toast, setToast] = useState<Toast | null>(null);
   const [activeDragTile, setActiveDragTile] = useState<RackDragData | null>(null);
   const [dragPreviewTarget, setDragPreviewTarget] = useState<DragPreviewTarget | null>(null);
-  const [lastAIBilling, setLastAIBilling] = useState<BillingSummary | null>(null);
-  const [lastAIAudit, setLastAIAudit] = useState<AIAuditSummary | null>(null);
   const [aiBlockerModal, setAIBlockerModal] = useState<AIBlockerModal | null>(null);
   const [startingNewGame, setStartingNewGame] = useState(false);
   const [givingUp, setGivingUp] = useState(false);
@@ -513,9 +509,24 @@ export default function GamePage() {
 
   const fetchState = useCallback(async () => {
     if (!token) return;
-    const state = (await api.getGameState(token, gameId, 0)) as GameState;
-    setGameState(state);
-  }, [token, gameId, setGameState]);
+    try {
+      const state = (await api.getGameState(token, gameId, 0)) as GameState;
+      setGameState(state);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes("API error 401")) {
+        resetGameUi();
+        setCreditBalance(null);
+        setToken(null);
+        return;
+      }
+      setToast({
+        id: `state-${Date.now()}`,
+        type: "error",
+        message,
+      });
+    }
+  }, [token, gameId, resetGameUi, setCreditBalance, setGameState, setToken]);
 
   useEffect(() => { fetchState(); }, [fetchState]);
 
@@ -585,8 +596,6 @@ export default function GamePage() {
       setAiApproved(false);
       setAiError(null);
       setAIBlockerModal(null);
-      setLastAIBilling(null);
-      setLastAIAudit(null);
       setStartingDraw(result.starting_draw);
       setStartingRack(result.human_rack);
       router.replace(`/draw/${result.game_id}`);
@@ -721,18 +730,6 @@ export default function GamePage() {
           doneData = data;
           const result = data as unknown as MoveResult;
           setLastMoveResult(result);
-          setLastAIAudit({
-            requestedModel:
-              typeof data.requested_model === "string" ? data.requested_model : null,
-            sessionModel:
-              typeof data.session_model === "string" ? data.session_model : null,
-            responseModel:
-              typeof data.response_model === "string" ? data.response_model : null,
-            candidatesFound:
-              typeof data.candidates_found === "number" ? data.candidates_found : 0,
-            timedOut: data.timed_out === true,
-            autoFinalized: data.auto_finalized === true,
-          });
           if (result.state) {
             setGameState(result.state);
           }
@@ -768,9 +765,6 @@ export default function GamePage() {
         const billing = (doneData as MoveResult).billing;
         if (billing?.remaining_credits) {
           setCreditBalance(billing.remaining_credits);
-        }
-        if (billing) {
-          setLastAIBilling(billing);
         }
         const action = (doneData as Record<string, unknown>).action as string;
         if (action === "pass") {
@@ -1036,7 +1030,7 @@ export default function GamePage() {
         ...dragPreviewTarget,
       }
     : null;
-  const displayedModelId = selectedModelId || gameState?.ai_model_id;
+  const frameBorderColor = THEME_FRAME_BORDER[boardTheme];
 
   if (!token) {
     return (
@@ -1073,95 +1067,41 @@ export default function GamePage() {
       </AnimatePresence>
 
       <div className="min-h-screen bg-gradient-to-br from-stone-950 via-stone-900 to-stone-950 text-stone-100">
-        <div className="mx-auto flex max-w-[980px] flex-col gap-4 px-4 py-4 sm:px-5 sm:py-5">
-          <div className="rounded-[1.6rem] border border-white/8 bg-stone-900/58 p-4 shadow-[0_20px_50px_rgba(0,0,0,0.22)] backdrop-blur-sm">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-              <div className="min-w-0">
-                <div className="text-[0.68rem] uppercase tracking-[0.28em] text-stone-500">
-                  AI opponent
-                </div>
-                <div className="mt-1 text-xl font-black text-stone-50 sm:text-2xl">
-                  {gameState?.ai_model_display_name ?? "GPT opponent"}
-                </div>
-                <div className="mt-1 break-all font-mono text-xs text-stone-500">
-                  {displayedModelId}
-                </div>
-                <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
-                  <span className="rounded-full border border-amber-300/20 bg-amber-400/10 px-3 py-1 font-semibold text-amber-200">
-                    {creditBalance ?? "0.00"} cr
-                  </span>
-                  <span className="text-stone-400">
-                    Session {gameState?.ai_model_id ?? "n/a"}
-                  </span>
-                  {selectedModelId && selectedModelId !== gameState?.ai_model_id && (
-                    <span className="text-sky-300/90">
-                      Next AI turn switches to {selectedModelId}
-                    </span>
-                  )}
-                  {lastAIBilling && (
-                    <>
-                      <span className="text-emerald-300/90">
-                        Last AI cost {lastAIBilling.charged_usd} USD
-                      </span>
-                      <span className="text-stone-500">
-                        {lastAIBilling.total_tokens} tokens
-                      </span>
-                    </>
-                  )}
-                  {lastAIAudit?.responseModel && (
-                    <span className="text-stone-500">
-                      Last response {lastAIAudit.responseModel}
-                    </span>
-                  )}
-                </div>
-                {lastAIAudit && (
-                  <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-[1rem] border border-white/6 bg-black/16 px-3 py-2 text-[0.68rem] text-stone-400">
-                    <span>Requested {lastAIAudit.requestedModel ?? "n/a"}</span>
-                    <span>Session {lastAIAudit.sessionModel ?? "n/a"}</span>
-                    <span>Response {lastAIAudit.responseModel ?? "n/a"}</span>
-                    <span>{lastAIAudit.candidatesFound} candidates</span>
-                    {lastAIAudit.timedOut && <span>Timed out</span>}
-                    {lastAIAudit.autoFinalized && <span>Auto-finalized</span>}
-                  </div>
-                )}
-              </div>
-
-              <div className="flex flex-wrap gap-2">
-                <button
-                  onClick={() => void handleNewGame()}
-                  disabled={startingNewGame}
-                  className="rounded-full border border-amber-300/30 bg-amber-300/12 px-4 py-2 text-sm font-semibold text-amber-100 shadow-[0_10px_24px_rgba(251,191,36,0.10)] transition-all hover:border-amber-200/48 hover:bg-amber-300/18 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {startingNewGame ? "Starting..." : "New game"}
-                </button>
-                <button
-                  onClick={() => void handleGiveUp()}
-                  disabled={givingUp || gameState?.game_over || aiThinking}
-                  className="rounded-full border border-rose-400/22 bg-rose-500/10 px-4 py-2 text-sm font-semibold text-rose-100 shadow-[0_10px_24px_rgba(244,63,94,0.10)] transition-all hover:border-rose-300/40 hover:bg-rose-500/14 disabled:cursor-not-allowed disabled:opacity-45"
-                >
-                  {givingUp ? "Giving up..." : "Give up"}
-                </button>
-                <button
-                  onClick={() => router.push("/settings")}
-                  className="rounded-full border border-white/10 bg-white/5 px-3.5 py-2 text-stone-300 transition-all hover:border-white/18 hover:bg-white/8 hover:text-stone-100"
-                  title="Settings"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24"
-                    fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
-                    <circle cx="12" cy="12" r="3" />
-                  </svg>
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <ScorePanel />
+        <div className="mx-auto flex max-w-[960px] flex-col gap-3 px-4 py-3 sm:px-5 sm:py-4">
+          <ScorePanel
+            aiModelDisplayName={gameState?.ai_model_display_name ?? "Choose rival"}
+            creditBalance={creditBalance}
+            frameBorderColor={frameBorderColor}
+            onOpenRivalPicker={() => router.push("/settings?focus=rival")}
+            onNewGame={() => void handleNewGame()}
+            onGiveUp={() => void handleGiveUp()}
+            onOpenSettings={() => router.push("/settings")}
+            startingNewGame={startingNewGame}
+            givingUp={givingUp}
+            disableGiveUp={givingUp || gameState?.game_over || aiThinking}
+          />
           <Board
             dragPreview={boardDragPreview}
             isDraggingTile={!!activeDragTile}
           />
-          <TileRack />
+          <div
+            className="rounded-[1.55rem] border border-white/8 bg-black p-4 shadow-[0_22px_52px_rgba(0,0,0,0.28)]"
+            style={{ borderColor: frameBorderColor }}
+          >
+            <div className="flex flex-wrap items-center justify-center gap-4 lg:justify-between">
+              <div className="order-1 w-full lg:order-2 lg:min-w-[430px] lg:w-auto lg:flex-1">
+                <TileRack />
+              </div>
+              {isMyTurn && (
+                <GameControls
+                  onPlay={handlePlay}
+                  onExchange={handleExchange}
+                  onPass={handlePass}
+                  disabled={!isMyTurn || gameState?.game_over}
+                />
+              )}
+            </div>
+          </div>
 
           {/* AI Turn prompt */}
           <AnimatePresence>
@@ -1196,14 +1136,6 @@ export default function GamePage() {
               </motion.div>
             )}
           </AnimatePresence>
-
-          {/* Human controls */}
-          {isMyTurn && (
-            <div className="w-full">
-              <GameControls onPlay={handlePlay} onExchange={handleExchange} onPass={handlePass}
-                disabled={!isMyTurn || gameState?.game_over} />
-            </div>
-          )}
 
           {/* Game over */}
           <AnimatePresence>

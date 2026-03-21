@@ -18,7 +18,7 @@ const sizeClasses = {
   sm: "w-7 h-7",
   md: "w-9 h-9",
   lg: "w-[3.35rem] h-[3.35rem]",
-  board: "h-[90%] w-[90%]",
+  board: "h-[calc(90%+3px)] w-[calc(90%+3px)]",
 };
 
 const letterClasses = {
@@ -92,7 +92,9 @@ export function Tile({
       />
       <div className="pointer-events-none absolute inset-x-[18%] top-[8%] h-[24%] rounded-full bg-white/48 blur-[10px] opacity-70" />
       <div className="pointer-events-none absolute inset-x-[14%] bottom-[8%] h-[20%] rounded-full bg-amber-900/10 blur-[12px] opacity-70" />
-      <span className={`relative z-[1] leading-none drop-shadow-[0_1px_0_rgba(255,255,255,0.3)] ${letterClasses[size]}`}>
+      <span
+        className={`relative z-[1] font-black leading-none tracking-[-0.03em] drop-shadow-[0_1px_0_rgba(255,255,255,0.3)] ${letterClasses[size]}`}
+      >
         {displayLetter}
       </span>
       {points > 0 && (

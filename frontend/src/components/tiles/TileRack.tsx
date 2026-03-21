@@ -79,7 +79,7 @@ export function TileRack() {
     .filter(({ index }) => !usedIndices.has(index));
 
   return (
-    <div className="flex items-center justify-center gap-2 rounded-[1.4rem] border border-white/8 bg-stone-900/72 p-3.5 shadow-[0_20px_48px_rgba(0,0,0,0.28)] backdrop-blur-sm sm:gap-2.5 sm:p-4">
+    <div className="flex min-h-[4.5rem] w-full items-center justify-center gap-2 sm:gap-2.5">
       <AnimatePresence mode="popLayout">
         {visibleRack.map(({ letter, index }) => (
           <DraggableTile

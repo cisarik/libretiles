@@ -2,6 +2,7 @@
 
 import {
   useEffect,
+  useRef,
   useState,
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -343,6 +344,7 @@ export default function SettingsPage() {
   const [accountSyncAvailable, setAccountSyncAvailable] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
   const [modelsExpanded, setModelsExpanded] = useState(false);
+  const rivalSectionRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -400,6 +402,21 @@ export default function SettingsPage() {
       cancelled = true;
     };
   }, [token, setCreditBalance, setSelectedModelId]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const focusRival =
+      new URLSearchParams(window.location.search).get("focus") === "rival";
+    if (!focusRival) return;
+    setModelsExpanded(true);
+    const frame = window.requestAnimationFrame(() => {
+      rivalSectionRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
 
   const selectedModel =
     models.find((model) => model.model_id === selectedModelId) ?? models[0] ?? null;
@@ -625,7 +642,7 @@ export default function SettingsPage() {
 
         <div className="ornate-scrollbar relative flex-1 min-h-0 overflow-y-auto p-4 sm:p-5">
           <div className="flex min-h-0 flex-col gap-4">
-            <section className="min-h-0">
+            <section ref={rivalSectionRef} className="min-h-0">
               <div className="flex min-h-0 flex-col">
                 <div className="pb-4">
                   <motion.button
