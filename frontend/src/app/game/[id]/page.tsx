@@ -16,7 +16,7 @@ import {
   useSensors,
 } from "@dnd-kit/core";
 import confetti from "canvas-confetti";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, LayoutGroup } from "framer-motion";
 
 import { Board } from "@/components/board/Board";
 import { TileRack } from "@/components/tiles/TileRack";
@@ -25,6 +25,7 @@ import { GameControls } from "@/components/game/GameControls";
 import { BlankPicker } from "@/components/game/BlankPicker";
 import { AIThinkingOverlay } from "@/components/game/AIThinkingOverlay";
 import { useGameStore, type BoardTheme } from "@/hooks/useGameStore";
+import { useIsCoarsePointer } from "@/hooks/useIsCoarsePointer";
 import { api } from "@/lib/api";
 import { isPlausibleRack } from "@/lib/rack";
 import type {
@@ -444,7 +445,7 @@ function AIBlockerOverlay({
         </p>
         {modal.kind === "user_credit" && (
           <div className="mt-4 rounded-[1.1rem] border border-amber-300/18 bg-amber-400/8 px-4 py-3 text-sm text-amber-100">
-            Balance: <span className="font-black">{modal.creditBalance ?? "0.00"} cr</span>
+            Balance: <span className="font-black">${modal.creditBalance ?? "0.000"}</span>
           </div>
         )}
 
@@ -473,6 +474,7 @@ export default function GamePage() {
   const params = useParams();
   const router = useRouter();
   const gameId = params.id as string;
+  const isCoarsePointer = useIsCoarsePointer();
 
   const token = useGameStore((s) => s.token);
   const setToken = useGameStore((s) => s.setToken);
@@ -481,10 +483,12 @@ export default function GamePage() {
   const gameState = useGameStore((s) => s.gameState);
   const setGameState = useGameStore((s) => s.setGameState);
   const setStartingDraw = useGameStore((s) => s.setStartingDraw);
+  const startingRack = useGameStore((s) => s.startingRack);
   const setStartingRack = useGameStore((s) => s.setStartingRack);
   const pendingTiles = useGameStore((s) => s.pendingTiles);
   const addPendingTile = useGameStore((s) => s.addPendingTile);
   const clearPendingTiles = useGameStore((s) => s.clearPendingTiles);
+  const exchangeMode = useGameStore((s) => s.exchangeMode);
   const setExchangeMode = useGameStore((s) => s.setExchangeMode);
   const exchangeSelected = useGameStore((s) => s.exchangeSelected);
   const setLastMoveResult = useGameStore((s) => s.setLastMoveResult);
@@ -509,17 +513,17 @@ export default function GamePage() {
   const [toast, setToast] = useState<Toast | null>(null);
   const [activeDragTile, setActiveDragTile] = useState<RackDragData | null>(null);
   const [dragPreviewTarget, setDragPreviewTarget] = useState<DragPreviewTarget | null>(null);
+  const [selectedRackTile, setSelectedRackTile] = useState<RackDragData | null>(null);
   const [aiBlockerModal, setAIBlockerModal] = useState<AIBlockerModal | null>(null);
   const [startingNewGame, setStartingNewGame] = useState(false);
   const [givingUp, setGivingUp] = useState(false);
   const [newGameTransitioning, setNewGameTransitioning] = useState(false);
 
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 3 } }),
-    useSensor(TouchSensor, {
-      activationConstraint: { delay: 70, tolerance: 8 },
-    }),
-  );
+  const pointerSensor = useSensor(PointerSensor, { activationConstraint: { distance: 3 } });
+  const touchSensor = useSensor(TouchSensor, {
+    activationConstraint: { delay: 70, tolerance: 8 },
+  });
+  const sensors = useSensors(pointerSensor, touchSensor);
 
   const fetchState = useCallback(async () => {
     if (!token) return;
@@ -894,6 +898,25 @@ export default function GamePage() {
     return { row, col };
   }, [gameState, pendingTiles]);
 
+  const placeRackTileAt = useCallback((tile: RackDragData, row: number, col: number) => {
+    const target = getValidPreviewTarget(row, col);
+    if (!target) return false;
+
+    if (tile.letter === "?") {
+      openBlankPicker(target.row, target.col, tile.index);
+    } else {
+      addPendingTile({
+        row: target.row,
+        col: target.col,
+        letter: tile.letter,
+        blank_as: null,
+        rackIndex: tile.index,
+      });
+    }
+
+    return true;
+  }, [addPendingTile, getValidPreviewTarget, openBlankPicker]);
+
   const handleDragStart = useCallback((event: DragStartEvent) => {
     const activeData = event.active.data.current as RackDragData | undefined;
     if (!activeData || activeData.origin !== "rack") {
@@ -901,6 +924,7 @@ export default function GamePage() {
       return;
     }
 
+    setSelectedRackTile(null);
     setActiveDragTile(activeData);
   }, [clearDragState]);
 
@@ -929,14 +953,7 @@ export default function GamePage() {
 
     const overData = over.data.current as { row: number; col: number } | undefined;
     if (!overData || !activeData || activeData.origin !== "rack") return;
-    const { row, col } = overData;
-    if (!getValidPreviewTarget(row, col)) return;
-
-    if (activeData.letter === "?") {
-      openBlankPicker(row, col, activeData.index);
-    } else {
-      addPendingTile({ row, col, letter: activeData.letter, blank_as: null, rackIndex: activeData.index });
-    }
+    placeRackTileAt(activeData, overData.row, overData.col);
   };
 
   const handleBlankSelect = (letter: string) => {
@@ -1064,6 +1081,7 @@ export default function GamePage() {
   const isMyTurn = gameState?.current_turn_slot === 0;
   const isAITurn = gameState?.current_turn_slot === 1 && !gameState?.game_over;
   const showAIPrompt = isAITurn && !aiApproved && !aiThinking;
+  const rackCanPlace = isMyTurn && !gameState?.game_over && !aiThinking;
   const boardDragPreview = activeDragTile && dragPreviewTarget
     ? {
         ...dragPreviewTarget,
@@ -1076,6 +1094,45 @@ export default function GamePage() {
     }
     return gameState?.ai_model_display_name ?? humanizeModelId(gameState?.ai_model_id) ?? "Choose rival";
   }, [gameState?.ai_model_display_name, gameState?.ai_model_id, selectedModelId]);
+  const selectedRackTileLabel = selectedRackTile?.letter === "?" ? "Blank" : selectedRackTile?.letter;
+  const rackTileSize = isCoarsePointer ? "rack" : "lg";
+
+  const handleRackTileSelect = useCallback((tile: { letter: string; index: number }) => {
+    if (!rackCanPlace || exchangeMode) return;
+    setSelectedRackTile((current) =>
+      current?.index === tile.index
+        ? null
+        : { ...tile, origin: "rack" },
+    );
+  }, [exchangeMode, rackCanPlace]);
+
+  const handleBoardTilePlacement = useCallback((row: number, col: number) => {
+    if (!selectedRackTile || !rackCanPlace) return;
+    if (placeRackTileAt(selectedRackTile, row, col)) {
+      setSelectedRackTile(null);
+    }
+  }, [placeRackTileAt, rackCanPlace, selectedRackTile]);
+
+  useEffect(() => {
+    if (!selectedRackTile) return;
+    if (!rackCanPlace || exchangeMode) {
+      setSelectedRackTile(null);
+      return;
+    }
+
+    const rack = isPlausibleRack(gameState?.my_rack)
+      ? gameState.my_rack
+      : isPlausibleRack(startingRack)
+        ? startingRack
+        : [];
+    const tileStillAvailable =
+      rack[selectedRackTile.index] === selectedRackTile.letter &&
+      !pendingTiles.some((tile) => tile.rackIndex === selectedRackTile.index);
+
+    if (!tileStillAvailable) {
+      setSelectedRackTile(null);
+    }
+  }, [exchangeMode, gameState?.my_rack, pendingTiles, rackCanPlace, selectedRackTile, startingRack]);
 
   if (!token) {
     return (
@@ -1093,7 +1150,7 @@ export default function GamePage() {
 
   return (
     <DndContext
-      sensors={sensors}
+      sensors={isCoarsePointer ? [] : sensors}
       onDragStart={handleDragStart}
       onDragOver={handleDragOver}
       onDragCancel={handleDragCancel}
@@ -1125,62 +1182,97 @@ export default function GamePage() {
             givingUp={givingUp}
             disableGiveUp={givingUp || gameState?.game_over || aiThinking}
           />
-          <Board
-            dragPreview={boardDragPreview}
-            isDraggingTile={!!activeDragTile}
-          />
-          <div
-            className="rounded-[1.55rem] border border-white/8 bg-black p-4 shadow-[0_22px_52px_rgba(0,0,0,0.28)]"
-            style={{ borderColor: frameBorderColor }}
-          >
-            <div className="flex flex-wrap items-center justify-center gap-4 lg:justify-between">
-              <div className="order-1 w-full lg:order-2 lg:min-w-[430px] lg:w-auto lg:flex-1">
-                <TileRack />
-              </div>
-              {isMyTurn && (
-                <GameControls
-                  onPlay={handlePlay}
-                  onExchange={handleExchange}
-                  onPass={handlePass}
-                  disabled={!isMyTurn || gameState?.game_over}
-                />
+          <LayoutGroup id={`game-${gameId}-rack-board`}>
+            <Board
+              dragPreview={boardDragPreview}
+              isDraggingTile={!!activeDragTile}
+              onPlaceTile={handleBoardTilePlacement}
+            />
+            <div
+              className="rounded-[1.55rem] border border-white/8 bg-black p-4 shadow-[0_22px_52px_rgba(0,0,0,0.28)]"
+              style={{ borderColor: frameBorderColor }}
+            >
+              {isMyTurn ? (
+                <div className="flex flex-col gap-4 lg:grid lg:grid-cols-[auto_minmax(0,1fr)_auto] lg:items-center lg:gap-4">
+                  <div className="order-1 w-full lg:col-start-2 lg:row-start-1 lg:min-w-[430px] lg:w-auto">
+                    <TileRack
+                      canPlaceByTap={rackCanPlace}
+                      dragEnabled={!isCoarsePointer}
+                      tileSize={rackTileSize}
+                      selectedRackTileIndex={selectedRackTile?.index ?? null}
+                      onRackTileSelect={handleRackTileSelect}
+                    />
+                    <AnimatePresence>
+                      {selectedRackTile && (
+                        <motion.div
+                          initial={{ opacity: 0, y: 10, scale: 0.96 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          exit={{ opacity: 0, y: -8, scale: 0.96 }}
+                          transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+                          className="mt-3 flex justify-center"
+                        >
+                          <div className="inline-flex items-center gap-2 rounded-full border border-sky-300/18 bg-[linear-gradient(135deg,rgba(13,30,46,0.92),rgba(7,15,26,0.96))] px-3 py-1.5 shadow-[0_16px_34px_rgba(14,165,233,0.08)]">
+                            <span className="font-gold-shiny text-[1rem] font-black leading-none text-sky-100">
+                              {selectedRackTileLabel}
+                            </span>
+                            <span className="text-[0.72rem] font-semibold uppercase tracking-[0.24em] text-sky-100/78">
+                              Tap a board square
+                            </span>
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                  <GameControls
+                    onPlay={handlePlay}
+                    onExchange={handleExchange}
+                    onPass={handlePass}
+                    disabled={!isMyTurn || gameState?.game_over}
+                  />
+                </div>
+              ) : (
+                <div className="relative">
+                  <div className="mx-auto w-full max-w-fit opacity-55 saturate-75">
+                    <TileRack dragEnabled={!isCoarsePointer} tileSize={rackTileSize} />
+                  </div>
+                  {showAIPrompt && (
+                    <>
+                      <div className="mt-4 flex justify-end lg:absolute lg:right-0 lg:top-1/2 lg:mt-0 lg:-translate-y-1/2">
+                        <div className="rounded-full border border-emerald-500/36 bg-[linear-gradient(180deg,rgba(8,20,16,0.98),rgba(2,8,6,0.98))] p-1 shadow-[0_0_0_1px_rgba(16,185,129,0.08),0_18px_42px_rgba(0,0,0,0.48),0_0_28px_rgba(16,185,129,0.18)] backdrop-blur-sm transition-all duration-200 hover:border-white/34 hover:shadow-[0_0_0_1px_rgba(16,185,129,0.12),0_18px_44px_rgba(0,0,0,0.52),0_0_32px_rgba(16,185,129,0.24)]">
+                          <button
+                            onClick={() => setAiApproved(true)}
+                            className="group inline-flex min-w-[5.2rem] items-center justify-center rounded-full border border-emerald-300/52 bg-[linear-gradient(135deg,rgba(16,168,110,0.98),rgba(8,112,74,1))] px-4 py-2.5 text-center shadow-[inset_0_1px_0_rgba(255,255,255,0.14),0_12px_28px_rgba(0,0,0,0.34),0_0_20px_rgba(16,185,129,0.18)] transition-all duration-200 active:scale-[0.97] hover:border-white/42 hover:bg-[linear-gradient(135deg,rgba(28,191,128,1),rgba(11,128,85,1))] hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.18),0_14px_34px_rgba(0,0,0,0.38),0_0_26px_rgba(16,185,129,0.22)]"
+                          >
+                            <span className="relative inline-grid place-items-center text-center align-middle">
+                              <span className="col-start-1 row-start-1 font-gold-shiny text-[1.12rem] font-black leading-none transition-opacity duration-200 group-hover:opacity-0 sm:text-[1.34rem]">
+                                Play
+                              </span>
+                              <span
+                                aria-hidden="true"
+                                className="pointer-events-none col-start-1 row-start-1 font-white-shiny text-[1.12rem] font-black leading-none opacity-0 transition-opacity duration-200 group-hover:opacity-100 sm:text-[1.34rem]"
+                              >
+                                Play
+                              </span>
+                            </span>
+                          </button>
+                        </div>
+                      </div>
+                      {aiError && (
+                        <motion.div
+                          initial={{ opacity: 0, y: 8 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -8 }}
+                          className="mt-4 text-center text-xs text-red-400/80 lg:pr-[184px]"
+                        >
+                          Last error: {aiError}
+                        </motion.div>
+                      )}
+                    </>
+                  )}
+                </div>
               )}
             </div>
-          </div>
-
-          {/* AI Turn prompt */}
-          <AnimatePresence>
-            {showAIPrompt && (
-              <motion.div
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -10 }}
-                className="flex flex-col items-center gap-3 p-4 bg-stone-800/60 backdrop-blur-sm rounded-xl border border-stone-700/40"
-              >
-                <p className="text-stone-300 text-sm text-center">
-                  AI&apos;s turn — ready when you are
-                </p>
-                <div className="flex gap-3">
-                  <button onClick={() => router.push("/settings")}
-                    className="px-4 py-2.5 rounded-xl bg-stone-700/60 text-stone-300 text-sm
-                      font-medium hover:bg-stone-700 transition-colors border border-stone-600/30">
-                    Settings
-                  </button>
-                  <button onClick={() => setAiApproved(true)}
-                    className="px-6 py-2.5 rounded-xl bg-emerald-600 text-white text-sm
-                      font-bold hover:bg-emerald-500 transition-all shadow-lg shadow-emerald-600/20
-                      hover:shadow-emerald-500/30 active:scale-95">
-                    Let AI Play
-                  </button>
-                </div>
-                {aiError && (
-                  <p className="text-red-400/80 text-xs text-center max-w-xs mt-1">
-                    Last error: {aiError}
-                  </p>
-                )}
-              </motion.div>
-            )}
-          </AnimatePresence>
+          </LayoutGroup>
 
           {/* Game over */}
           <AnimatePresence>

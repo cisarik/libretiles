@@ -10,7 +10,9 @@ interface TileProps {
   isLastMove?: boolean;
   isSelected?: boolean;
   isDragging?: boolean;
-  size?: "sm" | "md" | "lg" | "board";
+  hidePoints?: boolean;
+  layoutId?: string;
+  size?: "sm" | "md" | "lg" | "rack" | "board";
   hoverable?: boolean;
   onClick?: () => void;
 }
@@ -19,6 +21,7 @@ const sizeClasses = {
   sm: "w-7 h-7",
   md: "w-9 h-9",
   lg: "w-[3.35rem] h-[3.35rem]",
+  rack: "h-[2.9rem] w-[2.9rem]",
   board: "h-[calc(90%+3px)] w-[calc(90%+3px)]",
 };
 
@@ -26,14 +29,16 @@ const letterClasses = {
   sm: "text-sm",
   md: "text-base",
   lg: "text-[1.55rem]",
-  board: "text-[clamp(0.95rem,1vw+0.42rem,1.2rem)]",
+  rack: "text-[1.38rem]",
+  board: "text-[1rem] sm:text-[1.08rem]",
 };
 
 const pointsClasses = {
   sm: "bottom-0.5 right-1 text-[0.5rem]",
   md: "bottom-0.5 right-1 text-[0.55rem]",
   lg: "bottom-1 right-1 text-[0.62rem]",
-  board: "bottom-1 right-1.5 text-[0.68rem]",
+  rack: "bottom-[0.34rem] right-[0.42rem] text-[0.56rem]",
+  board: "bottom-[0.28rem] right-[0.34rem] text-[0.44rem] sm:bottom-[0.34rem] sm:right-[0.42rem] sm:text-[0.5rem]",
 };
 
 export function Tile({
@@ -43,6 +48,8 @@ export function Tile({
   isLastMove = false,
   isSelected = false,
   isDragging = false,
+  hidePoints = false,
+  layoutId,
   size = "md",
   hoverable = true,
   onClick,
@@ -53,6 +60,7 @@ export function Tile({
   return (
     <motion.div
       onClick={onClick}
+      layoutId={layoutId}
       whileHover={
         !hoverable || isDragging
           ? undefined
@@ -83,8 +91,8 @@ export function Tile({
         ${isDragging ? "shadow-[0_22px_42px_rgba(0,0,0,0.42)]" : "shadow-[0_10px_18px_rgba(120,88,36,0.22),0_2px_0_rgba(255,255,255,0.34)_inset,0_-2px_0_rgba(176,124,31,0.08)_inset]"}
       `}
       style={{
-        perspective: "220px",
-        transform: "perspective(220px) rotateX(2deg)",
+        perspective: size === "board" ? "none" : "220px",
+        transform: size === "board" ? "none" : "perspective(220px) rotateX(2deg)",
       }}
     >
       <div
@@ -97,12 +105,12 @@ export function Tile({
       <div className="pointer-events-none absolute inset-x-[18%] top-[8%] h-[24%] rounded-full bg-white/48 blur-[10px] opacity-70" />
       <div className="pointer-events-none absolute inset-x-[14%] bottom-[8%] h-[20%] rounded-full bg-amber-900/10 blur-[12px] opacity-70" />
       <span
-        className={`relative z-[1] font-black leading-none tracking-[-0.03em] drop-shadow-[0_1px_0_rgba(255,255,255,0.3)] ${letterClasses[size]}`}
+        className={`relative z-[1] font-black leading-none ${size === "board" ? "tracking-[-0.02em]" : "tracking-[-0.03em]"} ${size === "board" ? "" : "drop-shadow-[0_1px_0_rgba(255,255,255,0.3)]"} ${letterClasses[size]}`}
       >
         {displayLetter}
       </span>
-      {points > 0 && (
-        <span className={`absolute z-[1] font-semibold opacity-72 ${pointsClasses[size]}`}>
+      {!hidePoints && points > 0 && (
+        <span className={`absolute z-[1] font-semibold leading-none opacity-72 ${pointsClasses[size]}`}>
           {points}
         </span>
       )}

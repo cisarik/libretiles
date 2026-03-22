@@ -1,10 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import { Board } from "@/components/board/Board";
-import { Tile } from "@/components/tiles/Tile";
 import { useGameStore } from "@/hooks/useGameStore";
 
 type DrawStage = "board" | "flip" | "compare" | "result" | "rack";
@@ -102,7 +101,6 @@ export default function DrawPage() {
 
   const startingDraw = useGameStore((s) => s.startingDraw);
   const setStartingDraw = useGameStore((s) => s.setStartingDraw);
-  const startingRack = useGameStore((s) => s.startingRack);
   const selectedModelId = useGameStore((s) => s.selectedModelId);
 
   const [stage, setStage] = useState<DrawStage>("board");
@@ -111,11 +109,6 @@ export default function DrawPage() {
   const aiTile = startingDraw?.ai_tile ?? "?";
   const humanFirst = startingDraw?.human_first ?? true;
   const revealed = stage !== "board";
-
-  const rackSlots = useMemo(
-    () => Array.from({ length: 7 }, (_, index) => startingRack?.[index] ?? ""),
-    [startingRack],
-  );
 
   useEffect(() => {
     if (!startingDraw) {
@@ -164,7 +157,7 @@ export default function DrawPage() {
             Deciding who opens the board
           </h1>
           <p className="mt-2 text-sm text-stone-400">
-            Closest tile to A starts. Fresh rack already loaded.
+            Closest tile to A starts.
           </p>
           <div className="mt-3 inline-flex items-center rounded-full border border-white/8 bg-white/[0.03] px-4 py-1.5 font-mono text-[0.72rem] text-stone-400">
             {selectedModelId}
@@ -243,41 +236,6 @@ export default function DrawPage() {
           </div>
         </motion.div>
 
-        <motion.div
-          initial={{ opacity: 0, y: 18 }}
-          animate={{ opacity: stage === "rack" ? 1 : 0.48, y: stage === "rack" ? 0 : 18 }}
-          transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
-          className="w-full max-w-[940px] rounded-[1.9rem] border border-white/8 bg-stone-950/56 px-5 py-4 shadow-[0_22px_54px_rgba(0,0,0,0.28)] backdrop-blur-sm"
-        >
-          <div className="mb-3 text-center text-[0.7rem] font-semibold uppercase tracking-[0.34em] text-stone-500">
-            Opening Rack
-          </div>
-          <div className="flex justify-center gap-2 sm:gap-2.5">
-            {rackSlots.map((letter, index) => (
-              <motion.div
-                key={`${letter || "slot"}-${index}`}
-                initial={{ opacity: 0, y: 16, scale: 0.94 }}
-                animate={{
-                  opacity: stage === "rack" ? 1 : 0.8,
-                  y: stage === "rack" ? 0 : 12,
-                  scale: 1,
-                }}
-                transition={{
-                  duration: 0.24,
-                  delay: stage === "rack" ? index * 0.045 : 0,
-                  ease: [0.22, 1, 0.36, 1],
-                }}
-              >
-                <Tile
-                  letter={letter}
-                  isBlank={letter === "?"}
-                  size="lg"
-                  hoverable={false}
-                />
-              </motion.div>
-            ))}
-          </div>
-        </motion.div>
       </div>
     </div>
   );
