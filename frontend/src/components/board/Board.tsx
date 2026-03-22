@@ -532,6 +532,7 @@ export function Board({
 
   const handleCellClick = (row: number, col: number) => {
     if (
+      isDraggingTile ||
       performance.now() < suppressTapUntilRef.current ||
       inertiaFrameRef.current != null ||
       zoomRuntimeRef.current.mode !== "idle"
@@ -606,7 +607,7 @@ export function Board({
                       isPending={!!pending}
                       isLastMove={lastMoveSet.has(key)}
                       isPreviewTarget={showDragPreview}
-                      tileLayoutId={pending ? `rack-tile-${pending.rackIndex}` : undefined}
+                      tileLayoutId={isCoarsePointer && pending ? `rack-tile-${pending.rackIndex}` : undefined}
                       hideTilePoints={isCoarsePointer && zoomActive}
                       useTouchPlacement={isCoarsePointer}
                       onCellClick={handleCellClick}

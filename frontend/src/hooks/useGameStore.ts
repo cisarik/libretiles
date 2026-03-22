@@ -113,7 +113,16 @@ export const useGameStore = create<GameStore>()(
 
       pendingTiles: [],
       addPendingTile: (tile) =>
-        set((s) => ({ pendingTiles: [...s.pendingTiles, tile] })),
+        set((s) => ({
+          pendingTiles: [
+            ...s.pendingTiles.filter(
+              (t) =>
+                t.rackIndex !== tile.rackIndex &&
+                (t.row !== tile.row || t.col !== tile.col),
+            ),
+            tile,
+          ],
+        })),
       removePendingTile: (row, col) =>
         set((s) => ({
           pendingTiles: s.pendingTiles.filter((t) => t.row !== row || t.col !== col),

@@ -941,20 +941,25 @@ export default function GamePage() {
   }, [activeDragTile, getValidPreviewTarget]);
 
   const handleDragCancel = useCallback(() => {
-    clearDragState();
+    window.requestAnimationFrame(() => {
+      clearDragState();
+    });
   }, [clearDragState]);
 
-  const handleDragEnd = (event: DragEndEvent) => {
+  const handleDragEnd = useCallback((event: DragEndEvent) => {
     const { active, over } = event;
     const activeData = active.data.current as RackDragData | undefined;
+    if (over) {
+      const overData = over.data.current as { row: number; col: number } | undefined;
+      if (overData && activeData && activeData.origin === "rack") {
+        placeRackTileAt(activeData, overData.row, overData.col);
+      }
+    }
 
-    clearDragState();
-    if (!over) return;
-
-    const overData = over.data.current as { row: number; col: number } | undefined;
-    if (!overData || !activeData || activeData.origin !== "rack") return;
-    placeRackTileAt(activeData, overData.row, overData.col);
-  };
+    window.requestAnimationFrame(() => {
+      clearDragState();
+    });
+  }, [clearDragState, placeRackTileAt]);
 
   const handleBlankSelect = (letter: string) => {
     const target = useGameStore.getState().blankPickerTarget;

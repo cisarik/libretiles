@@ -50,7 +50,7 @@ function DraggableTile({
         ease: [0.22, 1, 0.36, 1],
         delay: index * 0.03,
       }}
-      onClick={dragEnabled && selectEnabled ? onSelect : undefined}
+      onClick={isExchangeMode ? onSelect : undefined}
       onTouchStart={!dragEnabled && selectEnabled ? (event) => {
         const touch = event.touches[0];
         if (!touch) return;
@@ -84,7 +84,6 @@ function DraggableTile({
         letter={letter}
         isSelected={isSelected}
         isDragging={isDragging}
-        layoutId={`rack-tile-${index}`}
         size={tileSize}
         hoverable={false}
       />
