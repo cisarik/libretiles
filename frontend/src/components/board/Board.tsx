@@ -74,12 +74,16 @@ function getDistance(a: BoardPoint, b: BoardPoint): number {
   return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
-function formatUsdPopup(value?: string | null): string {
-  if (!value) return "$0.000000";
-  const normalized = value.trim();
-  if (!/^\d+(?:\.\d+)?$/.test(normalized)) return "$0.000000";
-  const [whole, fraction = ""] = normalized.split(".");
-  return `$${whole}.${(fraction + "000000").slice(0, 6)}`;
+function formatMoveCostValue(chargedUsd?: string | null): string {
+  const normalizedUsd = chargedUsd?.trim();
+  if (normalizedUsd && /^\d+(?:\.\d+)?$/.test(normalizedUsd)) {
+    const numericUsd = Number.parseFloat(normalizedUsd);
+    if (Number.isFinite(numericUsd)) {
+      return `$${numericUsd.toFixed(6).replace(/0+$/, "").replace(/\.$/, ".000")}`;
+    }
+  }
+
+  return "$0.000000";
 }
 
 export function Board({
@@ -88,6 +92,7 @@ export function Board({
   onPlaceTile,
 }: BoardProps) {
   const gameState = useGameStore((s) => s.gameState);
+  const lastMoveResultBilling = useGameStore((s) => s.lastMoveResult?.billing);
   const pendingTiles = useGameStore((s) => s.pendingTiles);
   const removePendingTile = useGameStore((s) => s.removePendingTile);
   const boardTheme = useGameStore((s) => s.boardTheme);
@@ -130,7 +135,7 @@ export function Board({
   const lastMoveWords = gameState?.last_move_words ?? [];
   const primaryWordCoords = lastMoveWords[0]?.coords ?? lastMoveCells;
   const lastMoveSet = new Set(primaryWordCoords.map((cell) => `${cell.row}-${cell.col}`));
-  const lastMoveBilling = gameState?.last_move_billing;
+  const lastMoveBilling = gameState?.last_move_billing ?? lastMoveResultBilling ?? null;
   const pendingSet = new Map(
     pendingTiles.map((t) => [`${t.row}-${t.col}`, t]),
   );
@@ -148,7 +153,7 @@ export function Board({
     ? `calc(${(minRow / BOARD_SIZE) * 100}% - 12px)`
     : `calc(${((maxRow + 1) / BOARD_SIZE) * 100}% + 12px)`;
   const primaryWord = lastMoveWords[0]?.word ?? null;
-  const lastMoveCost = formatUsdPopup(lastMoveBilling?.charged_usd);
+  const lastMoveCostValue = formatMoveCostValue(lastMoveBilling?.charged_usd);
   const moveRevealKey = `${gameState?.move_count ?? 0}:${primaryWord ?? ""}`;
   const showLastMoveInfo = revealedMoveKey === moveRevealKey;
 
@@ -627,13 +632,20 @@ export function Board({
                 }}
               >
                 <div className="rounded-[1.15rem] border border-amber-300/38 bg-[linear-gradient(180deg,rgba(12,12,12,0.96),rgba(6,6,6,0.98))] px-4 py-3 text-center shadow-[0_18px_42px_rgba(0,0,0,0.42),0_0_18px_rgba(251,191,36,0.12)] backdrop-blur-sm">
-                  <div className="font-gold-shiny text-[1.22rem] font-black uppercase leading-none tracking-[0.08em] sm:text-[1.36rem]">
-                    {primaryWord}
-                  </div>
-                  <div className="mt-2 text-[0.96rem] font-semibold uppercase tracking-[0.1em] text-white/92 sm:text-[1.04rem]">
-                    +{gameState?.last_move_points ?? 0} pts
+                  <div className="flex items-center justify-center gap-2.5 sm:gap-3">
+                    <span className="font-gold-shiny text-[1.32rem] font-black leading-none sm:text-[1.48rem]">
+                      +{gameState?.last_move_points ?? 0}
+                    </span>
+                    <span className="text-[0.96rem] font-black uppercase leading-none tracking-[0.12em] text-white sm:text-[1rem]">
+                      PTS
+                    </span>
                     <span className="mx-2 text-white/42">•</span>
-                    Cost {lastMoveCost}
+                    <span className="text-[0.92rem] font-black uppercase leading-none tracking-[0.12em] text-white sm:text-[0.98rem]">
+                      COST:
+                    </span>
+                    <span className="font-gold-shiny text-[0.92rem] font-black leading-none tracking-[0.04em] sm:text-[0.98rem]">
+                      {lastMoveCostValue}
+                    </span>
                   </div>
                 </div>
               </div>

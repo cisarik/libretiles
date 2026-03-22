@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useGameStore } from "@/hooks/useGameStore";
 
@@ -34,12 +35,22 @@ function LuxeHoverText({
   );
 }
 
-function AnimatedScore({ score, label }: { score: number; label: string }) {
+function AnimatedScore({
+  score,
+  label,
+  containerClassName,
+  labelClassName,
+}: {
+  score: number;
+  label: ReactNode;
+  containerClassName?: string;
+  labelClassName?: string;
+}) {
   return (
-    <div className="flex w-[5.2rem] flex-col items-center gap-1 sm:w-[5.8rem]">
-      <span className="text-[0.9rem] font-semibold uppercase tracking-[0.24em] text-white sm:text-[1rem]">
+    <div className={`flex min-w-0 flex-col items-center gap-1 ${containerClassName ?? ""}`}>
+      <div className={`min-w-0 text-center ${labelClassName ?? ""}`}>
         {label}
-      </span>
+      </div>
       <AnimatePresence mode="popLayout">
         <motion.span
           key={score}
@@ -101,12 +112,13 @@ function SettingsButton({
   );
 }
 
-function CreditPill({ balance, className }: { balance?: string | null; className?: string }) {
+function CreditReadout({ balance, className }: { balance?: string | null; className?: string }) {
   return (
-    <div
-      className={`inline-flex h-[2.8rem] shrink-0 items-center justify-center rounded-full border border-amber-300/22 bg-[linear-gradient(145deg,rgba(39,26,12,0.88),rgba(14,11,8,0.92))] px-3 shadow-[0_18px_36px_rgba(0,0,0,0.22)] sm:h-[2.9rem] sm:px-3.5 ${className ?? ""}`}
-    >
-      <span className="font-gold-money text-[1rem] font-black leading-none sm:text-[1.16rem]">
+    <div className={`inline-flex shrink-0 items-baseline justify-center gap-2 ${className ?? ""}`}>
+      <span className="text-[0.94rem] font-semibold leading-none text-white/86 sm:text-[1rem]">
+        Credit:
+      </span>
+      <span className="font-gold-money text-[1.22rem] font-black leading-none sm:text-[1.42rem]">
         {formatCreditBalance(balance)}
       </span>
     </div>
@@ -144,6 +156,7 @@ export function ScorePanel({
   const slots = gameState?.slots ?? [];
   const humanSlot = slots.find((s) => !s.is_ai);
   const aiSlot = slots.find((s) => s.is_ai);
+  const aiModelLabel = aiModelDisplayName ?? "Choose rival";
 
   return (
     <div
@@ -152,33 +165,28 @@ export function ScorePanel({
     >
       <div className="grid gap-3 xl:grid-cols-[16rem_minmax(0,1fr)_16rem] xl:grid-rows-[auto_auto] xl:items-end xl:gap-x-4 xl:gap-y-2">
         <div className="hidden min-w-0 xl:col-start-1 xl:row-start-1 xl:block xl:self-end">
-          <div className="min-w-0 pt-2 lg:pl-0.5">
-            <button
-              type="button"
-              onClick={onOpenRivalPicker}
-              className="group block max-w-full overflow-hidden whitespace-nowrap text-left transition-[opacity,filter] hover:opacity-92 hover:brightness-110"
-              title={aiModelDisplayName ?? "Choose the rival"}
-            >
-              <LuxeHoverText className="max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-[1.3rem] font-black leading-none sm:text-[1.42rem] lg:text-[1.48rem]">
-                {aiModelDisplayName ?? "AI Rival"}
-              </LuxeHoverText>
-            </button>
+          <div className="min-w-0 -translate-x-[5px] -translate-y-[5px] pt-1 lg:pl-0.5">
+            <div className="font-gold-shiny text-[1.84rem] font-black leading-none sm:text-[2.02rem]">
+              Libre Tiles
+            </div>
           </div>
         </div>
 
         <div className="hidden items-center gap-2 xl:col-start-1 xl:row-start-2 xl:flex xl:self-end">
-          <CreditPill balance={creditBalance} />
           <SettingsButton
             onClick={onOpenSettings}
             className="inline-flex"
             textClassName="text-[1.16rem] font-black leading-none sm:text-[1.2rem]"
           />
+          <CreditReadout balance={creditBalance} />
         </div>
 
-        <div className="grid grid-cols-[5.2rem_auto_5.2rem] items-end justify-center gap-3 self-center sm:grid-cols-[5.8rem_auto_5.8rem] sm:gap-5 xl:col-start-2 xl:row-span-2 xl:-translate-x-[10px] xl:justify-self-center xl:self-center">
+        <div className="grid grid-cols-[minmax(5.2rem,max-content)_auto_minmax(5.2rem,max-content)] items-end justify-center gap-3 self-center sm:grid-cols-[minmax(5.8rem,max-content)_auto_minmax(5.8rem,max-content)] sm:gap-5 xl:col-start-2 xl:row-span-2 xl:-translate-x-[10px] xl:justify-self-center xl:self-center">
           <AnimatedScore
             score={humanSlot?.score ?? 0}
             label={humanSlot?.username ?? "ITRISY"}
+            containerClassName="min-w-[5.2rem] sm:min-w-[5.8rem]"
+            labelClassName="text-[0.9rem] font-semibold uppercase tracking-[0.24em] text-white sm:text-[1rem]"
           />
 
           <div className="pb-1 text-center text-[1.38rem] font-semibold uppercase tracking-[0.14em] text-white sm:text-[1.55rem]">
@@ -187,19 +195,36 @@ export function ScorePanel({
 
           <AnimatedScore
             score={aiSlot?.score ?? 0}
-            label={aiSlot?.username ?? "AI"}
+            containerClassName="relative min-w-[5.2rem] sm:min-w-[5.8rem]"
+            labelClassName="text-[0.82rem] font-semibold tracking-[0.18em] text-white sm:text-[0.9rem]"
+            label={(
+              <div className="relative inline-flex items-center justify-center">
+                <span className="mr-1.5 shrink-0 text-[0.96rem] leading-none" aria-hidden="true">🧠</span>
+                <span className="shrink-0 uppercase text-white">AI:</span>
+                <button
+                  type="button"
+                  onClick={onOpenRivalPicker}
+                  className="group absolute left-full top-1/2 ml-3 hidden max-w-[13.8rem] -translate-y-1/2 overflow-hidden whitespace-nowrap text-left transition-[opacity,filter] hover:opacity-92 hover:brightness-110 lg:block"
+                  title={aiModelLabel}
+                >
+                  <LuxeHoverText className="max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-[1.14rem] font-black leading-none sm:text-[1.22rem]">
+                    {aiModelLabel}
+                  </LuxeHoverText>
+                </button>
+              </div>
+            )}
           />
         </div>
 
         <div className="flex flex-nowrap items-center justify-center gap-1.5 pb-1 sm:gap-2 xl:col-start-3 xl:row-start-2 xl:justify-end xl:self-end xl:pb-0">
-          <CreditPill
-            balance={creditBalance}
-            className="hidden sm:inline-flex xl:hidden"
-          />
           <SettingsButton
             onClick={onOpenSettings}
             className="inline-flex xl:hidden"
             compactLabel
+          />
+          <CreditReadout
+            balance={creditBalance}
+            className="hidden sm:inline-flex xl:hidden"
           />
           <button
             onClick={onGiveUp}

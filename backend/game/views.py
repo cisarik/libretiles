@@ -192,6 +192,8 @@ class ApplyAIMoveView(APIView):
                 ai_metadata=ser.validated_data.get("ai_metadata"),
             )
             result["billing"] = billing
+            if isinstance(result.get("state"), dict):
+                result["state"]["last_move_billing"] = billing
             if ser.validated_data.get("ai_metadata"):
                 last_move = (
                     __import__("game.models", fromlist=["Move"])

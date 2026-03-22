@@ -50,7 +50,7 @@ function DraggableTile({
         ease: [0.22, 1, 0.36, 1],
         delay: index * 0.03,
       }}
-      onClick={isExchangeMode ? onSelect : undefined}
+      onClick={selectEnabled ? onSelect : undefined}
       onTouchStart={!dragEnabled && selectEnabled ? (event) => {
         const touch = event.touches[0];
         if (!touch) return;

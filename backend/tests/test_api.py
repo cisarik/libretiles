@@ -388,6 +388,7 @@ class GameAPITest(TestCase):
         assert resp.status_code == 200
         assert resp.json()["billing"]["charge_source"] == "token_usage"
         assert resp.json()["billing"]["charged_credits"] == "0.14"
+        assert resp.json()["state"]["last_move_billing"]["charged_usd"] == resp.json()["billing"]["charged_usd"]
 
         profile = self.client.get("/api/auth/me/")
         assert profile.status_code == 200

@@ -207,6 +207,8 @@ body {
 .premium-board-viewport {
   position: relative;
   overflow: hidden;
+  box-sizing: border-box;
+  padding: 2px;
   border-radius: inherit;
 }
 
@@ -425,6 +427,7 @@ body {
 .board-cell[data-premium] {
   --premium-rgb: 255 255 255;
   --premium-text: 255 255 255;
+  z-index: 1;
   background:
     linear-gradient(160deg, rgba(255, 255, 255, 0.07), rgba(0, 0, 0, 0.24) 74%),
     rgb(var(--premium-rgb) / 0.22);

@@ -48,9 +48,9 @@ export function GameControls({ onPlay, onExchange, onPass, disabled }: GameContr
   const actionButtonBase =
     "group min-w-0 border shadow-[0_14px_30px_rgba(0,0,0,0.18)] sm:flex-none";
   const playShell =
-    "rounded-full border border-emerald-500/36 bg-[linear-gradient(180deg,rgba(8,20,16,0.98),rgba(2,8,6,0.98))] p-1 shadow-[0_0_0_1px_rgba(16,185,129,0.08),0_18px_42px_rgba(0,0,0,0.48),0_0_28px_rgba(16,185,129,0.18)] backdrop-blur-sm transition-all duration-200 hover:border-white/34 hover:shadow-[0_0_0_1px_rgba(16,185,129,0.12),0_18px_44px_rgba(0,0,0,0.52),0_0_32px_rgba(16,185,129,0.24)]";
+    "rounded-full bg-transparent p-0 shadow-[0_22px_44px_rgba(0,0,0,0.38),0_0_30px_rgba(22,163,74,0.24)] transition-all duration-200 hover:shadow-[0_24px_48px_rgba(0,0,0,0.42),0_0_34px_rgba(34,197,94,0.28)]";
   const playButton =
-    `${buttonBase} group min-w-0 border border-emerald-300/52 bg-[linear-gradient(135deg,rgba(16,168,110,0.98),rgba(8,112,74,1))] px-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.14),0_12px_28px_rgba(0,0,0,0.34),0_0_20px_rgba(16,185,129,0.18)] hover:border-white/42 hover:bg-[linear-gradient(135deg,rgba(28,191,128,1),rgba(11,128,85,1))] hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.18),0_14px_34px_rgba(0,0,0,0.38),0_0_26px_rgba(16,185,129,0.22)]`;
+    `${buttonBase} group min-w-0 border border-emerald-200/28 bg-[linear-gradient(135deg,rgba(34,197,94,1),rgba(22,163,74,1)_42%,rgba(11,107,53,1))] px-4 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.16),0_16px_32px_rgba(0,0,0,0.38),0_0_24px_rgba(22,163,74,0.24)] hover:border-emerald-50/36 hover:bg-[linear-gradient(135deg,rgba(46,214,108,1),rgba(26,179,83,1)_42%,rgba(14,122,61,1))] hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.2),0_18px_36px_rgba(0,0,0,0.42),0_0_30px_rgba(34,197,94,0.3)]`;
 
   if (exchangeMode) {
     return (
@@ -129,9 +129,9 @@ export function GameControls({ onPlay, onExchange, onPass, disabled }: GameContr
             disabled={isDisabled || !hasPending}
             className={`${playButton} w-full min-w-[5.3rem]`}
           >
-            <LuxeHoverText className="text-[1.12rem] font-black leading-none sm:text-[1.52rem]">
+            <span className="text-[1.12rem] font-black leading-none tracking-[0.01em] text-white [text-shadow:0_2px_0_rgba(0,0,0,0.55)] sm:text-[1.52rem]">
               Play
-            </LuxeHoverText>
+            </span>
           </button>
         </div>
       </div>
@@ -164,9 +164,9 @@ export function GameControls({ onPlay, onExchange, onPass, disabled }: GameContr
             disabled={isDisabled || !hasPending}
             className={`${playButton} min-w-[6.1rem]`}
           >
-            <LuxeHoverText className="text-[1.34rem] font-black leading-none sm:text-[1.52rem]">
+            <span className="text-[1.34rem] font-black leading-none tracking-[0.01em] text-white [text-shadow:0_2px_0_rgba(0,0,0,0.58)] sm:text-[1.52rem]">
               Play
-            </LuxeHoverText>
+            </span>
           </button>
         </div>
       </div>

@@ -196,6 +196,17 @@ function normalizeAIBlocker(
   return null;
 }
 
+function formatDisplayedCost(chargedUsd?: string | null) {
+  if (chargedUsd != null && chargedUsd !== "") {
+    const numericUsd = Number.parseFloat(chargedUsd);
+    if (Number.isFinite(numericUsd)) {
+      return `$${numericUsd.toFixed(6).replace(/0+$/, "").replace(/\.$/, ".000")}`;
+    }
+  }
+
+  return "$0.000000";
+}
+
 function BillingCaption({
   chargedCredits,
   chargedUsd,
@@ -207,20 +218,23 @@ function BillingCaption({
   remainingCredits?: string;
   tone: "sky" | "emerald";
 }) {
-  if (!chargedCredits && !chargedUsd && !remainingCredits) return null;
+  if (!chargedUsd && !chargedCredits && !remainingCredits) return null;
 
   return (
-    <p className={`mt-3 text-xs ${tone === "sky" ? "text-sky-300/72" : "text-emerald-300/72"}`}>
-      {chargedUsd ? `Cost ${chargedUsd} USD` : "Cost unavailable"}
-      {chargedCredits ? ` · ${chargedCredits} cr` : ""}
-      {remainingCredits ? ` · balance ${remainingCredits} cr` : ""}
-    </p>
+    <div className="mt-4 flex items-center justify-center gap-2">
+      <span className={`text-[0.98rem] font-black uppercase tracking-[0.16em] ${tone === "sky" ? "text-sky-50/96" : "text-emerald-50/96"}`}>
+        Cost:
+      </span>
+      <span className="font-gold-money text-[1.18rem] font-black leading-none sm:text-[1.34rem]">
+        {formatDisplayedCost(chargedUsd)}
+      </span>
+    </div>
   );
 }
 
 function ToastOverlay({ toast, onDone }: { toast: Toast; onDone: () => void }) {
   useEffect(() => {
-    const t = setTimeout(onDone, toast.type === "ai_pass" ? 3500 : 3000);
+    const t = setTimeout(onDone, toast.type === "ai_played" ? 4600 : toast.type === "ai_pass" ? 4200 : 3200);
     return () => clearTimeout(t);
   }, [toast, onDone]);
 
@@ -333,7 +347,7 @@ function ToastOverlay({ toast, onDone }: { toast: Toast; onDone: () => void }) {
           <motion.div
             initial={{ y: 10 }}
             animate={{ y: 0 }}
-            className="text-sky-300 font-bold text-lg mb-1"
+            className="text-sky-300 font-bold text-[1.34rem] mb-1"
           >
             {toast.message}
           </motion.div>
@@ -363,25 +377,25 @@ function ToastOverlay({ toast, onDone }: { toast: Toast; onDone: () => void }) {
         className="fixed inset-0 z-[60] flex items-center justify-center pointer-events-none"
       >
         <div className="bg-emerald-950/90 backdrop-blur-xl border border-emerald-500/30 rounded-2xl
-          p-5 shadow-2xl shadow-emerald-500/15 max-w-sm text-center pointer-events-auto">
+          p-6 shadow-2xl shadow-emerald-500/15 max-w-sm text-center pointer-events-auto">
           <motion.div
             animate={{ scale: [1, 1.2, 1] }}
             transition={{ duration: 0.5 }}
-            className="text-4xl mb-2"
+            className="text-4xl mb-3"
           >
             <svg className="w-12 h-12 mx-auto text-emerald-400" viewBox="0 0 24 24" fill="none"
               stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
               <path d="M20 6L9 17l-5-5" />
             </svg>
           </motion.div>
-          <div className="text-emerald-300 font-bold text-base">
-            AI played for <span className="text-emerald-200 text-xl font-black">{toast.score}</span> pts
+          <div className="text-emerald-300 font-bold text-[1.36rem] leading-tight">
+            AI played for <span className="text-emerald-100 text-[1.78rem] font-black">{toast.score}</span> pts
           </div>
           {toast.words && toast.words.length > 0 && (
-            <div className="flex flex-wrap gap-1 justify-center mt-2">
+            <div className="flex flex-wrap gap-1.5 justify-center mt-3">
               {toast.words.map((w) => (
                 <span key={w} className="px-2 py-0.5 bg-emerald-500/15 border border-emerald-400/20
-                  rounded-md font-mono font-bold text-emerald-200 text-sm tracking-wider">
+                  rounded-md font-mono font-bold text-emerald-200 text-[0.98rem] tracking-wider">
                   {w}
                 </span>
               ))}
@@ -845,6 +859,14 @@ export default function GamePage() {
         }
       }
 
+      if (token) {
+        api.me(token)
+          .then((profile) => {
+            setCreditBalance(profile.credit_balance);
+          })
+          .catch(() => {});
+      }
+
       const latest = await syncState((doneData as MoveResult | null)?.state);
       if (latest?.game_over && latest.winner_slot === 0) {
         confetti({ particleCount: 200, spread: 100, origin: { y: 0.6 } });
@@ -1099,7 +1121,6 @@ export default function GamePage() {
     }
     return gameState?.ai_model_display_name ?? humanizeModelId(gameState?.ai_model_id) ?? "Choose rival";
   }, [gameState?.ai_model_display_name, gameState?.ai_model_id, selectedModelId]);
-  const selectedRackTileLabel = selectedRackTile?.letter === "?" ? "Blank" : selectedRackTile?.letter;
   const rackTileSize = isCoarsePointer ? "rack" : "lg";
 
   const handleRackTileSelect = useCallback((tile: { letter: string; index: number }) => {
@@ -1207,26 +1228,6 @@ export default function GamePage() {
                       selectedRackTileIndex={selectedRackTile?.index ?? null}
                       onRackTileSelect={handleRackTileSelect}
                     />
-                    <AnimatePresence>
-                      {selectedRackTile && (
-                        <motion.div
-                          initial={{ opacity: 0, y: 10, scale: 0.96 }}
-                          animate={{ opacity: 1, y: 0, scale: 1 }}
-                          exit={{ opacity: 0, y: -8, scale: 0.96 }}
-                          transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-                          className="mt-3 flex justify-center"
-                        >
-                          <div className="inline-flex items-center gap-2 rounded-full border border-sky-300/18 bg-[linear-gradient(135deg,rgba(13,30,46,0.92),rgba(7,15,26,0.96))] px-3 py-1.5 shadow-[0_16px_34px_rgba(14,165,233,0.08)]">
-                            <span className="font-gold-shiny text-[1rem] font-black leading-none text-sky-100">
-                              {selectedRackTileLabel}
-                            </span>
-                            <span className="text-[0.72rem] font-semibold uppercase tracking-[0.24em] text-sky-100/78">
-                              Tap a board square
-                            </span>
-                          </div>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
                   </div>
                   <GameControls
                     onPlay={handlePlay}
@@ -1243,21 +1244,13 @@ export default function GamePage() {
                   {showAIPrompt && (
                     <>
                       <div className="mt-4 flex justify-end lg:absolute lg:right-0 lg:top-1/2 lg:mt-0 lg:-translate-y-1/2">
-                        <div className="rounded-full border border-emerald-500/36 bg-[linear-gradient(180deg,rgba(8,20,16,0.98),rgba(2,8,6,0.98))] p-1 shadow-[0_0_0_1px_rgba(16,185,129,0.08),0_18px_42px_rgba(0,0,0,0.48),0_0_28px_rgba(16,185,129,0.18)] backdrop-blur-sm transition-all duration-200 hover:border-white/34 hover:shadow-[0_0_0_1px_rgba(16,185,129,0.12),0_18px_44px_rgba(0,0,0,0.52),0_0_32px_rgba(16,185,129,0.24)]">
+                        <div className="rounded-full bg-transparent p-0 shadow-[0_22px_44px_rgba(0,0,0,0.38),0_0_30px_rgba(22,163,74,0.24)] transition-all duration-200 hover:shadow-[0_24px_48px_rgba(0,0,0,0.42),0_0_34px_rgba(34,197,94,0.28)]">
                           <button
                             onClick={() => setAiApproved(true)}
-                            className="group inline-flex min-w-[5.2rem] items-center justify-center rounded-full border border-emerald-300/52 bg-[linear-gradient(135deg,rgba(16,168,110,0.98),rgba(8,112,74,1))] px-4 py-2.5 text-center shadow-[inset_0_1px_0_rgba(255,255,255,0.14),0_12px_28px_rgba(0,0,0,0.34),0_0_20px_rgba(16,185,129,0.18)] transition-all duration-200 active:scale-[0.97] hover:border-white/42 hover:bg-[linear-gradient(135deg,rgba(28,191,128,1),rgba(11,128,85,1))] hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.18),0_14px_34px_rgba(0,0,0,0.38),0_0_26px_rgba(16,185,129,0.22)]"
+                            className="group inline-flex min-w-[5.2rem] items-center justify-center rounded-full border border-emerald-200/28 bg-[linear-gradient(135deg,rgba(34,197,94,1),rgba(22,163,74,1)_42%,rgba(11,107,53,1))] px-4 py-2.5 text-center shadow-[inset_0_1px_0_rgba(255,255,255,0.16),0_16px_32px_rgba(0,0,0,0.38),0_0_24px_rgba(22,163,74,0.24)] transition-all duration-200 active:scale-[0.97] hover:border-emerald-50/36 hover:bg-[linear-gradient(135deg,rgba(46,214,108,1),rgba(26,179,83,1)_42%,rgba(14,122,61,1))] hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.2),0_18px_36px_rgba(0,0,0,0.42),0_0_30px_rgba(34,197,94,0.3)]"
                           >
-                            <span className="relative inline-grid place-items-center text-center align-middle">
-                              <span className="col-start-1 row-start-1 font-gold-shiny text-[1.12rem] font-black leading-none transition-opacity duration-200 group-hover:opacity-0 sm:text-[1.34rem]">
-                                Play
-                              </span>
-                              <span
-                                aria-hidden="true"
-                                className="pointer-events-none col-start-1 row-start-1 font-white-shiny text-[1.12rem] font-black leading-none opacity-0 transition-opacity duration-200 group-hover:opacity-100 sm:text-[1.34rem]"
-                              >
-                                Play
-                              </span>
+                            <span className="text-[1.12rem] font-black leading-none tracking-[0.01em] text-white [text-shadow:0_2px_0_rgba(0,0,0,0.55)] sm:text-[1.34rem]">
+                              Play
                             </span>
                           </button>
                         </div>

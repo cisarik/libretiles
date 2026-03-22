@@ -204,6 +204,35 @@ function normalizeUsage(usage?: UsageLike | null) {
   };
 }
 
+function mergeUsage(
+  base: ReturnType<typeof normalizeUsage>,
+  extra: ReturnType<typeof normalizeUsage>,
+) {
+  if (!base) return extra;
+  if (!extra) return base;
+
+  return {
+    inputTokens: base.inputTokens + extra.inputTokens,
+    inputTokenDetails: {
+      noCacheTokens:
+        base.inputTokenDetails.noCacheTokens + extra.inputTokenDetails.noCacheTokens,
+      cacheReadTokens:
+        base.inputTokenDetails.cacheReadTokens + extra.inputTokenDetails.cacheReadTokens,
+      cacheWriteTokens:
+        base.inputTokenDetails.cacheWriteTokens + extra.inputTokenDetails.cacheWriteTokens,
+    },
+    outputTokens: base.outputTokens + extra.outputTokens,
+    outputTokenDetails: {
+      textTokens:
+        base.outputTokenDetails.textTokens + extra.outputTokenDetails.textTokens,
+      reasoningTokens:
+        base.outputTokenDetails.reasoningTokens + extra.outputTokenDetails.reasoningTokens,
+    },
+    totalTokens: base.totalTokens + extra.totalTokens,
+    raw: base.raw ?? extra.raw ?? null,
+  };
+}
+
 function clampNumber(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
 }
@@ -249,6 +278,16 @@ export async function POST(req: NextRequest) {
       const abortController = new AbortController();
       let autoFinalizeGraceMs = AUTO_FINALIZE_GRACE_MS;
       let autoFinalizeValidCap = AUTO_FINALIZE_VALID_CAP;
+      let accumulatedUsage: ReturnType<typeof normalizeUsage> = null;
+      let completedStepCount = 0;
+      let completedToolCallCount = 0;
+      const completedStepModels: Array<{
+        step: number;
+        provider: string;
+        model_id: string;
+        response_model: string | undefined;
+      }> = [];
+      let lastResponseModelId: string | undefined;
 
       function clearAutoFinalizeTimer() {
         if (autoFinalizeTimer) {
@@ -505,6 +544,21 @@ export async function POST(req: NextRequest) {
                 }),
               },
               stopWhen: stepCountIs(maxSteps),
+              onStepFinish: (step) => {
+                completedStepCount += 1;
+                completedToolCallCount += step.toolCalls.length;
+                accumulatedUsage = mergeUsage(
+                  accumulatedUsage,
+                  normalizeUsage(step.usage as UsageLike | undefined),
+                );
+                completedStepModels.push({
+                  step: step.stepNumber,
+                  provider: step.model.provider,
+                  model_id: step.model.modelId,
+                  response_model: step.response.modelId,
+                });
+                lastResponseModelId = step.response.modelId;
+              },
             }),
             new Promise<never>((_, reject) => {
               abortController.signal.addEventListener("abort", () => {
@@ -660,7 +714,7 @@ export async function POST(req: NextRequest) {
           (aiResult?.totalUsage as UsageLike | undefined) ??
             (aiResult?.usage as UsageLike | undefined) ??
             null,
-        );
+        ) ?? accumulatedUsage;
 
         const aiMeta = {
           requested_model: requestedModelId,
@@ -669,12 +723,12 @@ export async function POST(req: NextRequest) {
           provider_path: providerPath,
           gateway_fallback_used: gatewayFallbackUsed,
           max_output_tokens: maxOutputTokens,
-          response_model: aiResult?.response?.modelId,
+          response_model: aiResult?.response?.modelId ?? lastResponseModelId,
           response_id: aiResult?.response?.id,
           response_headers: aiResult?.response?.headers,
           provider_metadata: aiResult?.providerMetadata,
           usage: normalizedUsage,
-          steps: aiResult?.steps?.length ?? 0,
+          steps: aiResult?.steps?.length ?? completedStepCount,
           max_steps: maxSteps,
           auto_finalize_grace_ms: autoFinalizeGraceMs,
           auto_finalize_valid_cap: autoFinalizeValidCap,
@@ -695,13 +749,13 @@ export async function POST(req: NextRequest) {
                 model_id: step.model.modelId,
                 response_model: step.response.modelId,
               }),
-            ) ?? [],
+            ) ?? completedStepModels,
           tool_calls_count:
             aiResult?.steps?.reduce(
               (sum: number, s: { toolCalls: unknown[] }) =>
                 sum + s.toolCalls.length,
               0,
-            ) ?? 0,
+            ) ?? completedToolCallCount,
         };
 
         // 4. Apply the final move
