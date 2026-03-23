@@ -228,8 +228,11 @@ class CatalogAPITest(TestCase):
 class GameAPITest(TestCase):
     def setUp(self) -> None:
         self.user = User.objects.create_user(username="player1", password="pass1234")
+        self.user2 = User.objects.create_user(username="player2", password="pass1234")
         self.client = APIClient()
         self.client.force_authenticate(user=self.user)
+        self.client2 = APIClient()
+        self.client2.force_authenticate(user=self.user2)
         self.ai_model = AIModel.objects.create(
             provider="openai",
             model_id="openai/gpt-5-mini",
@@ -267,7 +270,7 @@ class GameAPITest(TestCase):
         })
         game_id = create_resp.json()["game_id"]
 
-        resp = self.client.get(f"/api/game/{game_id}/?slot=0")
+        resp = self.client.get(f"/api/game/{game_id}/")
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "active"
@@ -275,13 +278,18 @@ class GameAPITest(TestCase):
         assert len(data["slots"]) == 2
         assert data["bag_remaining"] < 100
         assert len(data["my_rack"]) == 7
+        assert data["my_slot"] == 0
 
     def test_submit_pass(self) -> None:
         create_resp = self.client.post("/api/game/create/", {"game_mode": "vs_ai"})
         game_id = create_resp.json()["game_id"]
-        turn_slot = create_resp.json()["current_turn_slot"]
+        from game.models import GameSession
 
-        resp = self.client.post(f"/api/game/{game_id}/pass/", {"slot": turn_slot})
+        session = GameSession.objects.get(public_id=game_id)
+        session.current_turn_slot = 0
+        session.save(update_fields=["current_turn_slot"])
+
+        resp = self.client.post(f"/api/game/{game_id}/pass/")
         assert resp.status_code == 200
         assert resp.json()["ok"] is True
 
@@ -336,7 +344,6 @@ class GameAPITest(TestCase):
         resp = self.client.post(
             f"/api/game/{game_id}/move/",
             {
-                "slot": 0,
                 "placements": [
                     {"row": 7, "col": 7, "letter": "A"},
                     {"row": 7, "col": 8, "letter": "T"},
@@ -351,8 +358,8 @@ class GameAPITest(TestCase):
         assert data["state"]["board"][7][7:9] == "AT"
         assert len(data["state"]["my_rack"]) == 7
 
-    @patch("game.views.services.get_game_state_for_slot")
-    @patch("game.views.services.submit_move")
+    @patch("game.views.services.get_game_state_for_user")
+    @patch("game.views.services.submit_move_for_ai")
     def test_apply_ai_move_returns_billing(self, mock_submit_move, mock_get_state) -> None:
         mock_submit_move.return_value = {
             "ok": True,
@@ -503,7 +510,7 @@ class GameAPITest(TestCase):
         assert resp.status_code == 200
         assert resp.json()["ai_model_id"] == alternative_model.model_id
 
-        state = self.client.get(f"/api/game/{game_id}/?slot=0")
+        state = self.client.get(f"/api/game/{game_id}/")
         assert state.status_code == 200
         assert state.json()["ai_model_id"] == alternative_model.model_id
 
@@ -538,3 +545,106 @@ class GameAPITest(TestCase):
         assert data["state"]["board"][7][7:10] == "JOE"
         assert len(data["state"]["my_rack"]) == 7
         assert data["state"]["current_turn_slot"] == 0
+
+    def test_human_queue_matches_second_player_into_first_waiting_game(self) -> None:
+        first = self.client.post("/api/game/queue/join/", {"variant_slug": "english"}, format="json")
+        assert first.status_code == 200
+        assert first.json()["waiting"] is True
+
+        second = self.client2.post("/api/game/queue/join/", {"variant_slug": "english"}, format="json")
+        assert second.status_code == 200
+        assert second.json()["matched"] is True
+
+        first_game_id = first.json()["state"]["game_id"]
+        second_game_id = second.json()["state"]["game_id"]
+        assert first_game_id == second_game_id
+        assert second.json()["state"]["status"] == "active"
+        assert len(second.json()["state"]["my_rack"]) == 7
+
+    def test_human_queue_reuses_existing_waiting_session(self) -> None:
+        first = self.client.post("/api/game/queue/join/", {"variant_slug": "english"}, format="json")
+        second = self.client.post("/api/game/queue/join/", {"variant_slug": "english"}, format="json")
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert first.json()["state"]["game_id"] == second.json()["state"]["game_id"]
+        assert second.json()["waiting"] is True
+
+    def test_waiting_host_can_cancel_queue(self) -> None:
+        queue_resp = self.client.post("/api/game/queue/join/", {"variant_slug": "english"}, format="json")
+        game_id = queue_resp.json()["state"]["game_id"]
+
+        cancel_resp = self.client.post("/api/game/queue/cancel/", {"game_id": game_id}, format="json")
+        assert cancel_resp.status_code == 200
+        assert cancel_resp.json()["ok"] is True
+
+        state_resp = self.client.get(f"/api/game/{game_id}/")
+        assert state_resp.status_code == 200
+        assert state_resp.json()["status"] == "abandoned"
+
+    def test_game_state_is_user_derived_and_hides_opponent_rack(self) -> None:
+        first = self.client.post("/api/game/queue/join/", {"variant_slug": "english"}, format="json")
+        self.client2.post("/api/game/queue/join/", {"variant_slug": "english"}, format="json")
+        game_id = first.json()["state"]["game_id"]
+
+        state1 = self.client.get(f"/api/game/{game_id}/")
+        state2 = self.client2.get(f"/api/game/{game_id}/")
+        assert state1.status_code == 200
+        assert state2.status_code == 200
+        assert state1.json()["my_slot"] == 0
+        assert state2.json()["my_slot"] == 1
+        assert state1.json()["my_rack"] != state2.json()["my_rack"]
+        assert state1.json()["slots"][1]["rack_count"] == len(state2.json()["my_rack"])
+
+    def test_server_derives_player_slot_for_multiplayer_actions(self) -> None:
+        from game.models import GameSession
+
+        first = self.client.post("/api/game/queue/join/", {"variant_slug": "english"}, format="json")
+        self.client2.post("/api/game/queue/join/", {"variant_slug": "english"}, format="json")
+        game_id = first.json()["state"]["game_id"]
+
+        session = GameSession.objects.get(public_id=game_id)
+        session.current_turn_slot = 0
+        session.save(update_fields=["current_turn_slot"])
+
+        wrong_player = self.client2.post(f"/api/game/{game_id}/pass/")
+        assert wrong_player.status_code == 400
+        assert wrong_player.json()["error"] == "Not your turn"
+
+        right_player = self.client.post(f"/api/game/{game_id}/pass/")
+        assert right_player.status_code == 200
+        assert right_player.json()["ok"] is True
+
+    def test_non_participant_cannot_access_private_game_state(self) -> None:
+        outsider = User.objects.create_user(username="outsider", password="pass1234")
+        outsider_client = APIClient()
+        outsider_client.force_authenticate(user=outsider)
+        game_id = self.client.post("/api/game/create/", {"game_mode": "vs_ai"}).json()["game_id"]
+
+        resp = outsider_client.get(f"/api/game/{game_id}/")
+        assert resp.status_code == 404
+
+    def test_non_participant_cannot_access_ai_context(self) -> None:
+        outsider = User.objects.create_user(username="contextoutsider", password="pass1234")
+        outsider_client = APIClient()
+        outsider_client.force_authenticate(user=outsider)
+        game_id = self.client.post("/api/game/create/", {"game_mode": "vs_ai"}).json()["game_id"]
+
+        resp = outsider_client.get(f"/api/game/{game_id}/ai-context/")
+        assert resp.status_code == 404
+
+    def test_ws_ticket_requires_membership(self) -> None:
+        outsider = User.objects.create_user(username="ticketoutsider", password="pass1234")
+        outsider_client = APIClient()
+        outsider_client.force_authenticate(user=outsider)
+        game_id = self.client.post("/api/game/create/", {"game_mode": "vs_ai"}).json()["game_id"]
+
+        resp = outsider_client.post(f"/api/game/{game_id}/ws-ticket/")
+        assert resp.status_code == 404
+
+    def test_human_queue_waiting_state_has_no_turn_or_rack(self) -> None:
+        resp = self.client.post("/api/game/queue/join/", {"variant_slug": "english"}, format="json")
+        assert resp.status_code == 200
+        state = resp.json()["state"]
+        assert state["status"] == "waiting"
+        assert state["current_turn_slot"] is None
+        assert state["my_rack"] == []

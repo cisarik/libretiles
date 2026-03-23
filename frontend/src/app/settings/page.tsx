@@ -13,7 +13,7 @@ import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import { useGameStore, type BoardTheme } from "@/hooks/useGameStore";
 import { api } from "@/lib/api";
-import type { AIModel, CreateGameResponse } from "@/lib/types";
+import type { AIModel } from "@/lib/types";
 
 const PROVIDER_ICONS: Record<string, string> = {
   openai: "🤖",
@@ -501,17 +501,10 @@ export default function SettingsPage() {
       return;
     }
 
-    const nextModelId = selectedModel?.model_id ?? selectedModelId;
-    if (!nextModelId) return;
-
     setStartingNewGame(true);
     setNotice(null);
     try {
-      const result = (await api.createGame(token, {
-        game_mode: "vs_ai",
-        ai_model_model_id: nextModelId,
-      })) as CreateGameResponse;
-      router.push(`/draw/${result.game_id}`);
+      router.push("/play");
     } catch {
       setNotice({
         tone: "warning",

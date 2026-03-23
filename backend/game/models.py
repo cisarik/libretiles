@@ -32,7 +32,7 @@ class GameSession(models.Model):
     bag_tiles = models.TextField(default="", help_text="Remaining tiles in order")
     bag_seed = models.IntegerField(default=0)
 
-    current_turn_slot = models.IntegerField(default=0)
+    current_turn_slot = models.IntegerField(null=True, blank=True, default=None)
     consecutive_passes = models.IntegerField(default=0)
 
     ai_model = models.ForeignKey(
@@ -49,6 +49,7 @@ class GameSession(models.Model):
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    started_at = models.DateTimeField(null=True, blank=True)
     finished_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
@@ -127,3 +128,26 @@ class Move(models.Model):
 
     def __str__(self) -> str:
         return f"Move #{self.seq} ({self.kind}, +{self.points}pts)"
+
+
+class ChatMessage(models.Model):
+    """A persisted in-game chat message for human multiplayer sessions."""
+
+    game = models.ForeignKey(GameSession, on_delete=models.CASCADE, related_name="chat_messages")
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="game_chat_messages",
+    )
+    body = models.CharField(max_length=500)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at"]
+        db_table = "game_chat_message"
+
+    def __str__(self) -> str:
+        username = self.user.username if self.user else "Unknown"  # type: ignore[union-attr]
+        return f"{username}: {self.body[:40]}"

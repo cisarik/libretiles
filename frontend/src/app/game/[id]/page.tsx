@@ -24,16 +24,18 @@ import { ScorePanel } from "@/components/game/ScorePanel";
 import { GameControls } from "@/components/game/GameControls";
 import { BlankPicker } from "@/components/game/BlankPicker";
 import { AIThinkingOverlay } from "@/components/game/AIThinkingOverlay";
+import { ChatPanel } from "@/components/game/ChatPanel";
 import { useGameStore, type BoardTheme } from "@/hooks/useGameStore";
 import { useIsCoarsePointer } from "@/hooks/useIsCoarsePointer";
 import { api } from "@/lib/api";
 import { isPlausibleRack } from "@/lib/rack";
+import { buildGameWebSocketUrl } from "@/lib/ws";
 import type {
   AICandidate,
-  CreateGameResponse,
   GameState,
   MoveResult,
   MoveValidationResult,
+  WSTicketResponse,
 } from "@/lib/types";
 import { Tile } from "@/components/tiles/Tile";
 
@@ -496,7 +498,6 @@ export default function GamePage() {
   const setCreditBalance = useGameStore((s) => s.setCreditBalance);
   const gameState = useGameStore((s) => s.gameState);
   const setGameState = useGameStore((s) => s.setGameState);
-  const setStartingDraw = useGameStore((s) => s.setStartingDraw);
   const startingRack = useGameStore((s) => s.startingRack);
   const setStartingRack = useGameStore((s) => s.setStartingRack);
   const pendingTiles = useGameStore((s) => s.pendingTiles);
@@ -521,6 +522,7 @@ export default function GamePage() {
 
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const aiInFlightRef = useRef(false);
+  const multiplayerSocketRef = useRef<WebSocket | null>(null);
 
   const [aiApproved, setAiApproved] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
@@ -542,8 +544,11 @@ export default function GamePage() {
   const fetchState = useCallback(async () => {
     if (!token) return;
     try {
-      const state = (await api.getGameState(token, gameId, 0)) as GameState;
+      const state = (await api.getGameState(token, gameId)) as GameState;
       setGameState(state);
+      if (state.status === "waiting") {
+        router.replace(`/waiting/${gameId}`);
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (message.includes("API error 401")) {
@@ -558,7 +563,7 @@ export default function GamePage() {
         message,
       });
     }
-  }, [token, gameId, resetGameUi, setCreditBalance, setGameState, setToken]);
+  }, [token, gameId, resetGameUi, router, setCreditBalance, setGameState, setToken]);
 
   useEffect(() => { fetchState(); }, [fetchState]);
 
@@ -578,7 +583,7 @@ export default function GamePage() {
   }, [token, creditBalance, setCreditBalance]);
 
   useEffect(() => {
-    if (!token || !gameState || !selectedModelId) return;
+    if (!token || !gameState || !selectedModelId || gameState.game_mode !== "vs_ai") return;
     if (gameState.ai_model_id === selectedModelId) return;
 
     let cancelled = false;
@@ -642,20 +647,12 @@ export default function GamePage() {
     setStartingNewGame(true);
     setNewGameTransitioning(true);
     try {
-      const [result] = await Promise.all([
-        api.createGame(token, {
-          game_mode: "vs_ai",
-          ai_model_model_id: selectedModelId || gameState?.ai_model_id || undefined,
-        }) as Promise<CreateGameResponse>,
-        new Promise((resolve) => window.setTimeout(resolve, 320)),
-      ]);
+      await new Promise((resolve) => window.setTimeout(resolve, 320));
       resetGameUi();
       setAiApproved(false);
       setAiError(null);
       setAIBlockerModal(null);
-      setStartingDraw(result.starting_draw);
-      setStartingRack(result.human_rack);
-      router.replace(`/draw/${result.game_id}`);
+      router.replace("/play");
     } catch (err) {
       setNewGameTransitioning(false);
       showToast({
@@ -669,18 +666,17 @@ export default function GamePage() {
   }, [
     token,
     startingNewGame,
-    selectedModelId,
-    gameState?.ai_model_id,
     resetGameUi,
-    setStartingDraw,
-    setStartingRack,
     router,
     showToast,
   ]);
 
   const handleGiveUp = useCallback(async () => {
     if (!token || givingUp || gameState?.game_over || aiThinking) return;
-    if (!window.confirm("Give up this game? The AI will be declared the winner.")) return;
+    const giveUpMessage = gameState?.game_mode === "vs_ai"
+      ? "Give up this game? The AI will be declared the winner."
+      : "Give up this game? Your opponent will be declared the winner.";
+    if (!window.confirm(giveUpMessage)) return;
 
     setGivingUp(true);
     try {
@@ -717,6 +713,7 @@ export default function GamePage() {
     token,
     givingUp,
     gameState?.game_over,
+    gameState?.game_mode,
     aiThinking,
     gameId,
     setGameState,
@@ -738,9 +735,15 @@ export default function GamePage() {
     [fetchState, setGameState],
   );
 
+  const mySlotNumber = gameState?.my_slot ?? 0;
+  const aiSlotNumber = gameState?.slots.find((slot) => slot.is_ai)?.slot ?? null;
+  const opponentSlotInfo = gameState?.slots.find((slot) => slot.slot !== mySlotNumber) ?? null;
+  const isMultiplayerGame = gameState?.game_mode === "vs_human";
+
   const triggerAIMove = useCallback(async () => {
     if (!token || !gameState || gameState.game_over) return;
-    if (gameState.current_turn_slot !== 1) return;
+    if (gameState.game_mode !== "vs_ai" || aiSlotNumber == null) return;
+    if (gameState.current_turn_slot !== aiSlotNumber) return;
     if (aiInFlightRef.current) return;
 
     const availableCredits = creditBalance ? Number.parseFloat(creditBalance) : Number.NaN;
@@ -868,7 +871,7 @@ export default function GamePage() {
       }
 
       const latest = await syncState((doneData as MoveResult | null)?.state);
-      if (latest?.game_over && latest.winner_slot === 0) {
+      if (latest?.game_over && latest.winner_slot === latest.my_slot) {
         confetti({ particleCount: 200, spread: 100, origin: { y: 0.6 } });
       }
     } catch (err) {
@@ -889,7 +892,7 @@ export default function GamePage() {
       aiInFlightRef.current = false;
     }
   }, [
-    token, gameState, gameId, selectedModelId, aiTimeout, aiMaxSteps, creditBalance,
+    token, gameState, gameId, selectedModelId, aiTimeout, aiMaxSteps, creditBalance, aiSlotNumber,
     setCreditBalance, setAIThinking, setLastMoveResult, setGameState, setAIStatusMessage, syncState,
     clearAICandidates, addAICandidate, startCountdown, stopCountdown, showToast,
   ]);
@@ -898,7 +901,8 @@ export default function GamePage() {
     if (
       aiApproved &&
       gameState &&
-      gameState.current_turn_slot === 1 &&
+      gameState.game_mode === "vs_ai" &&
+      gameState.current_turn_slot === aiSlotNumber &&
       !gameState.game_over &&
       !aiThinking &&
       !aiInFlightRef.current
@@ -906,7 +910,90 @@ export default function GamePage() {
       const timeout = setTimeout(triggerAIMove, 500);
       return () => clearTimeout(timeout);
     }
-  }, [aiApproved, gameState, aiThinking, triggerAIMove]);
+  }, [aiApproved, aiSlotNumber, gameState, aiThinking, triggerAIMove]);
+
+  useEffect(() => {
+    const authToken = token;
+    if (!authToken || !isMultiplayerGame) return;
+    const tokenValue: string = authToken;
+
+    let active = true;
+
+    async function connectRealtime() {
+      try {
+        const ticketResult = (await api.getWSTicket(tokenValue, gameId)) as WSTicketResponse;
+        if (!active) return;
+
+        const socket = new WebSocket(buildGameWebSocketUrl(gameId, ticketResult.ticket));
+        multiplayerSocketRef.current = socket;
+
+        socket.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data) as {
+              type?: string;
+              state?: GameState;
+              message?: GameState["chat_messages"][number];
+              error?: string;
+            };
+
+            if (data.state) {
+              setGameState(data.state);
+              if (data.state.game_over && data.state.winner_slot === data.state.my_slot) {
+                confetti({ particleCount: 200, spread: 100, origin: { y: 0.6 } });
+              }
+              return;
+            }
+
+            if (data.type === "chat_message" && data.message) {
+              const latest = useGameStore.getState().gameState;
+              if (!latest) return;
+              setGameState({
+                ...latest,
+                chat_messages: [...latest.chat_messages, data.message],
+              });
+              return;
+            }
+
+            if (data.type === "error" && data.error) {
+              showToast({
+                id: `ws-${Date.now()}`,
+                type: "error",
+                message: data.error,
+              });
+            }
+          } catch {
+            showToast({
+              id: `ws-${Date.now()}`,
+              type: "error",
+              message: "Realtime sync failed",
+            });
+          }
+        };
+
+        socket.onerror = () => {
+          showToast({
+            id: `ws-${Date.now()}`,
+            type: "error",
+            message: "Realtime connection failed",
+          });
+        };
+      } catch (err) {
+        showToast({
+          id: `ws-${Date.now()}`,
+          type: "error",
+          message: err instanceof Error ? err.message : "Realtime connection failed",
+        });
+      }
+    }
+
+    void connectRealtime();
+
+    return () => {
+      active = false;
+      multiplayerSocketRef.current?.close();
+      multiplayerSocketRef.current = null;
+    };
+  }, [gameId, isMultiplayerGame, setGameState, showToast, token]);
 
   const clearDragState = useCallback(() => {
     setActiveDragTile(null);
@@ -1020,13 +1107,13 @@ export default function GamePage() {
         return;
       }
 
-      const result = (await api.submitMove(token, gameId, 0, placements)) as MoveResult;
+      const result = (await api.submitMove(token, gameId, placements)) as MoveResult;
       setLastMoveResult(result);
       if (result.ok) {
         clearPendingTiles();
-        setAiApproved(true);
+        setAiApproved(gameState?.game_mode === "vs_ai");
         const latest = await syncState(result.state);
-        if (latest?.game_over && latest.winner_slot === 0) {
+        if (latest?.game_over && latest.winner_slot === latest.my_slot) {
           confetti({ particleCount: 200, spread: 100, origin: { y: 0.6 } });
         }
         return;
@@ -1061,10 +1148,10 @@ export default function GamePage() {
     const rack = gameState?.my_rack ?? [];
     const letters = Array.from(exchangeSelected).map((i) => rack[i]);
     try {
-      const result = (await api.exchange(token, gameId, 0, letters)) as MoveResult;
+      const result = (await api.exchange(token, gameId, letters)) as MoveResult;
       if (result.ok) {
         setExchangeMode(false);
-        setAiApproved(true);
+        setAiApproved(gameState?.game_mode === "vs_ai");
         await syncState(result.state);
         return;
       }
@@ -1085,9 +1172,9 @@ export default function GamePage() {
   const handlePass = async () => {
     if (!token) return;
     try {
-      const result = (await api.pass(token, gameId, 0)) as MoveResult;
+      const result = (await api.pass(token, gameId)) as MoveResult;
       if (result.ok) {
-        setAiApproved(true);
+        setAiApproved(gameState?.game_mode === "vs_ai");
         await syncState(result.state);
         return;
       }
@@ -1105,8 +1192,25 @@ export default function GamePage() {
     }
   };
 
-  const isMyTurn = gameState?.current_turn_slot === 0;
-  const isAITurn = gameState?.current_turn_slot === 1 && !gameState?.game_over;
+  const handleSendChat = useCallback((body: string) => {
+    const socket = multiplayerSocketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      showToast({
+        id: `chat-${Date.now()}`,
+        type: "error",
+        message: "Chat is offline",
+      });
+      return;
+    }
+    socket.send(JSON.stringify({ type: "chat_message", body }));
+  }, [showToast]);
+
+  const isMyTurn = gameState?.current_turn_slot === gameState?.my_slot;
+  const isAITurn =
+    gameState?.game_mode === "vs_ai" &&
+    aiSlotNumber != null &&
+    gameState?.current_turn_slot === aiSlotNumber &&
+    !gameState?.game_over;
   const showAIPrompt = isAITurn && !aiApproved && !aiThinking;
   const rackCanPlace = isMyTurn && !gameState?.game_over && !aiThinking;
   const boardDragPreview = activeDragTile && dragPreviewTarget
@@ -1116,11 +1220,14 @@ export default function GamePage() {
     : null;
   const frameBorderColor = THEME_FRAME_BORDER[boardTheme];
   const activeHeaderModelName = useMemo(() => {
+    if (gameState?.game_mode === "vs_human") {
+      return opponentSlotInfo?.username ?? "Opponent";
+    }
     if (selectedModelId && gameState?.ai_model_id !== selectedModelId) {
       return humanizeModelId(selectedModelId) ?? gameState?.ai_model_display_name ?? "Choose rival";
     }
     return gameState?.ai_model_display_name ?? humanizeModelId(gameState?.ai_model_id) ?? "Choose rival";
-  }, [gameState?.ai_model_display_name, gameState?.ai_model_id, selectedModelId]);
+  }, [gameState?.ai_model_display_name, gameState?.ai_model_id, gameState?.game_mode, opponentSlotInfo?.username, selectedModelId]);
   const rackTileSize = isCoarsePointer ? "rack" : "lg";
 
   const handleRackTileSelect = useCallback((tile: { letter: string; index: number }) => {
@@ -1197,7 +1304,8 @@ export default function GamePage() {
       <div className="min-h-screen bg-gradient-to-br from-stone-950 via-stone-900 to-stone-950 text-stone-100">
         <div className="mx-auto flex max-w-[960px] flex-col gap-3 px-4 py-3 sm:px-5 sm:py-4">
           <ScorePanel
-            aiModelDisplayName={activeHeaderModelName}
+            opponentLabel={activeHeaderModelName}
+            showRivalPicker={gameState?.game_mode === "vs_ai"}
             creditBalance={creditBalance}
             frameBorderColor={frameBorderColor}
             onOpenRivalPicker={() => router.push("/settings?focus=rival")}
@@ -1241,7 +1349,7 @@ export default function GamePage() {
                   <div className="mx-auto w-full max-w-fit opacity-55 saturate-75">
                     <TileRack dragEnabled={!isCoarsePointer} tileSize={rackTileSize} />
                   </div>
-                  {showAIPrompt && (
+                  {showAIPrompt ? (
                     <>
                       <div className="mt-4 flex justify-end lg:absolute lg:right-0 lg:top-1/2 lg:mt-0 lg:-translate-y-1/2">
                         <div className="rounded-full bg-transparent p-0 shadow-[0_22px_44px_rgba(0,0,0,0.38),0_0_30px_rgba(22,163,74,0.24)] transition-all duration-200 hover:shadow-[0_24px_48px_rgba(0,0,0,0.42),0_0_34px_rgba(34,197,94,0.28)]">
@@ -1266,11 +1374,25 @@ export default function GamePage() {
                         </motion.div>
                       )}
                     </>
+                  ) : (
+                    <div className="mt-4 text-center text-sm uppercase tracking-[0.16em] text-stone-400">
+                      {isMultiplayerGame
+                        ? `${opponentSlotInfo?.username ?? "Opponent"} is playing`
+                        : "Waiting for the AI"}
+                    </div>
                   )}
                 </div>
               )}
             </div>
           </LayoutGroup>
+
+          {isMultiplayerGame && (
+            <ChatPanel
+              messages={gameState?.chat_messages ?? []}
+              disabled={gameState?.status !== "active"}
+              onSend={handleSendChat}
+            />
+          )}
 
           {/* Game over */}
           <AnimatePresence>
@@ -1278,10 +1400,10 @@ export default function GamePage() {
               <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
                 className="text-center p-6 bg-stone-800/80 backdrop-blur rounded-xl">
                 <h2 className="text-3xl font-bold mb-2">
-                  {gameState.winner_slot === 0 ? "Victory!" : gameState.winner_slot === 1 ? "Game Over" : "Draw!"}
+                  {gameState.winner_slot === gameState.my_slot ? "Victory!" : gameState.winner_slot == null ? "Draw!" : "Game Over"}
                 </h2>
                 <p className="text-stone-400 mb-4">
-                  {gameState.slots.map((s) => `${s.username}: ${s.score}`).join(" vs ")}
+                  {gameState.slots.map((s) => `${s.username ?? "Waiting"}: ${s.score}`).join(" vs ")}
                 </p>
                 <button onClick={() => void handleNewGame()}
                   className="px-6 py-3 rounded-xl bg-amber-500 text-stone-900 font-semibold hover:bg-amber-400 transition-colors">
@@ -1293,7 +1415,7 @@ export default function GamePage() {
         </div>
       </div>
 
-      <AIThinkingOverlay />
+      {gameState?.game_mode === "vs_ai" && <AIThinkingOverlay />}
       <BlankPicker onSelect={handleBlankSelect} />
       <DragOverlay
         adjustScale={false}

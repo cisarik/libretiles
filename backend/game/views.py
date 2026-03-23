@@ -9,6 +9,8 @@ from .serializers import (
     ApplyAIMoveSerializer,
     CreateGameSerializer,
     ExchangeSerializer,
+    QueueCancelSerializer,
+    QueueJoinSerializer,
     SubmitMoveSerializer,
     UpdateGameAIModelSerializer,
     ValidateMoveSerializer,
@@ -16,42 +18,98 @@ from .serializers import (
 )
 
 
+def _service_error_response(error: Exception) -> Response:
+    if isinstance(error, services.GameNotFoundError):
+        return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+    raise error
+
+
 class CreateGameView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):  # type: ignore[no-untyped-def]
-        ser = CreateGameSerializer(data=request.data)
-        ser.is_valid(raise_exception=True)
+        serializer = CreateGameSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
         result = services.create_game(
             user_id=request.user.id,
-            game_mode=ser.validated_data["game_mode"],
-            ai_model_id=ser.validated_data.get("ai_model_id"),
-            ai_model_model_id=ser.validated_data.get("ai_model_model_id"),
-            variant_slug=ser.validated_data["variant_slug"],
+            game_mode=serializer.validated_data["game_mode"],
+            ai_model_id=serializer.validated_data.get("ai_model_id"),
+            ai_model_model_id=serializer.validated_data.get("ai_model_model_id"),
+            variant_slug=serializer.validated_data["variant_slug"],
         )
-        return Response(result, status=status.HTTP_201_CREATED)
+        return Response(result, status=status.HTTP_201_CREATED if result.get("ok", True) else 400)
+
+
+class QueueJoinView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):  # type: ignore[no-untyped-def]
+        serializer = QueueJoinSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        result = services.join_human_queue(
+            user_id=request.user.id,
+            variant_slug=serializer.validated_data["variant_slug"],
+        )
+        return Response(result)
+
+
+class QueueCancelView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):  # type: ignore[no-untyped-def]
+        serializer = QueueCancelSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            result = services.cancel_human_queue(
+                game_id=serializer.validated_data["game_id"],
+                user_id=request.user.id,
+            )
+        except Exception as error:
+            return _service_error_response(error)
+        if not result["ok"]:
+            return Response(result, status=status.HTTP_400_BAD_REQUEST)
+        return Response(result)
 
 
 class GameStateView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request, game_id):  # type: ignore[no-untyped-def]
-        slot = request.query_params.get("slot", "0")
-        state = services.get_game_state_for_slot(game_id, int(slot))
+        try:
+            state = services.get_game_state_for_user(game_id, request.user.id)
+        except Exception as error:
+            return _service_error_response(error)
         return Response(state)
+
+
+class GameWSTicketView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, game_id):  # type: ignore[no-untyped-def]
+        try:
+            result = services.build_ws_ticket(game_id=game_id, user_id=request.user.id)
+        except Exception as error:
+            return _service_error_response(error)
+        return Response(result)
 
 
 class SubmitMoveView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, game_id):  # type: ignore[no-untyped-def]
-        ser = SubmitMoveSerializer(data=request.data)
-        ser.is_valid(raise_exception=True)
-        slot = int(request.data.get("slot", 0))
-        result = services.submit_move(game_id, slot, ser.validated_data["placements"])
+        serializer = SubmitMoveSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            result = services.submit_move_for_user(
+                game_id,
+                request.user.id,
+                serializer.validated_data["placements"],
+            )
+        except Exception as error:
+            return _service_error_response(error)
         if not result["ok"]:
             return Response(result, status=status.HTTP_400_BAD_REQUEST)
-        result["state"] = services.get_game_state_for_slot(game_id, slot)
+        result["state"] = services.get_game_state_for_user(game_id, request.user.id)
         return Response(result)
 
 
@@ -59,13 +117,19 @@ class ExchangeView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, game_id):  # type: ignore[no-untyped-def]
-        ser = ExchangeSerializer(data=request.data)
-        ser.is_valid(raise_exception=True)
-        slot = int(request.data.get("slot", 0))
-        result = services.submit_exchange(game_id, slot, ser.validated_data["letters"])
+        serializer = ExchangeSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            result = services.submit_exchange_for_user(
+                game_id,
+                request.user.id,
+                serializer.validated_data["letters"],
+            )
+        except Exception as error:
+            return _service_error_response(error)
         if not result["ok"]:
             return Response(result, status=status.HTTP_400_BAD_REQUEST)
-        result["state"] = services.get_game_state_for_slot(game_id, slot)
+        result["state"] = services.get_game_state_for_user(game_id, request.user.id)
         return Response(result)
 
 
@@ -73,11 +137,13 @@ class PassView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, game_id):  # type: ignore[no-untyped-def]
-        slot = int(request.data.get("slot", 0))
-        result = services.submit_pass(game_id, slot)
+        try:
+            result = services.submit_pass_for_user(game_id, request.user.id)
+        except Exception as error:
+            return _service_error_response(error)
         if not result["ok"]:
             return Response(result, status=status.HTTP_400_BAD_REQUEST)
-        result["state"] = services.get_game_state_for_slot(game_id, slot)
+        result["state"] = services.get_game_state_for_user(game_id, request.user.id)
         return Response(result)
 
 
@@ -85,20 +151,24 @@ class GiveUpView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, game_id):  # type: ignore[no-untyped-def]
-        result = services.submit_give_up(game_id=game_id, user_id=request.user.id)
+        try:
+            result = services.submit_give_up_for_user(game_id=game_id, user_id=request.user.id)
+        except Exception as error:
+            return _service_error_response(error)
         if not result["ok"]:
             return Response(result, status=status.HTTP_400_BAD_REQUEST)
-        result["state"] = services.get_game_state_for_slot(game_id, result.get("slot", 0))
+        result["state"] = services.get_game_state_for_user(game_id, request.user.id)
         return Response(result)
 
 
 class AIContextView(APIView):
-    """Provides compact game state for Vercel AI Gateway route."""
-
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request, game_id):  # type: ignore[no-untyped-def]
-        context = services.get_ai_context(game_id)
+        try:
+            context = services.get_ai_context(game_id, request.user.id)
+        except Exception as error:
+            return _service_error_response(error)
         return Response(context)
 
 
@@ -108,101 +178,126 @@ class GameAIModelView(APIView):
     def patch(self, request, game_id):  # type: ignore[no-untyped-def]
         serializer = UpdateGameAIModelSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        result = services.set_game_ai_model(
-            game_id=game_id,
-            user_id=request.user.id,
-            ai_model_model_id=serializer.validated_data["ai_model_model_id"],
-        )
+        try:
+            result = services.set_game_ai_model(
+                game_id=game_id,
+                user_id=request.user.id,
+                ai_model_model_id=serializer.validated_data["ai_model_model_id"],
+            )
+        except Exception as error:
+            return _service_error_response(error)
         return Response(result, status=200 if result.get("ok") else 400)
 
 
 class ValidateMoveView(APIView):
-    """AI tool endpoint: validate placements without applying."""
-
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, game_id):  # type: ignore[no-untyped-def]
-        ser = ValidateMoveSerializer(data=request.data)
-        ser.is_valid(raise_exception=True)
-        result = services.validate_move_for_ai(game_id, ser.validated_data["placements"])
+        serializer = ValidateMoveSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            result = services.validate_move_for_ai(
+                game_id,
+                request.user.id,
+                serializer.validated_data["placements"],
+            )
+        except Exception as error:
+            return _service_error_response(error)
         return Response(result)
 
 
 class ValidateWordsView(APIView):
-    """AI tool endpoint: check words against the primary Collins dictionary."""
-
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, game_id):  # type: ignore[no-untyped-def]
-        ser = ValidateWordsSerializer(data=request.data)
-        ser.is_valid(raise_exception=True)
-        result = services.validate_words(ser.validated_data["words"])
+        serializer = ValidateWordsSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            result = services.validate_words(
+                game_id=game_id,
+                user_id=request.user.id,
+                words=serializer.validated_data["words"],
+            )
+        except Exception as error:
+            return _service_error_response(error)
         return Response({"results": result})
 
 
 class ApplyAIMoveView(APIView):
-    """Apply AI-proposed move (re-validates server-side)."""
-
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, game_id):  # type: ignore[no-untyped-def]
-        ser = ApplyAIMoveSerializer(data=request.data)
-        ser.is_valid(raise_exception=True)
-        viewer_slot_obj = (
-            __import__("game.models", fromlist=["PlayerSlot"])
-            .PlayerSlot.objects.filter(game__public_id=game_id, user_id=request.user.id)
-            .first()
-        )
-        ai_slot_obj = (
-            __import__("game.models", fromlist=["PlayerSlot"])
-            .PlayerSlot.objects.filter(game__public_id=game_id, is_ai=True)
-            .first()
-        )
-        if not ai_slot_obj:
-            return Response({"ok": False, "error": "No AI slot"}, status=400)
-
-        result = services.submit_move(
-            game_id, ai_slot_obj.slot, ser.validated_data["placements"]
-        )
-        if result.get("ok") and ser.validated_data.get("ai_metadata"):
-            last_move = (
-                __import__("game.models", fromlist=["Move"])
-                .Move.objects.filter(game__public_id=game_id)
-                .order_by("-seq")
-                .first()
+        serializer = ApplyAIMoveSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            result = services.submit_move_for_ai(
+                game_id,
+                request.user.id,
+                serializer.validated_data["placements"],
             )
+        except Exception as error:
+            return _service_error_response(error)
+
+        if result.get("ok") and serializer.validated_data.get("ai_metadata"):
+            from .models import Move
+
+            last_move = Move.objects.filter(game__public_id=game_id).order_by("-seq").first()
             if last_move:
-                last_move.ai_metadata = ser.validated_data["ai_metadata"]
+                last_move.ai_metadata = serializer.validated_data["ai_metadata"]
                 last_move.save(update_fields=["ai_metadata"])
 
         if result.get("ok"):
-            result["state"] = services.get_game_state_for_slot(
-                game_id,
-                viewer_slot_obj.slot if viewer_slot_obj else 0,
-            )
-            session = (
-                __import__("game.models", fromlist=["GameSession"])
-                .GameSession.objects.select_related("ai_model")
-                .get(public_id=game_id)
-            )
+            from .models import GameSession, Move
+
+            result["state"] = services.get_game_state_for_user(game_id, request.user.id)
+            session = GameSession.objects.select_related("ai_model").get(public_id=game_id)
             billing = charge_ai_move(
                 user=request.user,
                 game=session,
                 ai_model=session.ai_model,
-                ai_metadata=ser.validated_data.get("ai_metadata"),
+                ai_metadata=serializer.validated_data.get("ai_metadata"),
             )
             result["billing"] = billing
             if isinstance(result.get("state"), dict):
                 result["state"]["last_move_billing"] = billing
-            if ser.validated_data.get("ai_metadata"):
-                last_move = (
-                    __import__("game.models", fromlist=["Move"])
-                    .Move.objects.filter(game__public_id=game_id)
-                    .order_by("-seq")
-                    .first()
-                )
+            if serializer.validated_data.get("ai_metadata"):
+                last_move = Move.objects.filter(game__public_id=game_id).order_by("-seq").first()
                 if last_move and isinstance(last_move.ai_metadata, dict):
                     last_move.ai_metadata["billing"] = billing
                     last_move.save(update_fields=["ai_metadata"])
 
         return Response(result, status=200 if result.get("ok") else 400)
+
+
+class AIPassView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, game_id):  # type: ignore[no-untyped-def]
+        try:
+            result = services.submit_pass_for_ai(game_id, request.user.id)
+        except Exception as error:
+            return _service_error_response(error)
+        if not result["ok"]:
+            return Response(result, status=status.HTTP_400_BAD_REQUEST)
+        result["state"] = services.get_game_state_for_user(game_id, request.user.id)
+        return Response(result)
+
+
+class AIExchangeView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, game_id):  # type: ignore[no-untyped-def]
+        serializer = ExchangeSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            result = services.submit_exchange_for_ai(
+                game_id,
+                request.user.id,
+                serializer.validated_data["letters"],
+            )
+        except Exception as error:
+            return _service_error_response(error)
+        if not result["ok"]:
+            return Response(result, status=status.HTTP_400_BAD_REQUEST)
+        result["state"] = services.get_game_state_for_user(game_id, request.user.id)
+        return Response(result)

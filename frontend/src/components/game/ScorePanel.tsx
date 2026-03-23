@@ -126,7 +126,8 @@ function CreditReadout({ balance, className }: { balance?: string | null; classN
 }
 
 interface ScorePanelProps {
-  aiModelDisplayName?: string | null;
+  opponentLabel: string;
+  showRivalPicker?: boolean;
   creditBalance?: string | null;
   frameBorderColor?: string;
   onOpenRivalPicker: () => void;
@@ -139,7 +140,8 @@ interface ScorePanelProps {
 }
 
 export function ScorePanel({
-  aiModelDisplayName,
+  opponentLabel,
+  showRivalPicker = false,
   creditBalance,
   frameBorderColor,
   onOpenRivalPicker,
@@ -154,9 +156,8 @@ export function ScorePanel({
   const lastMoveResult = useGameStore((s) => s.lastMoveResult);
 
   const slots = gameState?.slots ?? [];
-  const humanSlot = slots.find((s) => !s.is_ai);
-  const aiSlot = slots.find((s) => s.is_ai);
-  const aiModelLabel = aiModelDisplayName ?? "Choose rival";
+  const mySlot = slots.find((s) => s.slot === gameState?.my_slot);
+  const opponentSlot = slots.find((s) => s.slot !== gameState?.my_slot);
 
   return (
     <div
@@ -183,8 +184,8 @@ export function ScorePanel({
 
         <div className="grid grid-cols-[minmax(5.2rem,max-content)_auto_minmax(5.2rem,max-content)] items-end justify-center gap-3 self-center sm:grid-cols-[minmax(5.8rem,max-content)_auto_minmax(5.8rem,max-content)] sm:gap-5 xl:col-start-2 xl:row-span-2 xl:-translate-x-[10px] xl:justify-self-center xl:self-center">
           <AnimatedScore
-            score={humanSlot?.score ?? 0}
-            label={humanSlot?.username ?? "ITRISY"}
+            score={mySlot?.score ?? 0}
+            label={mySlot?.username ?? "You"}
             containerClassName="min-w-[5.2rem] sm:min-w-[5.8rem]"
             labelClassName="text-[0.9rem] font-semibold uppercase tracking-[0.24em] text-white sm:text-[1rem]"
           />
@@ -194,23 +195,29 @@ export function ScorePanel({
           </div>
 
           <AnimatedScore
-            score={aiSlot?.score ?? 0}
+            score={opponentSlot?.score ?? 0}
             containerClassName="relative min-w-[5.2rem] sm:min-w-[5.8rem]"
             labelClassName="text-[0.82rem] font-semibold tracking-[0.18em] text-white sm:text-[0.9rem]"
             label={(
               <div className="relative inline-flex items-center justify-center">
-                <span className="mr-1.5 shrink-0 text-[0.96rem] leading-none" aria-hidden="true">🧠</span>
-                <span className="shrink-0 uppercase text-white">AI:</span>
-                <button
-                  type="button"
-                  onClick={onOpenRivalPicker}
-                  className="group absolute left-full top-1/2 ml-3 hidden max-w-[13.8rem] -translate-y-1/2 overflow-hidden whitespace-nowrap text-left transition-[opacity,filter] hover:opacity-92 hover:brightness-110 lg:block"
-                  title={aiModelLabel}
-                >
-                  <LuxeHoverText className="max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-[1.14rem] font-black leading-none sm:text-[1.22rem]">
-                    {aiModelLabel}
-                  </LuxeHoverText>
-                </button>
+                {showRivalPicker ? (
+                  <>
+                    <span className="mr-1.5 shrink-0 text-[0.96rem] leading-none" aria-hidden="true">🧠</span>
+                    <span className="shrink-0 uppercase text-white">AI:</span>
+                    <button
+                      type="button"
+                      onClick={onOpenRivalPicker}
+                      className="group absolute left-full top-1/2 ml-3 hidden max-w-[13.8rem] -translate-y-1/2 overflow-hidden whitespace-nowrap text-left transition-[opacity,filter] hover:opacity-92 hover:brightness-110 lg:block"
+                      title={opponentLabel}
+                    >
+                      <LuxeHoverText className="max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-[1.14rem] font-black leading-none sm:text-[1.22rem]">
+                        {opponentLabel}
+                      </LuxeHoverText>
+                    </button>
+                  </>
+                ) : (
+                  <span className="shrink-0 uppercase text-white">{opponentLabel}</span>
+                )}
               </div>
             )}
           />

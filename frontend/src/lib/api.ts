@@ -1,4 +1,10 @@
-import type { AIModel, MoveValidationResult, UserProfile } from "@/lib/types";
+import type {
+  AIModel,
+  MoveValidationResult,
+  QueueJoinResponse,
+  UserProfile,
+  WSTicketResponse,
+} from "@/lib/types";
 
 const DEFAULT_API_BASE = "http://localhost:8000";
 
@@ -10,7 +16,7 @@ function trimTrailingSlash(value: string): string {
   return value.replace(/\/+$/, "");
 }
 
-function resolveApiBase(): string {
+export function resolveApiBase(): string {
   const configuredBase = trimTrailingSlash(
     process.env.NEXT_PUBLIC_API_URL || DEFAULT_API_BASE,
   );
@@ -90,8 +96,25 @@ export const api = {
   // Game
   createGame: (
     token: string,
-    data: { game_mode?: string; ai_model_id?: number; ai_model_model_id?: string },
+    data: { game_mode?: "vs_ai"; ai_model_id?: number; ai_model_model_id?: string },
   ) => request("/api/game/create/", { method: "POST", body: data, token }),
+
+  joinHumanQueue: (
+    token: string,
+    data?: { variant_slug?: string },
+  ) =>
+    request<QueueJoinResponse>("/api/game/queue/join/", {
+      method: "POST",
+      body: data ?? {},
+      token,
+    }),
+
+  cancelHumanQueue: (token: string, gameId: string) =>
+    request<{ ok: boolean; error?: string }>("/api/game/queue/cancel/", {
+      method: "POST",
+      body: { game_id: gameId },
+      token,
+    }),
 
   updateGameAIModel: (
     token: string,
@@ -103,32 +126,49 @@ export const api = {
       { method: "PATCH", body: data, token },
     ),
 
-  getGameState: (token: string, gameId: string, slot: number = 0) =>
-    request(`/api/game/${gameId}/?slot=${slot}`, { token }),
+  getGameState: (token: string, gameId: string) =>
+    request(`/api/game/${gameId}/`, { token }),
+
+  getWSTicket: (token: string, gameId: string) =>
+    request<WSTicketResponse>(`/api/game/${gameId}/ws-ticket/`, {
+      method: "POST",
+      token,
+    }),
 
   submitMove: (
     token: string,
     gameId: string,
-    slot: number,
     placements: Array<{ row: number; col: number; letter: string; blank_as?: string }>,
   ) =>
     request(`/api/game/${gameId}/move/`, {
       method: "POST",
-      body: { slot, placements },
+      body: { placements },
       token,
     }),
 
-  exchange: (token: string, gameId: string, slot: number, letters: string[]) =>
+  exchange: (token: string, gameId: string, letters: string[]) =>
     request(`/api/game/${gameId}/exchange/`, {
       method: "POST",
-      body: { slot, letters },
+      body: { letters },
       token,
     }),
 
-  pass: (token: string, gameId: string, slot: number) =>
+  pass: (token: string, gameId: string) =>
     request(`/api/game/${gameId}/pass/`, {
       method: "POST",
-      body: { slot },
+      token,
+    }),
+
+  aiPass: (token: string, gameId: string) =>
+    request(`/api/game/${gameId}/ai-pass/`, {
+      method: "POST",
+      token,
+    }),
+
+  aiExchange: (token: string, gameId: string, letters: string[]) =>
+    request(`/api/game/${gameId}/ai-exchange/`, {
+      method: "POST",
+      body: { letters },
       token,
     }),
 

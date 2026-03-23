@@ -2,13 +2,18 @@ from django.urls import path
 
 from .views import (
     AIContextView,
+    AIExchangeView,
+    AIPassView,
     ApplyAIMoveView,
     CreateGameView,
     ExchangeView,
     GiveUpView,
     GameAIModelView,
     GameStateView,
+    GameWSTicketView,
     PassView,
+    QueueCancelView,
+    QueueJoinView,
     SubmitMoveView,
     ValidateMoveView,
     ValidateWordsView,
@@ -16,7 +21,10 @@ from .views import (
 
 urlpatterns = [
     path("create/", CreateGameView.as_view(), name="game-create"),
+    path("queue/join/", QueueJoinView.as_view(), name="game-queue-join"),
+    path("queue/cancel/", QueueCancelView.as_view(), name="game-queue-cancel"),
     path("<str:game_id>/", GameStateView.as_view(), name="game-state"),
+    path("<str:game_id>/ws-ticket/", GameWSTicketView.as_view(), name="game-ws-ticket"),
     path("<str:game_id>/move/", SubmitMoveView.as_view(), name="game-move"),
     path("<str:game_id>/exchange/", ExchangeView.as_view(), name="game-exchange"),
     path("<str:game_id>/pass/", PassView.as_view(), name="game-pass"),
@@ -25,5 +33,7 @@ urlpatterns = [
     path("<str:game_id>/ai-context/", AIContextView.as_view(), name="game-ai-context"),
     path("<str:game_id>/validate-move/", ValidateMoveView.as_view(), name="game-validate-move"),
     path("<str:game_id>/validate-words/", ValidateWordsView.as_view(), name="game-validate-words"),
+    path("<str:game_id>/ai-pass/", AIPassView.as_view(), name="game-ai-pass"),
+    path("<str:game_id>/ai-exchange/", AIExchangeView.as_view(), name="game-ai-exchange"),
     path("<str:game_id>/ai-move/", ApplyAIMoveView.as_view(), name="game-ai-move"),
 ]

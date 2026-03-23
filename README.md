@@ -1,6 +1,6 @@
 # Libre Tiles
 
-Open-source web Scrabble game with AI opponents powered by Vercel AI Gateway and an eye-candy animated frontend.
+Open-source web Scrabble game with AI opponents, live human-vs-human multiplayer, and an eye-candy animated frontend.
 
 **Architecture**: Next.js frontend on Vercel (AI Gateway + beautiful UI) + lightweight Django backend (game logic, validation, admin).
 
@@ -10,6 +10,7 @@ Open-source web Scrabble game with AI opponents powered by Vercel AI Gateway and
 
 - Full Scrabble game engine (English variant, Collins 2019 dictionary ~279k words, Tier-1 strict validation in Django)
 - AI opponents via Vercel AI Gateway -- choose from OpenAI, Google, Anthropic models
+- Live human-vs-human multiplayer with waiting-room matchmaking, realtime board sync, and in-game chat
 - AI plays as a tool-calling agent: validates moves, checks words, calculates scores
 - Advanced drag-and-drop with touch/mobile support (@dnd-kit)
 - Animated tile drawing, scoring, and game-end effects (Framer Motion, confetti)
@@ -21,7 +22,7 @@ Open-source web Scrabble game with AI opponents powered by Vercel AI Gateway and
 
 ## Quick Start
 
-You need **two terminals**: one for the Django backend, one for the Next.js frontend.
+For AI-only local development you need **two terminals**: one for the Django backend, one for the Next.js frontend. For live human-vs-human multiplayer you also need a running Redis instance for Django Channels.
 
 ### Python environment (backend)
 
@@ -52,6 +53,8 @@ poetry run python manage.py runserver 0.0.0.0:8000
 
 Backend runs at http://localhost:8000. Django Admin at http://localhost:8000/admin/.
 
+Redis must be running for websocket matchmaking, realtime sync, and chat. The default local URL is `redis://127.0.0.1:6379/0`.
+
 ### 2. Frontend (Next.js)
 
 ```bash
@@ -61,7 +64,7 @@ npm install                                       # install JS dependencies
 npm run dev                                       # start dev server at :3000
 ```
 
-Open http://localhost:3000, register, choose an AI model, and play.
+Open http://localhost:3000, register, choose a mode, and play.
 
 `sync_gateway_models` fetches the latest public catalog from `https://ai-gateway.vercel.sh/v1/models`, updates technical metadata in `catalog.AIModel`, and keeps newly discovered models inactive by default unless you pass `--activate-new`.
 
@@ -74,6 +77,8 @@ Open http://localhost:3000, register, choose an AI model, and play.
 | `DEBUG` | `True` | Debug mode |
 | `DB_ENGINE` | `sqlite` | `sqlite` or `postgresql` |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:3000` | Frontend origin(s) |
+| `REDIS_URL` | `redis://127.0.0.1:6379/0` | Redis connection used by Django Channels |
+| `GAME_WS_TICKET_MAX_AGE_SECONDS` | `60` | Max age for signed websocket tickets |
 
 **Frontend** (`frontend/.env.local`):
 | Variable | Default | Description |
@@ -213,16 +218,22 @@ libretiles/
 - `GET /api/catalog/models/` -- List active AI models with pricing
 
 ### Game
-- `POST /api/game/create/` -- Start new game
-- `GET /api/game/{id}/` -- Get game state + player rack
-- `POST /api/game/{id}/move/` -- Submit tile placement (human)
-- `POST /api/game/{id}/exchange/` -- Exchange tiles
-- `POST /api/game/{id}/pass/` -- Pass turn
+- `POST /api/game/create/` -- Start new AI game
+- `POST /api/game/queue/join/` -- Join or create the global human waiting room
+- `POST /api/game/queue/cancel/` -- Cancel an unmatched waiting game
+- `GET /api/game/{id}/` -- Get game state + only the requesting player's private rack
+- `POST /api/game/{id}/ws-ticket/` -- Mint a short-lived signed websocket ticket
+- `POST /api/game/{id}/move/` -- Submit tile placement as the authenticated user
+- `POST /api/game/{id}/exchange/` -- Exchange tiles as the authenticated user
+- `POST /api/game/{id}/pass/` -- Pass turn as the authenticated user
+- `POST /api/game/{id}/give-up/` -- Resign the game
 
 ### AI Tool Endpoints (called by Next.js API routes)
 - `GET /api/game/{id}/ai-context/` -- Compact board state for AI prompt
 - `POST /api/game/{id}/validate-move/` -- Validate placement legality + score
 - `POST /api/game/{id}/validate-words/` -- Check words in Collins 2019 dictionary
+- `POST /api/game/{id}/ai-pass/` -- Apply an AI pass on the server
+- `POST /api/game/{id}/ai-exchange/` -- Apply an AI exchange on the server
 - `POST /api/game/{id}/ai-move/` -- Apply AI-proposed move (re-validates server-side)
 
 ### Frontend API Routes (Next.js)
@@ -252,6 +263,7 @@ npx tsc --noEmit                           # TypeScript check
 
 ### Backend
 - Python 3.11+, Django 5.x, Django REST Framework
+- Django Channels + Redis for realtime multiplayer and chat
 - JWT auth (djangorestframework-simplejwt)
 - PostgreSQL (prod) / SQLite (dev)
 - Collins 2019 English dictionary (~279k words, O(1) frozenset lookup)

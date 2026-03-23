@@ -14,11 +14,20 @@ export interface WordResult {
 
 export interface SlotInfo {
   slot: number;
-  username: string;
+  username: string | null;
   score: number;
   rack_count: number;
   is_ai: boolean;
   pass_streak: number;
+}
+
+export interface ChatMessage {
+  id: number;
+  author_slot: number | null;
+  author_username: string;
+  body: string;
+  created_at: string;
+  mine: boolean;
 }
 
 export interface GameState {
@@ -30,15 +39,17 @@ export interface GameState {
   blanks: { row: number; col: number }[];
   premium_used: { row: number; col: number }[];
   bag_remaining: number;
-  current_turn_slot: number;
+  current_turn_slot: number | null;
   game_over: boolean;
   game_end_reason: string;
   winner_slot: number | null;
+  my_slot: number;
   ai_model_id: string | null;
   ai_model_display_name?: string | null;
   slots: SlotInfo[];
   move_count: number;
   my_rack: string[];
+  chat_messages: ChatMessage[];
   last_move_cells?: Placement[];
   last_move_points?: number;
   last_move_words?: WordResult[];
@@ -56,9 +67,22 @@ export interface CreateGameResponse {
   game_id: string;
   starting_draw: StartingDraw;
   human_rack: string[];
-  current_turn_slot: number;
+  current_turn_slot: number | null;
   ai_model_id: string | null;
   ai_model_display_name?: string | null;
+}
+
+export interface QueueJoinResponse {
+  ok: boolean;
+  waiting: boolean;
+  matched: boolean;
+  state: GameState;
+}
+
+export interface WSTicketResponse {
+  ok: boolean;
+  ticket: string;
+  expires_in: number;
 }
 
 export interface BillingSummary {

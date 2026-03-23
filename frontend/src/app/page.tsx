@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { api } from "@/lib/api";
 import { useGameStore } from "@/hooks/useGameStore";
-import type { CreateGameResponse } from "@/lib/types";
 
 export default function Home() {
   const router = useRouter();
@@ -16,8 +15,6 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
 
   const setToken = useGameStore((s) => s.setToken);
-  const setStartingDraw = useGameStore((s) => s.setStartingDraw);
-  const setStartingRack = useGameStore((s) => s.setStartingRack);
   const selectedModelId = useGameStore((s) => s.selectedModelId);
   const setSelectedModelId = useGameStore((s) => s.setSelectedModelId);
   const setCreditBalance = useGameStore((s) => s.setCreditBalance);
@@ -54,17 +51,8 @@ export default function Home() {
         setSelectedModelId(resolvedSelection);
       }
 
-      const result = (await api.createGame(access, {
-        game_mode: "vs_ai",
-        ai_model_model_id: resolvedSelection,
-      })) as CreateGameResponse;
-      if (result.ai_model_id) {
-        setSelectedModelId(result.ai_model_id);
-      }
       resetGameUi();
-      setStartingDraw(result.starting_draw);
-      setStartingRack(result.human_rack);
-      router.push(`/draw/${result.game_id}`);
+      router.push("/play");
     } catch (err) {
       setError(
         err instanceof Error
@@ -96,7 +84,7 @@ export default function Home() {
             Libre Tiles
           </motion.h1>
           <p className="text-stone-400 mt-2">
-            Open-source Scrabble with AI opponents
+            Open-source Scrabble with AI rivals and live multiplayer
           </p>
         </div>
 
@@ -157,7 +145,7 @@ export default function Home() {
               hover:from-amber-300 hover:to-amber-400
               disabled:opacity-40 disabled:cursor-not-allowed transition-all"
           >
-            {loading ? "Starting game..." : mode === "login" ? "Play Now" : "Create Account & Play"}
+            {loading ? "Signing in..." : mode === "login" ? "Play Now" : "Create Account & Play"}
           </motion.button>
         </div>
 

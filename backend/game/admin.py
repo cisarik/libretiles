@@ -11,7 +11,7 @@ from django.urls import path, reverse
 from accounts.models import User
 from billing.models import CreditBalance, Transaction
 
-from .models import GameSession, Move, PlayerSlot
+from .models import ChatMessage, GameSession, Move, PlayerSlot
 
 _ZERO = Decimal("0")
 _CENT = Decimal("0.01")
@@ -84,14 +84,14 @@ def _resolve_model_id(move: Move) -> str:
 
 
 def _slot_snapshot(game: GameSession) -> tuple[str, int, str, int]:
-    slots = list(game.slots.all())
-    human = next((slot for slot in slots if not slot.is_ai), None)
-    ai = next((slot for slot in slots if slot.is_ai), None)
-    human_name = human.user.username if human and human.user else "Human"
-    human_score = human.score if human else 0
-    ai_name = ai.user.username if ai and ai.user else "AI"
-    ai_score = ai.score if ai else 0
-    return human_name, human_score, ai_name, ai_score
+    slots = list(game.slots.all().order_by("slot"))
+    slot0 = next((slot for slot in slots if slot.slot == 0), None)
+    slot1 = next((slot for slot in slots if slot.slot == 1), None)
+    slot0_name = "AI" if slot0 and slot0.is_ai else (slot0.user.username if slot0 and slot0.user else "Waiting")  # type: ignore[union-attr]
+    slot1_name = "AI" if slot1 and slot1.is_ai else (slot1.user.username if slot1 and slot1.user else "Waiting")  # type: ignore[union-attr]
+    slot0_score = slot0.score if slot0 else 0
+    slot1_score = slot1.score if slot1 else 0
+    return slot0_name, slot0_score, slot1_name, slot1_score
 
 
 class PlayerSlotInline(admin.TabularInline):
@@ -351,3 +351,10 @@ class MoveAdmin(admin.ModelAdmin):
     def charged_usd(self, obj: Move) -> str:
         billing = _extract_billing(obj.ai_metadata)
         return f"${_format_decimal(billing['charged_usd'], _USD_PRECISION)}"
+
+
+@admin.register(ChatMessage)
+class ChatMessageAdmin(admin.ModelAdmin):
+    list_display = ("game", "user", "body", "created_at")
+    search_fields = ("game__public_id", "user__username", "body")
+    readonly_fields = ("created_at",)

@@ -761,8 +761,8 @@ export async function POST(req: NextRequest) {
         // 4. Apply the final move
         if (finalAction === "exchange" && exchangeLetters.length > 0) {
           const exchangeResult = await backendPost(
-            `/api/game/${game_id}/exchange/`,
-            { slot: 1, letters: exchangeLetters },
+            `/api/game/${game_id}/ai-exchange/`,
+            { letters: exchangeLetters },
             token,
           );
           const billing = await chargeAITurn(game_id, token, aiMeta);
@@ -785,8 +785,8 @@ export async function POST(req: NextRequest) {
 
         if (finalPlacements.length === 0 || finalAction === "pass") {
           const passResult = await backendPost(
-            `/api/game/${game_id}/pass/`,
-            { slot: 1 },
+            `/api/game/${game_id}/ai-pass/`,
+            {},
             token,
           );
           const billing = await chargeAITurn(game_id, token, aiMeta);
@@ -831,8 +831,8 @@ export async function POST(req: NextRequest) {
 
         if (!moveResult.ok) {
           const passResult = await backendPost(
-            `/api/game/${game_id}/pass/`,
-            { slot: 1 },
+            `/api/game/${game_id}/ai-pass/`,
+            {},
             token,
           );
           const billing = await chargeAITurn(game_id, token, {

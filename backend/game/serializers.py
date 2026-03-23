@@ -4,7 +4,7 @@ from catalog.selection import get_selectable_models
 
 
 class CreateGameSerializer(serializers.Serializer):
-    game_mode = serializers.ChoiceField(choices=["vs_ai", "vs_human"], default="vs_ai")
+    game_mode = serializers.ChoiceField(choices=["vs_ai"], default="vs_ai")
     ai_model_id = serializers.IntegerField(required=False, allow_null=True)
     ai_model_model_id = serializers.CharField(required=False, allow_blank=False, max_length=200)
     variant_slug = serializers.CharField(default="english", max_length=50)
@@ -28,6 +28,14 @@ class CreateGameSerializer(serializers.Serializer):
             )
 
         return attrs
+
+
+class QueueJoinSerializer(serializers.Serializer):
+    variant_slug = serializers.CharField(default="english", max_length=50)
+
+
+class QueueCancelSerializer(serializers.Serializer):
+    game_id = serializers.CharField(required=True, max_length=100)
 
 
 class SubmitMoveSerializer(serializers.Serializer):

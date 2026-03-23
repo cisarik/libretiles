@@ -2,14 +2,15 @@
 
 This document describes the technical architecture of the Libre Tiles project. It covers the system design, data flow, AI agent workflow, and deployment topology.
 
-**Repository boundary**: The `libretiles/` tree is self-contained and can be published as a standalone Git repository. It does not import code from other monorepos; the game engine and `sowpods.txt` live under `backend/`.
+**Repository boundary**: The `libretiles/` tree is self-contained and can be published as a standalone Git repository. It does not import code from other monorepos; the game engine and dictionary assets live under `backend/`.
 
 ## System Overview
 
-Libre Tiles is a 2-tier web application:
+Libre Tiles is a web application with three runtime components:
 
 1. **Next.js Frontend** (deployed on Vercel) -- UI, AI agent orchestration, model routing
-2. **Django Backend** (self-hosted VPS) -- game state, validation, auth, admin, dictionary
+2. **Django Backend** (self-hosted VPS) -- game state, matchmaking, validation, auth, admin, dictionary
+3. **Redis** -- Django Channels backing store for websocket rooms and realtime fan-out
 
 The AI models are accessed through the **Vercel AI Gateway**, which provides a unified OpenAI-compatible API for multiple providers (OpenAI, Google, Anthropic, etc.).
 
@@ -26,7 +27,7 @@ The AI models are accessed through the **Vercel AI Gateway**, which provides a u
 │  └────────────┬────────────────────────────────────┘    │
 └───────────────│─────────────────────────────────────────┘
                 │
-                │ REST API (JWT Bearer)
+                │ REST API (JWT Bearer) + websocket ticket bootstrap
                 ▼
 ┌───────────────────────────────────────┐
 │       Next.js Server (Vercel)         │
@@ -42,17 +43,18 @@ The AI models are accessed through the **Vercel AI Gateway**, which provides a u
                │ HTTP callbacks (validate-move, validate-words, ai-move)
                ▼
 ┌──────────────────────────────────────────────┐
-│            Django Backend (VPS)               │
+│            Django Backend (VPS)              │
 │                                              │
-│  ┌─────────┐ ┌──────────┐ ┌─────────────┐   │
-│  │accounts │ │ catalog  │ │    game      │   │
-│  │(JWT)    │ │(models)  │ │(state,moves) │   │
-│  └─────────┘ └──────────┘ └──────┬──────┘   │
+│  ┌─────────┐ ┌──────────┐ ┌──────────────┐  │
+│  │accounts │ │ catalog  │ │     game     │  │
+│  │(JWT)    │ │(models)  │ │state, queue, │  │
+│  │         │ │          │ │moves, chat   │  │
+│  └─────────┘ └──────────┘ └──────┬───────┘  │
 │                                  │           │
 │  ┌─────────────────────────────────────────┐ │
 │  │           gamecore/ (pure Python)       │ │
 │  │  board, rules, scoring, tiles, game     │ │
-│  │  variant_store, fastdict (SOWPODS)      │ │
+│  │  variant_store, fastdict (Collins 2019) │ │
 │  └─────────────────────────────────────────┘ │
 │                                              │
 │  ┌────────────────────────┐                  │
@@ -63,7 +65,14 @@ The AI models are accessed through the **Vercel AI Gateway**, which provides a u
 │  └────────────────────────┘                  │
 │                                              │
 │  Database: PostgreSQL (prod) / SQLite (dev)  │
-└──────────────────────────────────────────────┘
+└──────────────────────┬───────────────────────┘
+                       │
+                       ▼
+             ┌────────────────────┐
+             │ Redis / Channels   │
+             │ game_<public_id>   │
+             │ websocket fan-out  │
+             └────────────────────┘
 ```
 
 ## AI Agent Workflow
@@ -124,7 +133,7 @@ Browser           Next.js /api/ai/move           AI Model              Django Ba
 | Tool | Description | Django Endpoint |
 |------|-------------|-----------------|
 | `validateMove` | Check placement legality, extract words, calculate score | `POST /api/game/{id}/validate-move/` |
-| `validateWords` | Check words against SOWPODS dictionary (172K words) | `POST /api/game/{id}/validate-words/` |
+| `validateWords` | Check words against the Collins 2019 dictionary | `POST /api/game/{id}/validate-words/` |
 
 ### AI Prompt Structure
 
@@ -175,7 +184,7 @@ Frontend Settings ──► create game request (`ai_model_model_id`)
 Word submitted
       │
       ▼
-  Tier 1: SOWPODS
+  Tier 1: Collins 2019
   (frozenset, O(1))
       │
       ├── found ──► VALID
@@ -199,7 +208,26 @@ Word submitted
       └───────┘
 ```
 
-Tier 1 covers 172,823 words and handles nearly all cases. Tier 3 provides a fallback for edge cases using AI language understanding.
+Tier 1 covers the shipped Collins 2019 word list and handles nearly all cases. Tier 3 provides a fallback for edge cases using AI language understanding.
+
+## Human Multiplayer Workflow
+
+Human-vs-human multiplayer reuses the same `GameSession`, `PlayerSlot`, `Move`, and `gamecore/` rules as AI games. There is no second game engine and no parallel multiplayer state model.
+
+### Queue and match activation
+
+1. The first authenticated player calls `POST /api/game/queue/join/`.
+2. Django either reuses that player's existing waiting session or creates a new `GameSession(status="waiting", game_mode="vs_human")`.
+3. The second authenticated player joins the oldest compatible waiting session inside a transaction with row locking.
+4. Only after the second player is assigned do backend services initialize the bag, racks, starting draw, and first turn; the session becomes `active` and `started_at` is set.
+
+### Realtime sync
+
+- Each game uses one websocket room: `game_<public_id>`.
+- The frontend first requests `POST /api/game/{id}/ws-ticket/`; the backend signs a short-lived ticket tied to the authenticated user and game.
+- Websocket consumers authenticate the ticket, verify game membership, join the room, and then only relay events.
+- After a move, pass, exchange, resignation, match creation, or chat message, the service layer publishes a room event and each connected consumer re-fetches `get_game_state_for_user(...)` for its own user before sending `game_state`.
+- This keeps private racks user-specific while shared board state, scores, moves, and chat remain visible to both players.
 
 ## Data Model
 
@@ -210,6 +238,7 @@ Tier 1 covers 172,823 words and handles nearly all cases. Tier 3 provides a fall
 - **GameSession** (game) -- board state JSON, bag, turn tracking, game status
 - **PlayerSlot** (game) -- links users (or AI) to game positions with rack + score
 - **Move** (game) -- move history with placements, words, score, AI metadata
+- **ChatMessage** (game) -- compact persisted in-game chat entries for human sessions
 - **CreditBalance / Transaction** (billing) -- per-user credits for AI games
 
 ### State persistence
@@ -234,12 +263,16 @@ Game state is stored in `GameSession.state_json` as a JSON blob managed by `game
 
 - Backend: `poetry run python manage.py runserver` (SQLite)
 - Frontend: `npm run dev` (with direct OPENAI_API_KEY)
+- Redis: required for human multiplayer, websocket sync, and chat
 - Database: SQLite (zero config) or Docker Compose PostgreSQL
 
 ## Security Considerations
 
 - JWT tokens for API auth (short-lived access + refresh tokens)
 - AI API keys stored server-side only (Next.js server environment)
+- Acting player slot is always derived from the authenticated user on the server; public APIs do not trust client-supplied slot indices
+- Game-state responses only include the requesting user's private rack; opponent racks are never exposed through query params or websocket payloads
+- Websocket access uses short-lived signed tickets plus membership checks before room join
 - CORS configured per environment
 - Django Admin behind superuser auth
 - No secrets in .env.example or .env.local.example files
