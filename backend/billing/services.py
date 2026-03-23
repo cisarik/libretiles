@@ -59,6 +59,9 @@ def charge_ai_move(
         locked_balance = CreditBalance.objects.select_for_update().get(pk=balance.pk)
         locked_balance.balance = _quantize_credits(locked_balance.balance - credits_charge)
         locked_balance.save(update_fields=["balance"])
+        locked_game = GameSession.objects.select_for_update().get(pk=game.pk)
+        locked_game.total_cost_usd = (locked_game.total_cost_usd or _ZERO) + usd_charge
+        locked_game.save(update_fields=["total_cost_usd", "updated_at"])
 
         Transaction.objects.create(
             user=user,

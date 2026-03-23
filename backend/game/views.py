@@ -81,6 +81,7 @@ class GameHistoryView(APIView):
         result = services.list_games_for_user(
             user_id=request.user.id,
             game_mode=serializer.validated_data["game_mode"],
+            sort=serializer.validated_data["sort"],
             page=serializer.validated_data["page"],
             page_size=serializer.validated_data["page_size"],
         )

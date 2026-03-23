@@ -535,6 +535,10 @@ class GameAPITest(TestCase):
         assert data["state"]["status"] == "abandoned"
 
     def test_game_history_can_filter_and_paginate(self) -> None:
+        from decimal import Decimal
+
+        from game.models import GameSession
+
         ai_game_ids: list[str] = []
         for _ in range(3):
             resp = self.client.post("/api/game/create/", {
@@ -542,6 +546,10 @@ class GameAPITest(TestCase):
                 "ai_model_model_id": self.ai_model.model_id,
             })
             ai_game_ids.append(resp.json()["game_id"])
+
+        priciest = GameSession.objects.get(public_id=ai_game_ids[0])
+        priciest.total_cost_usd = Decimal("0.125000")
+        priciest.save(update_fields=["total_cost_usd"])
 
         waiting = self.client.post("/api/game/queue/join/", {"variant_slug": "english"}, format="json")
         self.client2.post("/api/game/queue/join/", {"variant_slug": "english"}, format="json")
@@ -567,6 +575,12 @@ class GameAPITest(TestCase):
         assert human_items[0]["game_id"] == human_game_id
         assert human_items[0]["opponent_label"] == "player2"
 
+        cost_sorted = self.client.get("/api/game/history/?game_mode=vs_ai&sort=cost_desc")
+        assert cost_sorted.status_code == 200
+        assert cost_sorted.json()["sort"] == "cost_desc"
+        assert cost_sorted.json()["items"][0]["game_id"] == ai_game_ids[0]
+        assert cost_sorted.json()["items"][0]["total_cost_usd"] == "0.125000"
+
         all_games = self.client.get("/api/game/history/?game_mode=all")
         assert all_games.status_code == 200
         returned_ids = {item["game_id"] for item in all_games.json()["items"]}
@@ -589,6 +603,7 @@ class GameAPITest(TestCase):
         assert item["outcome"] == "gave_up"
         assert item["opponent_label"] == self.ai_model.display_name
         assert item["game_end_reason"] == "give_up"
+        assert item["total_cost_usd"] == "0.000000"
 
     def test_game_history_marks_in_progress_for_active_game(self) -> None:
         create_resp = self.client.post("/api/game/create/", {

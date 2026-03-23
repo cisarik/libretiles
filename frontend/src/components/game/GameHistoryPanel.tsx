@@ -13,6 +13,7 @@ import type {
   GameHistoryItem,
   GameHistoryOutcome,
   GameHistoryResponse,
+  GameHistorySort,
 } from "@/lib/types";
 
 const FILTER_OPTIONS: Array<{
@@ -76,6 +77,13 @@ function formatMode(mode: GameHistoryItem["game_mode"]): string {
   return mode === "vs_ai" ? "AI duel" : "Human duel";
 }
 
+function formatUsd(value?: string | null): string {
+  if (!value) return "$0.00";
+  const numeric = Number.parseFloat(value);
+  if (!Number.isFinite(numeric)) return "$0.00";
+  return `$${numeric.toFixed(2)}`;
+}
+
 function OutcomeBadge({ outcome }: { outcome: GameHistoryOutcome }) {
   const meta = OUTCOME_META[outcome];
   return (
@@ -115,6 +123,7 @@ function OpenButton({
 export function GameHistoryPanel({
   data,
   filter,
+  sort,
   loading,
   error,
   activeGameId,
@@ -122,11 +131,13 @@ export function GameHistoryPanel({
   onPrevPage,
   onNextPage,
   onRefresh,
+  onSortChange,
   onOpenGame,
   className,
 }: {
   data: GameHistoryResponse | null;
   filter: GameHistoryFilter;
+  sort: GameHistorySort;
   loading: boolean;
   error: string | null;
   activeGameId?: string;
@@ -134,6 +145,7 @@ export function GameHistoryPanel({
   onPrevPage: () => void;
   onNextPage: () => void;
   onRefresh: () => void;
+  onSortChange: (value: GameHistorySort) => void;
   onOpenGame: (item: GameHistoryItem) => void;
   className?: string;
 }) {
@@ -184,6 +196,28 @@ export function GameHistoryPanel({
             Refresh
           </span>
         </button>
+        <div className="flex items-center gap-2 rounded-full border border-white/8 bg-black/18 px-2 py-1 shadow-[0_10px_22px_rgba(0,0,0,0.12)]">
+          {[
+            { value: "updated", label: "Recent" },
+            { value: "cost_desc", label: "Highest spend" },
+          ].map((option) => {
+            const active = sort === option.value;
+            return (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => onSortChange(option.value as GameHistorySort)}
+                className={`rounded-full px-3 py-1.5 text-[0.78rem] font-semibold transition-colors ${
+                  active
+                    ? "bg-amber-400/12 text-amber-100"
+                    : "text-stone-400 hover:text-stone-200"
+                }`}
+              >
+                {option.label}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       <div className="mb-4 text-xs uppercase tracking-[0.18em] text-stone-400">
@@ -233,6 +267,7 @@ export function GameHistoryPanel({
                   <th className="px-4 py-3">Mode</th>
                   <th className="px-4 py-3">Result</th>
                   <th className="px-4 py-3">Score</th>
+                  <th className="px-4 py-3">Spend</th>
                   <th className="px-4 py-3">Moves</th>
                   <th className="px-4 py-3">Updated</th>
                   <th className="px-4 py-3 text-right">Open</th>
@@ -261,6 +296,9 @@ export function GameHistoryPanel({
                         <span className="px-1.5 text-white/56">:</span>
                         {item.opponent_score}
                       </div>
+                    </td>
+                    <td className="px-4 py-3.5 text-sm text-stone-200">
+                      {formatUsd(item.total_cost_usd)}
                     </td>
                     <td className="px-4 py-3.5 text-sm text-stone-200">
                       {item.move_count}
@@ -308,13 +346,17 @@ export function GameHistoryPanel({
                     </div>
                   </div>
                   <div>
+                    <div className="text-[0.68rem] uppercase tracking-[0.2em] text-stone-500">Spend</div>
+                    <div className="mt-1 text-stone-200">{formatUsd(item.total_cost_usd)}</div>
+                  </div>
+                  <div>
                     <div className="text-[0.68rem] uppercase tracking-[0.2em] text-stone-500">Moves</div>
                     <div className="mt-1 text-stone-200">{item.move_count}</div>
                   </div>
-                  <div>
-                    <div className="text-[0.68rem] uppercase tracking-[0.2em] text-stone-500">Updated</div>
-                    <div className="mt-1 text-stone-200">{formatUpdatedAt(item.updated_at)}</div>
-                  </div>
+                </div>
+
+                <div className="mt-2 text-sm text-stone-400">
+                  {formatUpdatedAt(item.updated_at)}
                 </div>
 
                 <div className="mt-3 flex justify-end">

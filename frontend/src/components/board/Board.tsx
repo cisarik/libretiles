@@ -134,15 +134,32 @@ export function Board({
   const lastMoveCells = gameState?.last_move_cells ?? [];
   const lastMoveWords = gameState?.last_move_words ?? [];
   const primaryWordCoords = lastMoveWords[0]?.coords ?? lastMoveCells;
-  const lastMoveSet = new Set(primaryWordCoords.map((cell) => `${cell.row}-${cell.col}`));
   const lastMoveBilling = gameState?.last_move_billing ?? lastMoveResultBilling ?? null;
   const pendingSet = new Map(
     pendingTiles.map((t) => [`${t.row}-${t.col}`, t]),
   );
+  const moveHistory = gameState?.move_history ?? [];
+  const placeMoves = moveHistory.filter((move) => move.kind === "place");
+  const moveByPlacedCellKey = new Map<string, (typeof placeMoves)[number]>(
+    placeMoves.flatMap((move) =>
+      move.placements.map((cell) => [`${cell.row}-${cell.col}`, move] as const),
+    ),
+  );
+  const selectedMove = revealedMoveKey ? moveByPlacedCellKey.get(revealedMoveKey) ?? null : null;
+  const selectedWords = selectedMove
+    ? selectedMove.words.filter((word) =>
+        (word.coords ?? []).some((cell) => `${cell.row}-${cell.col}` === revealedMoveKey),
+      )
+    : [];
+  const selectedWordCoords = selectedWords.length > 0
+    ? selectedWords.flatMap((word) => word.coords ?? [])
+    : selectedMove?.placements ?? [];
+  const activeWordCoords = selectedMove ? selectedWordCoords : primaryWordCoords;
+  const highlightedSet = new Set(activeWordCoords.map((cell) => `${cell.row}-${cell.col}`));
 
-  const lastMoveRows = primaryWordCoords.map((cell) => cell.row);
-  const lastMoveCols = primaryWordCoords.map((cell) => cell.col);
-  const hasLastMove = primaryWordCoords.length > 0;
+  const lastMoveRows = activeWordCoords.map((cell) => cell.row);
+  const lastMoveCols = activeWordCoords.map((cell) => cell.col);
+  const hasLastMove = activeWordCoords.length > 0;
   const minRow = hasLastMove ? Math.min(...lastMoveRows) : 0;
   const maxRow = hasLastMove ? Math.max(...lastMoveRows) : 0;
   const minCol = hasLastMove ? Math.min(...lastMoveCols) : 0;
@@ -152,10 +169,11 @@ export function Board({
   const popupTop = popupAbove
     ? `calc(${(minRow / BOARD_SIZE) * 100}% - 12px)`
     : `calc(${((maxRow + 1) / BOARD_SIZE) * 100}% + 12px)`;
-  const primaryWord = lastMoveWords[0]?.word ?? null;
-  const lastMoveCostValue = formatMoveCostValue(lastMoveBilling?.charged_usd);
-  const moveRevealKey = `${gameState?.move_count ?? 0}:${primaryWord ?? ""}`;
-  const showLastMoveInfo = revealedMoveKey === moveRevealKey;
+  const selectedWordLabel = selectedWords.map((word) => word.word).join(" • ");
+  const selectedPoints = selectedMove?.points ?? gameState?.last_move_points ?? 0;
+  const selectedMoveCostValue = formatMoveCostValue(
+    selectedMove?.billing?.charged_usd ?? lastMoveBilling?.charged_usd,
+  );
 
   const clampBoardOffset = useCallback((scale: number, x: number, y: number) => {
     const shell = boardRef.current;
@@ -550,15 +568,16 @@ export function Board({
       removePendingTile(row, col);
       return;
     }
-    if (lastMoveSet.has(key) && primaryWord) {
-      setRevealedMoveKey(moveRevealKey);
+    const boardLetter = grid[row]?.[col];
+    if (boardLetter && boardLetter !== ".") {
+      if (moveByPlacedCellKey.has(key)) {
+        setRevealedMoveKey((current) => (current === key ? null : key));
+      }
       return;
     }
-    if (showLastMoveInfo) {
+    if (revealedMoveKey) {
       setRevealedMoveKey(null);
     }
-    const boardLetter = grid[row]?.[col];
-    if (boardLetter && boardLetter !== ".") return;
     onPlaceTile?.(row, col);
   };
 
@@ -610,7 +629,7 @@ export function Board({
                       letter={letter}
                       isBlank={pending ? pending.letter === "?" : blanks.has(key)}
                       isPending={!!pending}
-                      isLastMove={lastMoveSet.has(key)}
+                      isLastMove={highlightedSet.has(key)}
                       isPreviewTarget={showDragPreview}
                       tileLayoutId={isCoarsePointer && pending ? `rack-tile-${pending.rackIndex}` : undefined}
                       hideTilePoints={isCoarsePointer && zoomActive}
@@ -622,7 +641,7 @@ export function Board({
               )}
             </div>
 
-            {hasLastMove && primaryWord && showLastMoveInfo ? (
+            {hasLastMove && selectedMove ? (
               <div
                 className="pointer-events-none absolute z-[3]"
                 style={{
@@ -632,9 +651,14 @@ export function Board({
                 }}
               >
                 <div className="rounded-[1.15rem] border border-amber-300/38 bg-[linear-gradient(180deg,rgba(12,12,12,0.96),rgba(6,6,6,0.98))] px-4 py-3 text-center shadow-[0_18px_42px_rgba(0,0,0,0.42),0_0_18px_rgba(251,191,36,0.12)] backdrop-blur-sm">
+                  {selectedWordLabel ? (
+                    <div className="mb-2 font-gold-shiny text-[1rem] font-black leading-none tracking-[0.04em] sm:text-[1.08rem]">
+                      {selectedWordLabel}
+                    </div>
+                  ) : null}
                   <div className="flex items-center justify-center gap-2.5 sm:gap-3">
                     <span className="font-gold-shiny text-[1.32rem] font-black leading-none sm:text-[1.48rem]">
-                      +{gameState?.last_move_points ?? 0}
+                      +{selectedPoints}
                     </span>
                     <span className="text-[0.96rem] font-black uppercase leading-none tracking-[0.12em] text-white sm:text-[1rem]">
                       PTS
@@ -644,7 +668,7 @@ export function Board({
                       COST:
                     </span>
                     <span className="font-gold-shiny text-[0.92rem] font-black leading-none tracking-[0.04em] sm:text-[0.98rem]">
-                      {lastMoveCostValue}
+                      {selectedMoveCostValue}
                     </span>
                   </div>
                 </div>

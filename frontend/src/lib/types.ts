@@ -30,6 +30,17 @@ export interface ChatMessage {
   mine: boolean;
 }
 
+export interface MoveHistoryItem {
+  seq: number;
+  kind: "place" | "exchange" | "pass" | "give_up";
+  player_slot: number | null;
+  placements: Placement[];
+  words: WordResult[];
+  points: number;
+  billing?: BillingSummary | null;
+  created_at: string;
+}
+
 export interface GameState {
   game_id: string;
   status: "waiting" | "active" | "finished" | "abandoned";
@@ -44,11 +55,13 @@ export interface GameState {
   game_end_reason: string;
   winner_slot: number | null;
   my_slot: number;
+  total_cost_usd: string;
   ai_model_id: string | null;
   ai_model_display_name?: string | null;
   slots: SlotInfo[];
   move_count: number;
   my_rack: string[];
+  move_history: MoveHistoryItem[];
   chat_messages: ChatMessage[];
   last_move_cells?: Placement[];
   last_move_points?: number;
@@ -97,6 +110,7 @@ export interface BillingSummary {
 }
 
 export type GameHistoryFilter = "all" | "vs_ai" | "vs_human";
+export type GameHistorySort = "updated" | "cost_desc";
 export type GameHistoryOutcome =
   | "waiting"
   | "in_progress"
@@ -114,6 +128,7 @@ export interface GameHistoryItem {
   ai_model_display_name?: string | null;
   my_score: number;
   opponent_score: number;
+  total_cost_usd: string;
   move_count: number;
   is_my_turn: boolean;
   winner_slot: number | null;
@@ -133,6 +148,7 @@ export interface GameHistoryResponse {
   has_next: boolean;
   has_previous: boolean;
   game_mode: GameHistoryFilter;
+  sort: GameHistorySort;
 }
 
 export interface MoveResult {

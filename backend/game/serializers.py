@@ -44,6 +44,11 @@ class GameHistoryQuerySerializer(serializers.Serializer):
         required=False,
         default="all",
     )
+    sort = serializers.ChoiceField(
+        choices=["updated", "cost_desc"],
+        required=False,
+        default="updated",
+    )
     page = serializers.IntegerField(required=False, min_value=1, default=1)
     page_size = serializers.IntegerField(required=False, min_value=1, max_value=25, default=8)
 

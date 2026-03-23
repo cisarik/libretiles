@@ -1,4 +1,5 @@
 import uuid
+from decimal import Decimal
 
 from django.conf import settings
 from django.db import models
@@ -31,6 +32,7 @@ class GameSession(models.Model):
     premium_used = models.JSONField(default=list, help_text="List of {row, col} for used premiums")
     bag_tiles = models.TextField(default="", help_text="Remaining tiles in order")
     bag_seed = models.IntegerField(default=0)
+    total_cost_usd = models.DecimalField(max_digits=12, decimal_places=6, default=Decimal("0"))
 
     current_turn_slot = models.IntegerField(null=True, blank=True, default=None)
     consecutive_passes = models.IntegerField(default=0)

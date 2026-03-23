@@ -38,6 +38,7 @@ import type {
   GameHistoryFilter,
   GameHistoryItem,
   GameHistoryResponse,
+  GameHistorySort,
   GameState,
   MoveResult,
   MoveValidationResult,
@@ -567,6 +568,7 @@ export default function GamePage() {
   const [loggingOut, setLoggingOut] = useState(false);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [gameHistoryFilter, setGameHistoryFilter] = useState<GameHistoryFilter>("vs_ai");
+  const [gameHistorySort, setGameHistorySort] = useState<GameHistorySort>("updated");
   const [gameHistoryData, setGameHistoryData] = useState<GameHistoryResponse | null>(null);
   const [gameHistoryLoading, setGameHistoryLoading] = useState(false);
   const [gameHistoryError, setGameHistoryError] = useState<string | null>(null);
@@ -810,9 +812,11 @@ export default function GamePage() {
   const fetchGameHistory = useCallback(async ({
     page = 1,
     filter = gameHistoryFilter,
+    sort = gameHistorySort,
   }: {
     page?: number;
     filter?: GameHistoryFilter;
+    sort?: GameHistorySort;
   } = {}) => {
     if (!token) {
       setGameHistoryError("Session expired.");
@@ -824,6 +828,7 @@ export default function GamePage() {
     try {
       const result = await api.listGameHistory(token, {
         game_mode: filter,
+        sort,
         page,
         page_size: 8,
       });
@@ -833,7 +838,7 @@ export default function GamePage() {
     } finally {
       setGameHistoryLoading(false);
     }
-  }, [gameHistoryFilter, token]);
+  }, [gameHistoryFilter, gameHistorySort, token]);
 
   const handleOpenGamesModal = useCallback(() => {
     setGamesModalOpen(true);
@@ -842,8 +847,13 @@ export default function GamePage() {
 
   const handleGameHistoryFilterChange = useCallback((nextFilter: GameHistoryFilter) => {
     setGameHistoryFilter(nextFilter);
-    void fetchGameHistory({ filter: nextFilter, page: 1 });
-  }, [fetchGameHistory]);
+    void fetchGameHistory({ filter: nextFilter, sort: gameHistorySort, page: 1 });
+  }, [fetchGameHistory, gameHistorySort]);
+
+  const handleGameHistorySortChange = useCallback((nextSort: GameHistorySort) => {
+    setGameHistorySort(nextSort);
+    void fetchGameHistory({ filter: gameHistoryFilter, sort: nextSort, page: 1 });
+  }, [fetchGameHistory, gameHistoryFilter]);
 
   const handleGameHistoryOpen = useCallback((item: GameHistoryItem) => {
     setGamesModalOpen(false);
@@ -1475,6 +1485,7 @@ export default function GamePage() {
             frameBorderColor={frameBorderColor}
             statusText={scoreStatus.text}
             statusTone={scoreStatus.tone}
+            onBack={() => router.push("/play")}
             onOpenRivalPicker={() => router.push("/settings?focus=rival")}
             onNewGame={() => void handleNewGame()}
             onGiveUp={() => void handleGiveUp()}
@@ -1627,6 +1638,7 @@ export default function GamePage() {
           <GameHistoryModal
             data={gameHistoryData}
             filter={gameHistoryFilter}
+            sort={gameHistorySort}
             loading={gameHistoryLoading}
             error={gameHistoryError}
             activeGameId={gameId}
@@ -1635,6 +1647,7 @@ export default function GamePage() {
             onPrevPage={handleGameHistoryPrev}
             onNextPage={handleGameHistoryNext}
             onRefresh={() => void fetchGameHistory({ page: gameHistoryData?.page ?? 1 })}
+            onSortChange={handleGameHistorySortChange}
             onOpenGame={handleGameHistoryOpen}
           />
         )}

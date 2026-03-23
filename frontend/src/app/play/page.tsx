@@ -17,6 +17,7 @@ import type {
   GameHistoryFilter,
   GameHistoryItem,
   GameHistoryResponse,
+  GameHistorySort,
   QueueJoinResponse,
 } from "@/lib/types";
 
@@ -44,6 +45,7 @@ export default function PlayPage() {
   const [joiningHuman, setJoiningHuman] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [historyFilter, setHistoryFilter] = useState<GameHistoryFilter>("all");
+  const [historySort, setHistorySort] = useState<GameHistorySort>("updated");
   const [historyData, setHistoryData] = useState<GameHistoryResponse | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
@@ -53,9 +55,11 @@ export default function PlayPage() {
   const fetchHistory = useCallback(async ({
     page = 1,
     filter = historyFilter,
+    sort = historySort,
   }: {
     page?: number;
     filter?: GameHistoryFilter;
+    sort?: GameHistorySort;
   } = {}) => {
     if (!token) return;
 
@@ -64,6 +68,7 @@ export default function PlayPage() {
     try {
       const result = await api.listGameHistory(token, {
         game_mode: filter,
+        sort,
         page,
         page_size: 8,
       });
@@ -73,7 +78,7 @@ export default function PlayPage() {
     } finally {
       setHistoryLoading(false);
     }
-  }, [historyFilter, token]);
+  }, [historyFilter, historySort, token]);
 
   useEffect(() => {
     if (!token) {
@@ -127,8 +132,13 @@ export default function PlayPage() {
 
   const handleHistoryFilterChange = useCallback((nextFilter: GameHistoryFilter) => {
     setHistoryFilter(nextFilter);
-    void fetchHistory({ filter: nextFilter, page: 1 });
-  }, [fetchHistory]);
+    void fetchHistory({ filter: nextFilter, sort: historySort, page: 1 });
+  }, [fetchHistory, historySort]);
+
+  const handleHistorySortChange = useCallback((nextSort: GameHistorySort) => {
+    setHistorySort(nextSort);
+    void fetchHistory({ filter: historyFilter, sort: nextSort, page: 1 });
+  }, [fetchHistory, historyFilter]);
 
   const handleHistoryOpen = useCallback((item: GameHistoryItem) => {
     router.push(item.status === "waiting" ? `/waiting/${item.game_id}` : `/game/${item.game_id}`);
@@ -236,12 +246,14 @@ export default function PlayPage() {
             <GameHistoryPanel
               data={historyData}
               filter={historyFilter}
+              sort={historySort}
               loading={historyLoading}
               error={historyError}
               onFilterChange={handleHistoryFilterChange}
               onPrevPage={handleHistoryPrev}
               onNextPage={handleHistoryNext}
               onRefresh={() => void fetchHistory({ page: historyData?.page ?? 1 })}
+              onSortChange={handleHistorySortChange}
               onOpenGame={handleHistoryOpen}
             />
           </div>

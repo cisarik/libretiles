@@ -11,6 +11,7 @@ import type {
   GameHistoryFilter,
   GameHistoryItem,
   GameHistoryResponse,
+  GameHistorySort,
 } from "@/lib/types";
 
 const MODAL_TRANSITION = {
@@ -21,6 +22,7 @@ const MODAL_TRANSITION = {
 export function GameHistoryModal({
   data,
   filter,
+  sort,
   loading,
   error,
   activeGameId,
@@ -29,10 +31,12 @@ export function GameHistoryModal({
   onPrevPage,
   onNextPage,
   onRefresh,
+  onSortChange,
   onOpenGame,
 }: {
   data: GameHistoryResponse | null;
   filter: GameHistoryFilter;
+  sort: GameHistorySort;
   loading: boolean;
   error: string | null;
   activeGameId?: string;
@@ -41,6 +45,7 @@ export function GameHistoryModal({
   onPrevPage: () => void;
   onNextPage: () => void;
   onRefresh: () => void;
+  onSortChange: (value: GameHistorySort) => void;
   onOpenGame: (item: GameHistoryItem) => void;
 }) {
   const premiumLookEnabled = useGameStore((s) => s.premiumLookEnabled);
@@ -101,6 +106,7 @@ export function GameHistoryModal({
           <GameHistoryPanel
             data={data}
             filter={filter}
+            sort={sort}
             loading={loading}
             error={error}
             activeGameId={activeGameId}
@@ -108,6 +114,7 @@ export function GameHistoryModal({
             onPrevPage={onPrevPage}
             onNextPage={onNextPage}
             onRefresh={onRefresh}
+            onSortChange={onSortChange}
             onOpenGame={onOpenGame}
           />
         </div>

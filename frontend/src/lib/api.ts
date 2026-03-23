@@ -2,6 +2,7 @@ import type {
   AIModel,
   GameHistoryFilter,
   GameHistoryResponse,
+  GameHistorySort,
   MoveValidationResult,
   QueueJoinResponse,
   UserProfile,
@@ -142,10 +143,11 @@ export const api = {
 
   listGameHistory: (
     token: string,
-    params?: { game_mode?: GameHistoryFilter; page?: number; page_size?: number },
+    params?: { game_mode?: GameHistoryFilter; sort?: GameHistorySort; page?: number; page_size?: number },
   ) => {
     const query = new URLSearchParams();
     if (params?.game_mode) query.set("game_mode", params.game_mode);
+    if (params?.sort) query.set("sort", params.sort);
     if (params?.page) query.set("page", String(params.page));
     if (params?.page_size) query.set("page_size", String(params.page_size));
     const suffix = query.toString() ? `?${query.toString()}` : "";
