@@ -6,6 +6,7 @@ This document is for **automated coding agents** and humans who continue develop
 
 - **Frontend**: Next.js (React), Tailwind, Framer Motion, Zustand, DnD Kit; AI via Vercel AI Gateway (Next.js API routes).
 - **Backend**: Django + DRF; pure game logic in `gamecore/` (board, rules, scoring, Collins 2019 dictionary).
+- **Realtime**: Django Channels + Redis for human-vs-human matchmaking, websocket sync, and chat.
 - **Separation**: No imports outside `libretiles/`. All assets (dictionary, premiums, variants) live under `backend/assets/`.
 
 ## Quick start (local)
@@ -58,11 +59,32 @@ npm run build
 |------|------|
 | Game engine (pure Python) | `backend/gamecore/` |
 | API and game state | `backend/game/services.py`, `backend/game/views.py` |
+| Multiplayer websocket/auth | `backend/game/consumers.py`, `backend/game/routing.py` |
 | Collins 2019 dictionary (Tier 1) | `backend/assets/dicts/collins2019.txt` |
 | Word validation (lazy load) | `services._get_dictionary()`, `_word_passes_dictionary()` |
 | AI stream (SSE) | `frontend/src/app/api/ai/move/route.ts` |
 | Agent prompts | `frontend/src/lib/prompts.ts` |
 | Game UI | `frontend/src/app/game/[id]/page.tsx` |
+| Header / game chrome | `frontend/src/components/game/ScorePanel.tsx`, `frontend/src/components/game/GameControls.tsx` |
+| Shared premium UI effect | `frontend/src/lib/premiumSurface.ts` |
+
+## Current product state (March 2026)
+
+- Human-vs-human multiplayer is live:
+  - queue join/cancel
+  - waiting-room flow
+  - websocket realtime sync
+  - in-game chat
+  - server-derived acting slot only; client slot trust removed
+- Profile UX is now available directly from the game header:
+  - `Profile` modal
+  - password change flow via `POST /api/auth/change-password/`
+  - `Logout` shortcut in the same header cluster
+- The frontend now has a reusable premium surface system:
+  - shared pointer-reactive gold/black chrome in `frontend/src/lib/premiumSurface.ts`
+  - used by settings plus the game header/footer
+  - controlled by the persisted `premiumLookEnabled` store flag
+- Credits are now treated as USD (`1 credit = $1`) with higher internal precision for small AI charges while UI formatting stays compact.
 
 ## Word validation (important)
 
@@ -89,6 +111,6 @@ npm run build
 
 ## Not done yet (typical next steps)
 
-- Human-vs-human multiplayer (API is structured for extension).
 - Stripe / billing completion.
 - Tier 2 / 3 dictionary (optional API, AI judge) — see PRD and `docs/architecture.md`.
+- Stronger AI search / candidate generation beyond prompt-only improvements.

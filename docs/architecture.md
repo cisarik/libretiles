@@ -349,6 +349,25 @@ These notes are for the next Codex agent continuing AI gameplay and billing work
   - `backend/accounts/admin.py`
   - `backend/billing/admin.py`
 
+### Current game UI / account surface
+
+- The game header now contains a compact account/actions cluster:
+  - `Give up` on the left
+  - `Profile`, `Logout`, `Settings`, and `New game` on the right
+  - password changes happen in a modal and call `POST /api/auth/change-password/`
+- A reusable premium pointer-reactive chrome effect was extracted from settings into shared frontend utilities and is now used by:
+  - settings surfaces
+  - the game header
+  - the rack/footer panel
+- The premium look is intentionally optional and persisted in Zustand through `premiumLookEnabled`, so future agents should extend the shared helper instead of cloning effect CSS into new components.
+- Relevant files:
+  - `frontend/src/lib/premiumSurface.ts`
+  - `frontend/src/components/game/ScorePanel.tsx`
+  - `frontend/src/components/game/GameControls.tsx`
+  - `frontend/src/components/game/ProfileModal.tsx`
+  - `frontend/src/app/settings/page.tsx`
+  - `frontend/src/hooks/useGameStore.ts`
+
 ### Recommended next priorities
 
 1. Replace prompt-only strengthening with stronger search:

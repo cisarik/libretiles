@@ -213,6 +213,7 @@ libretiles/
 - `POST /api/auth/login/` -- Get JWT tokens
 - `POST /api/auth/refresh/` -- Refresh access token
 - `GET /api/auth/me/` -- Current user profile
+- `POST /api/auth/change-password/` -- Change password for the authenticated user
 
 ### Catalog
 - `GET /api/catalog/models/` -- List active AI models with pricing
