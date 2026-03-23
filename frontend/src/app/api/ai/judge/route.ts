@@ -2,7 +2,7 @@
  * AI Word Judge API Route (Tier 3 validation)
  *
  * Used as a fallback when a word is not in the local Collins 2019 dictionary.
- * The AI acts as a Scrabble referee, judging whether words are valid
+ * The AI acts as a Libre Tiles referee, judging whether words are valid
  * based on lexicon knowledge and natural language understanding.
  *
  * Validation pipeline:
@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
       maxOutputTokens: 1000,
       temperature: 0.1,
       system: JUDGE_SYSTEM_PROMPT,
-      prompt: `Validate these words for English Scrabble play: ${words.join(", ")}. Return JSON exactly matching the schema.`,
+      prompt: `Validate these words for English Libre Tiles play: ${words.join(", ")}. Return JSON exactly matching the schema.`,
     });
 
     try {

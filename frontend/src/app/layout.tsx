@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Libre Tiles — Web Scrabble with AI and Live Multiplayer",
-  description: "Open-source Scrabble with AI rivals, live human matches, chat, and polished drag-and-drop play.",
+  title: "Libre Tiles — Web Libre Tiles with AI and Live Multiplayer",
+  description: "Open-source Libre Tiles with AI rivals, live human matches, chat, and polished drag-and-drop play.",
 };
 
 export default function RootLayout({

@@ -12,7 +12,9 @@ from typing import Any
 
 from django.conf import settings
 from django.core import signing
+from django.core.paginator import Paginator
 from django.db import connection, transaction
+from django.db.models import Count
 from django.utils import timezone
 
 from catalog.models import AIModel
@@ -671,6 +673,136 @@ def get_player_slot_for_user(game_id: str, user_id: int) -> int:
 def get_game_state_for_user(game_id: str, user_id: int) -> dict[str, Any]:
     session, player_slot = _load_session_for_user(game_id=game_id, user_id=user_id)
     return _build_state(session, current_user_id=user_id, my_slot=player_slot)
+
+
+def _history_opponent_label(*, session: GameSession, my_slot: PlayerSlot) -> str:
+    opponent_slot = next(
+        (slot for slot in session.slots.all() if slot.slot != my_slot.slot),
+        None,
+    )
+    if session.game_mode == "vs_ai":
+        if session.ai_model:
+            return session.ai_model.display_name
+        if opponent_slot and opponent_slot.user:
+            return opponent_slot.user.username
+        return "AI"
+    if opponent_slot is None or opponent_slot.user is None:
+        return "Waiting opponent"
+    return opponent_slot.user.username
+
+
+def _history_outcome(
+    *,
+    session: GameSession,
+    my_slot: PlayerSlot,
+    give_up_slot_by_game_id: dict[int, int],
+) -> str:
+    if session.status == "waiting":
+        return "waiting"
+    if session.status == "active" and not session.game_over:
+        return "in_progress"
+    if session.game_end_reason == "give_up":
+        if give_up_slot_by_game_id.get(session.id) == my_slot.slot:
+            return "gave_up"
+    if session.winner_slot is None:
+        return "abandoned"
+    return "won" if session.winner_slot == my_slot.slot else "lost"
+
+
+def _serialize_game_history_item(
+    *,
+    session: GameSession,
+    my_slot: PlayerSlot,
+    give_up_slot_by_game_id: dict[int, int],
+) -> dict[str, Any]:
+    opponent_slot = next(
+        (slot for slot in session.slots.all() if slot.slot != my_slot.slot),
+        None,
+    )
+    return {
+        "game_id": str(session.public_id),
+        "game_mode": session.game_mode,
+        "status": session.status,
+        "outcome": _history_outcome(
+            session=session,
+            my_slot=my_slot,
+            give_up_slot_by_game_id=give_up_slot_by_game_id,
+        ),
+        "opponent_label": _history_opponent_label(session=session, my_slot=my_slot),
+        "ai_model_display_name": session.ai_model.display_name if session.ai_model else None,
+        "my_score": my_slot.score,
+        "opponent_score": opponent_slot.score if opponent_slot else 0,
+        "move_count": int(getattr(session, "move_count", 0)),
+        "is_my_turn": (
+            session.status == "active"
+            and not session.game_over
+            and session.current_turn_slot == my_slot.slot
+        ),
+        "winner_slot": session.winner_slot,
+        "game_end_reason": session.game_end_reason,
+        "created_at": session.created_at.isoformat(),
+        "started_at": session.started_at.isoformat() if session.started_at else None,
+        "finished_at": session.finished_at.isoformat() if session.finished_at else None,
+        "updated_at": session.updated_at.isoformat(),
+    }
+
+
+def list_games_for_user(
+    *,
+    user_id: int,
+    game_mode: str = "all",
+    page: int = 1,
+    page_size: int = 8,
+) -> dict[str, Any]:
+    queryset = (
+        GameSession.objects.filter(slots__user_id=user_id)
+        .select_related("ai_model")
+        .prefetch_related("slots__user")
+        .annotate(move_count=Count("moves", distinct=True))
+        .order_by("-updated_at")
+    )
+    if game_mode != "all":
+        queryset = queryset.filter(game_mode=game_mode)
+
+    paginator = Paginator(queryset, page_size)
+    page_obj = paginator.get_page(page)
+    sessions = list(page_obj.object_list)
+
+    my_slot_by_game_id: dict[int, PlayerSlot] = {}
+    for session in sessions:
+        my_slot = next((slot for slot in session.slots.all() if slot.user_id == user_id), None)
+        if my_slot is not None:
+            my_slot_by_game_id[session.id] = my_slot
+
+    give_up_slot_by_game_id: dict[int, int] = {}
+    give_up_game_ids = [session.id for session in sessions if session.game_end_reason == "give_up"]
+    if give_up_game_ids:
+        give_up_slot_by_game_id = {
+            row["game_id"]: row["player_slot__slot"]
+            for row in Move.objects.filter(game_id__in=give_up_game_ids, kind="give_up")
+            .values("game_id", "player_slot__slot")
+        }
+
+    items = [
+        _serialize_game_history_item(
+            session=session,
+            my_slot=my_slot_by_game_id[session.id],
+            give_up_slot_by_game_id=give_up_slot_by_game_id,
+        )
+        for session in sessions
+        if session.id in my_slot_by_game_id
+    ]
+
+    return {
+        "items": items,
+        "page": page_obj.number,
+        "page_size": page_obj.paginator.per_page,
+        "total": page_obj.paginator.count,
+        "total_pages": page_obj.paginator.num_pages,
+        "has_next": page_obj.has_next(),
+        "has_previous": page_obj.has_previous(),
+        "game_mode": game_mode,
+    }
 
 
 def set_game_ai_model(

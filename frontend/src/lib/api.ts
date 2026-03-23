@@ -1,5 +1,7 @@
 import type {
   AIModel,
+  GameHistoryFilter,
+  GameHistoryResponse,
   MoveValidationResult,
   QueueJoinResponse,
   UserProfile,
@@ -137,6 +139,18 @@ export const api = {
 
   getGameState: (token: string, gameId: string) =>
     request(`/api/game/${gameId}/`, { token }),
+
+  listGameHistory: (
+    token: string,
+    params?: { game_mode?: GameHistoryFilter; page?: number; page_size?: number },
+  ) => {
+    const query = new URLSearchParams();
+    if (params?.game_mode) query.set("game_mode", params.game_mode);
+    if (params?.page) query.set("page", String(params.page));
+    if (params?.page_size) query.set("page_size", String(params.page_size));
+    const suffix = query.toString() ? `?${query.toString()}` : "";
+    return request<GameHistoryResponse>(`/api/game/history/${suffix}`, { token });
+  },
 
   getWSTicket: (token: string, gameId: string) =>
     request<WSTicketResponse>(`/api/game/${gameId}/ws-ticket/`, {

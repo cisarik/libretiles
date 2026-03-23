@@ -85,22 +85,43 @@ function AnimatedScore({
   label,
   delta,
   deltaTone = "neutral",
+  deltaSide = "right",
   containerClassName,
   labelClassName,
+  deltaClassName,
 }: {
   score: number;
   label: ReactNode;
   delta?: number | null;
   deltaTone?: "friendly" | "rival" | "neutral";
+  deltaSide?: "left" | "right";
   containerClassName?: string;
   labelClassName?: string;
+  deltaClassName?: string;
 }) {
   const deltaClasses =
     deltaTone === "friendly"
-      ? "border-emerald-300/24 bg-emerald-400/10 text-emerald-100"
+      ? "border-emerald-300/24 bg-emerald-400/10 text-emerald-200"
       : deltaTone === "rival"
         ? "border-amber-300/22 bg-amber-300/10 text-amber-100"
         : "border-white/12 bg-white/6 text-stone-100";
+
+  const deltaBadge = (
+    <AnimatePresence mode="popLayout">
+      {delta != null && delta > 0 ? (
+        <motion.div
+          key={`${score}-${delta}`}
+          initial={{ opacity: 0, x: deltaSide === "left" ? 8 : -8, scale: 0.88 }}
+          animate={{ opacity: 1, x: 0, scale: 1 }}
+          exit={{ opacity: 0, x: deltaSide === "left" ? -8 : 8, scale: 0.9 }}
+          transition={{ type: "spring", stiffness: 360, damping: 24 }}
+          className={`rounded-full border px-2.75 py-[0.22rem] text-[1rem] font-black tracking-[0.06em] shadow-[0_10px_24px_rgba(0,0,0,0.18)] sm:text-[1.08rem] ${deltaClasses} ${deltaClassName ?? ""}`}
+        >
+          +{delta}
+        </motion.div>
+      ) : null}
+    </AnimatePresence>
+  );
 
   return (
     <div className={`relative flex min-w-0 flex-col items-center gap-[0.2rem] ${containerClassName ?? ""}`}>
@@ -108,6 +129,7 @@ function AnimatedScore({
         {label}
       </div>
       <div className="flex items-end justify-center gap-1.5">
+        {deltaSide === "left" ? deltaBadge : null}
         <AnimatePresence mode="popLayout">
           <motion.span
             key={score}
@@ -120,20 +142,7 @@ function AnimatedScore({
             {score}
           </motion.span>
         </AnimatePresence>
-        <AnimatePresence mode="popLayout">
-          {delta != null && delta > 0 ? (
-            <motion.div
-              key={`${score}-${delta}`}
-              initial={{ opacity: 0, x: -8, scale: 0.88 }}
-              animate={{ opacity: 1, x: 0, scale: 1 }}
-              exit={{ opacity: 0, x: 8, scale: 0.9 }}
-              transition={{ type: "spring", stiffness: 360, damping: 24 }}
-              className={`mb-[1.27rem] rounded-full border px-2.5 py-[0.18rem] text-[0.86rem] font-black uppercase tracking-[0.14em] shadow-[0_10px_24px_rgba(0,0,0,0.18)] sm:mb-[1.41rem] sm:text-[0.94rem] ${deltaClasses}`}
-            >
-              +{delta}
-            </motion.div>
-          ) : null}
-        </AnimatePresence>
+        {deltaSide === "right" ? deltaBadge : null}
       </div>
     </div>
   );
@@ -277,6 +286,7 @@ interface ScorePanelProps {
   onOpenRivalPicker: () => void;
   onNewGame: () => void;
   onGiveUp: () => void;
+  onOpenGames: () => void;
   onOpenSettings: () => void;
   onOpenProfile: () => void;
   onLogout: () => void;
@@ -296,6 +306,7 @@ export function ScorePanel({
   onOpenRivalPicker,
   onNewGame,
   onGiveUp,
+  onOpenGames,
   onOpenSettings,
   onOpenProfile,
   onLogout,
@@ -368,6 +379,8 @@ export function ScorePanel({
               label={mySlot?.username ?? "You"}
               delta={myLastGain}
               deltaTone="friendly"
+              deltaSide="left"
+              deltaClassName="translate-y-[15px]"
               containerClassName="min-w-[4.8rem] sm:min-w-[5.1rem]"
               labelClassName="flex min-h-[1.05rem] translate-y-[3px] items-center justify-center text-[0.82rem] font-semibold uppercase tracking-[0.24em] text-white sm:text-[0.9rem]"
             />
@@ -381,7 +394,7 @@ export function ScorePanel({
               delta={opponentLastGain}
               deltaTone="rival"
               containerClassName="relative min-w-[4.8rem] sm:min-w-[5.1rem]"
-              labelClassName="flex min-h-[1.05rem] items-center justify-center text-[0.78rem] font-semibold tracking-[0.18em] text-white sm:text-[0.86rem]"
+              labelClassName="flex min-h-[1.05rem] -translate-x-[20px] items-center justify-center text-[0.78rem] font-semibold tracking-[0.18em] text-white sm:text-[0.86rem]"
               label={(
                 <div className="relative inline-flex items-center justify-center gap-1 leading-none">
                   {showRivalPicker ? (
@@ -417,6 +430,12 @@ export function ScorePanel({
 
         <div className="flex flex-col items-center gap-1.5 xl:col-start-3 xl:items-end xl:self-start xl:translate-y-[35px]">
           <div className="hidden items-center justify-end gap-1.5 xl:flex xl:-translate-y-[15px]">
+            <HeaderMiniButton
+              onClick={onOpenGames}
+              label="Games"
+              leading="🗂️"
+              textClassName={`text-[0.94rem] font-black leading-none sm:text-[1rem] ${premiumTitleClass}`}
+            />
             <HeaderMiniButton
               onClick={onOpenProfile}
               label="Profile"

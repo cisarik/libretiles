@@ -2,6 +2,12 @@
 
 import { FormEvent, useMemo, useState } from "react";
 import { motion } from "framer-motion";
+import { useGameStore } from "@/hooks/useGameStore";
+import {
+  PREMIUM_MODAL_CARD_STYLE,
+  PREMIUM_MODAL_STYLE,
+  handlePremiumSurfacePointer,
+} from "@/lib/premiumSurface";
 import type { UserProfile } from "@/lib/types";
 
 const MODAL_TRANSITION = {
@@ -55,6 +61,7 @@ export function ProfileModal({
   const [confirmPassword, setConfirmPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
+  const premiumLookEnabled = useGameStore((s) => s.premiumLookEnabled);
 
   const memberSince = useMemo(() => formatJoinedDate(profile?.date_joined), [profile?.date_joined]);
   const balance = useMemo(() => formatBalanceUsd(profile?.credit_balance), [profile?.credit_balance]);
@@ -105,7 +112,9 @@ export function ProfileModal({
         animate={{ opacity: 1, y: 0, scale: 1 }}
         exit={{ opacity: 0, y: 20, scale: 0.985 }}
         transition={MODAL_TRANSITION}
-        className="relative mx-auto flex max-h-[calc(100svh-1.5rem)] w-full max-w-[860px] flex-col overflow-hidden rounded-[2rem] border border-white/10 bg-[linear-gradient(180deg,rgba(24,20,16,0.96),rgba(11,9,8,0.98))] shadow-[0_30px_100px_rgba(0,0,0,0.5)] backdrop-blur-xl sm:max-h-[calc(100svh-2rem)] sm:rounded-[2.2rem]"
+        className={`relative mx-auto flex max-h-[calc(100svh-1.5rem)] w-full max-w-[860px] flex-col overflow-hidden rounded-[2rem] border border-white/10 bg-[linear-gradient(180deg,rgba(24,20,16,0.96),rgba(11,9,8,0.98))] shadow-[0_30px_100px_rgba(0,0,0,0.5)] backdrop-blur-xl sm:max-h-[calc(100svh-2rem)] sm:rounded-[2.2rem] ${premiumLookEnabled ? "backdrop-blur-[16px]" : ""}`}
+        style={premiumLookEnabled ? PREMIUM_MODAL_STYLE : undefined}
+        onMouseMove={premiumLookEnabled ? handlePremiumSurfacePointer : undefined}
         onClick={(event) => event.stopPropagation()}
       >
         <div className="pointer-events-none absolute inset-x-12 top-0 h-px bg-gradient-to-r from-transparent via-amber-200/70 to-transparent" />
@@ -156,7 +165,11 @@ export function ProfileModal({
 
         <div className="ornate-scrollbar relative flex-1 overflow-y-auto p-4 sm:p-5">
           <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
-            <section className="relative overflow-hidden rounded-[1.8rem] border border-amber-300/20 p-4 shadow-[0_20px_55px_rgba(0,0,0,0.30)]">
+            <section
+              className="relative overflow-hidden rounded-[1.8rem] border border-amber-300/20 p-4 shadow-[0_20px_55px_rgba(0,0,0,0.30)]"
+              style={premiumLookEnabled ? PREMIUM_MODAL_CARD_STYLE : undefined}
+              onMouseMove={premiumLookEnabled ? handlePremiumSurfacePointer : undefined}
+            >
               <div className="absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-amber-200/70 to-transparent" />
               <div className="relative">
                 <div className="text-[0.72rem] uppercase tracking-[0.24em] text-amber-100/58">
@@ -201,7 +214,11 @@ export function ProfileModal({
               </div>
             </section>
 
-            <section className="relative overflow-hidden rounded-[1.8rem] border border-white/8 bg-[linear-gradient(180deg,rgba(17,14,11,0.76),rgba(11,9,8,0.82))] p-4 shadow-[0_18px_45px_rgba(0,0,0,0.24)]">
+            <section
+              className="relative overflow-hidden rounded-[1.8rem] border border-white/8 bg-[linear-gradient(180deg,rgba(17,14,11,0.76),rgba(11,9,8,0.82))] p-4 shadow-[0_18px_45px_rgba(0,0,0,0.24)]"
+              style={premiumLookEnabled ? PREMIUM_MODAL_CARD_STYLE : undefined}
+              onMouseMove={premiumLookEnabled ? handlePremiumSurfacePointer : undefined}
+            >
               <div className="absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-white/12 to-transparent" />
               <div className="relative">
                 <div className="flex items-center gap-3">

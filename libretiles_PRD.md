@@ -4,11 +4,11 @@ Updated: March 20, 2026
 
 ## 1. Product in One Sentence
 
-Libre Tiles is an open-source web-based Scrabble game with an eye-candy animated frontend, AI opponents via Vercel AI Gateway, and a lightweight Django backend with full admin control.
+Libre Tiles is an open-source web-based Libre Tiles game with an eye-candy animated frontend, AI opponents via Vercel AI Gateway, and a lightweight Django backend with full admin control.
 
 ## 2. Product Goals
 
-1. Deliver a visually stunning, native-feeling Scrabble experience in the browser (desktop + mobile).
+1. Deliver a visually stunning, native-feeling Libre Tiles experience in the browser (desktop + mobile).
 2. Let users choose which AI model to play against, with per-game credit billing based on model cost.
 3. Provide a Django Admin-first configuration model: all game settings, AI models, and pricing managed through /admin/.
 4. Prepare architecture for human-vs-human multiplayer (v2).
@@ -16,7 +16,7 @@ Libre Tiles is an open-source web-based Scrabble game with an eye-candy animated
 
 ## 3. Target Users
 
-- Casual Scrabble players who want a beautiful web game they can play on any device.
+- Casual Libre Tiles players who want a beautiful web game they can play on any device.
 - AI enthusiasts who want to test their skills against different language models.
 - Administrators who manage the game platform via Django Admin.
 

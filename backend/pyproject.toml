@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "libretiles-backend"
 version = "0.1.0"
-description = "Libre Tiles — Django backend for a web-based Scrabble game with AI opponents via Vercel AI Gateway."
+description = "Libre Tiles — Django backend for a web-based Libre Tiles game with AI opponents via Vercel AI Gateway."
 authors = ["Libre Tiles Contributors"]
 readme = "../README.md"
 packages = [{ include = "config" }, { include = "gamecore" }, { include = "game" }, { include = "accounts" }, { include = "catalog" }, { include = "billing" }]

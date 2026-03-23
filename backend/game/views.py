@@ -9,6 +9,7 @@ from .serializers import (
     ApplyAIMoveSerializer,
     CreateGameSerializer,
     ExchangeSerializer,
+    GameHistoryQuerySerializer,
     QueueCancelSerializer,
     QueueJoinSerializer,
     SubmitMoveSerializer,
@@ -68,6 +69,21 @@ class QueueCancelView(APIView):
             return _service_error_response(error)
         if not result["ok"]:
             return Response(result, status=status.HTTP_400_BAD_REQUEST)
+        return Response(result)
+
+
+class GameHistoryView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):  # type: ignore[no-untyped-def]
+        serializer = GameHistoryQuerySerializer(data=request.query_params)
+        serializer.is_valid(raise_exception=True)
+        result = services.list_games_for_user(
+            user_id=request.user.id,
+            game_mode=serializer.validated_data["game_mode"],
+            page=serializer.validated_data["page"],
+            page_size=serializer.validated_data["page_size"],
+        )
         return Response(result)
 
 

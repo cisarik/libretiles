@@ -534,6 +534,76 @@ class GameAPITest(TestCase):
         assert data["state"]["game_over"] is True
         assert data["state"]["status"] == "abandoned"
 
+    def test_game_history_can_filter_and_paginate(self) -> None:
+        ai_game_ids: list[str] = []
+        for _ in range(3):
+            resp = self.client.post("/api/game/create/", {
+                "game_mode": "vs_ai",
+                "ai_model_model_id": self.ai_model.model_id,
+            })
+            ai_game_ids.append(resp.json()["game_id"])
+
+        waiting = self.client.post("/api/game/queue/join/", {"variant_slug": "english"}, format="json")
+        self.client2.post("/api/game/queue/join/", {"variant_slug": "english"}, format="json")
+        human_game_id = waiting.json()["state"]["game_id"]
+
+        ai_only = self.client.get("/api/game/history/?game_mode=vs_ai&page=1&page_size=2")
+        assert ai_only.status_code == 200
+        ai_data = ai_only.json()
+        assert ai_data["game_mode"] == "vs_ai"
+        assert ai_data["page"] == 1
+        assert ai_data["page_size"] == 2
+        assert ai_data["total"] == 3
+        assert ai_data["total_pages"] == 2
+        assert ai_data["has_next"] is True
+        assert len(ai_data["items"]) == 2
+        assert all(item["game_mode"] == "vs_ai" for item in ai_data["items"])
+
+        human_only = self.client.get("/api/game/history/?game_mode=vs_human")
+        assert human_only.status_code == 200
+        human_items = human_only.json()["items"]
+        assert len(human_items) == 1
+        assert human_items[0]["game_mode"] == "vs_human"
+        assert human_items[0]["game_id"] == human_game_id
+        assert human_items[0]["opponent_label"] == "player2"
+
+        all_games = self.client.get("/api/game/history/?game_mode=all")
+        assert all_games.status_code == 200
+        returned_ids = {item["game_id"] for item in all_games.json()["items"]}
+        assert human_game_id in returned_ids
+        assert set(ai_game_ids).issubset(returned_ids)
+
+    def test_game_history_marks_gave_up_and_opponent_win(self) -> None:
+        create_resp = self.client.post("/api/game/create/", {
+            "game_mode": "vs_ai",
+            "ai_model_model_id": self.ai_model.model_id,
+        })
+        game_id = create_resp.json()["game_id"]
+
+        give_up = self.client.post(f"/api/game/{game_id}/give-up/")
+        assert give_up.status_code == 200
+
+        history = self.client.get("/api/game/history/?game_mode=vs_ai")
+        assert history.status_code == 200
+        item = next(item for item in history.json()["items"] if item["game_id"] == game_id)
+        assert item["outcome"] == "gave_up"
+        assert item["opponent_label"] == self.ai_model.display_name
+        assert item["game_end_reason"] == "give_up"
+
+    def test_game_history_marks_in_progress_for_active_game(self) -> None:
+        create_resp = self.client.post("/api/game/create/", {
+            "game_mode": "vs_ai",
+            "ai_model_model_id": self.ai_model.model_id,
+        })
+        game_id = create_resp.json()["game_id"]
+
+        history = self.client.get("/api/game/history/?game_mode=vs_ai")
+        assert history.status_code == 200
+        item = next(item for item in history.json()["items"] if item["game_id"] == game_id)
+        assert item["outcome"] == "in_progress"
+        assert item["status"] == "active"
+        assert item["opponent_label"] == self.ai_model.display_name
+
     def test_can_switch_game_ai_model_during_game(self) -> None:
         alternative_model = AIModel.objects.create(
             provider="openai",

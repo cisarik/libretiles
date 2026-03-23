@@ -1,6 +1,6 @@
 # Libre Tiles
 
-Open-source web Scrabble game with AI opponents, live human-vs-human multiplayer, and an eye-candy animated frontend.
+Open-source web Libre Tiles game with AI opponents, live human-vs-human multiplayer, and an eye-candy animated frontend.
 
 **Architecture**: Next.js frontend on Vercel (AI Gateway + beautiful UI) + lightweight Django backend (game logic, validation, admin).
 
@@ -8,7 +8,7 @@ Open-source web Scrabble game with AI opponents, live human-vs-human multiplayer
 
 ## Features
 
-- Full Scrabble game engine (English variant, Collins 2019 dictionary ~279k words, Tier-1 strict validation in Django)
+- Full Libre Tiles game engine (English variant, Collins 2019 dictionary ~279k words, Tier-1 strict validation in Django)
 - AI opponents via Vercel AI Gateway -- choose from OpenAI, Google, Anthropic models
 - Live human-vs-human multiplayer with waiting-room matchmaking, realtime board sync, and in-game chat
 - AI plays as a tool-calling agent: validates moves, checks words, calculates scores
@@ -183,7 +183,7 @@ The prompt is ported from the desktop app's unified move template with strategic
 libretiles/
 ├── backend/
 │   ├── config/          # Django settings, URLs, ASGI
-│   ├── gamecore/        # Pure Python Scrabble engine (ported from scrabgpt/core)
+│   ├── gamecore/        # Pure Python Libre Tiles engine (ported from scrabgpt/core)
 │   ├── accounts/        # User auth (JWT)
 │   ├── catalog/         # AI model catalog (admin-managed + gateway sync)
 │   │   └── management/commands/
@@ -278,7 +278,7 @@ npx tsc --noEmit                           # TypeScript check
 
 ## Game Engine
 
-The `gamecore/` package is a pure Python Scrabble engine with zero framework dependencies:
+The `gamecore/` package is a pure Python Libre Tiles engine with zero framework dependencies:
 
 - `board.py` -- 15x15 board with premium squares
 - `rules.py` -- Move validation (center coverage, line placement, connectivity, gaps)

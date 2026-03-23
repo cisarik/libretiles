@@ -139,7 +139,7 @@ Browser           Next.js /api/ai/move           AI Model              Django Ba
 
 The system prompt (`frontend/src/lib/prompts.ts`) includes:
 
-- **Legality rules** -- what constitutes a valid Scrabble move
+- **Legality rules** -- what constitutes a valid Libre Tiles move
 - **Strategic priorities** -- EV maximization, rack leave, board control
 - **Game phase guidance** -- opening, midgame, endgame strategies
 - **Blank policy** -- when to spend blanks

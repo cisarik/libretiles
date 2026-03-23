@@ -66,7 +66,7 @@ def apply_final_scoring(players: Iterable[PlayerState]) -> dict[str, int]:
 
 
 class Game:
-    """Scrabble game simulation engine."""
+    """Libre Tiles game simulation engine."""
 
     def __init__(
         self,

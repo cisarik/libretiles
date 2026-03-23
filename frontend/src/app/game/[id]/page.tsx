@@ -26,6 +26,7 @@ import { BlankPicker } from "@/components/game/BlankPicker";
 import { AIThinkingOverlay } from "@/components/game/AIThinkingOverlay";
 import { ChatPanel } from "@/components/game/ChatPanel";
 import { ProfileModal } from "@/components/game/ProfileModal";
+import { GameHistoryModal } from "@/components/game/GameHistoryModal";
 import { useGameStore, type BoardTheme } from "@/hooks/useGameStore";
 import { useIsCoarsePointer } from "@/hooks/useIsCoarsePointer";
 import { api } from "@/lib/api";
@@ -34,6 +35,9 @@ import { isPlausibleRack } from "@/lib/rack";
 import { buildGameWebSocketUrl } from "@/lib/ws";
 import type {
   AICandidate,
+  GameHistoryFilter,
+  GameHistoryItem,
+  GameHistoryResponse,
   GameState,
   MoveResult,
   MoveValidationResult,
@@ -559,8 +563,13 @@ export default function GamePage() {
   const [givingUp, setGivingUp] = useState(false);
   const [newGameTransitioning, setNewGameTransitioning] = useState(false);
   const [profileModalOpen, setProfileModalOpen] = useState(false);
+  const [gamesModalOpen, setGamesModalOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [gameHistoryFilter, setGameHistoryFilter] = useState<GameHistoryFilter>("vs_ai");
+  const [gameHistoryData, setGameHistoryData] = useState<GameHistoryResponse | null>(null);
+  const [gameHistoryLoading, setGameHistoryLoading] = useState(false);
+  const [gameHistoryError, setGameHistoryError] = useState<string | null>(null);
 
   const pointerSensor = useSensor(PointerSensor, { activationConstraint: { distance: 3 } });
   const touchSensor = useSensor(TouchSensor, {
@@ -788,6 +797,7 @@ export default function GamePage() {
   const handleLogout = useCallback(() => {
     setLoggingOut(true);
     setProfileModalOpen(false);
+    setGamesModalOpen(false);
     multiplayerSocketRef.current?.close();
     resetGameUi();
     setCreditBalance(null);
@@ -796,6 +806,60 @@ export default function GamePage() {
     setToken(null);
     router.push("/");
   }, [resetGameUi, router, setCreditBalance, setStartingRack, setToken]);
+
+  const fetchGameHistory = useCallback(async ({
+    page = 1,
+    filter = gameHistoryFilter,
+  }: {
+    page?: number;
+    filter?: GameHistoryFilter;
+  } = {}) => {
+    if (!token) {
+      setGameHistoryError("Session expired.");
+      return;
+    }
+
+    setGameHistoryLoading(true);
+    setGameHistoryError(null);
+    try {
+      const result = await api.listGameHistory(token, {
+        game_mode: filter,
+        page,
+        page_size: 8,
+      });
+      setGameHistoryData(result);
+    } catch (err) {
+      setGameHistoryError(err instanceof Error ? err.message : "Unable to load games.");
+    } finally {
+      setGameHistoryLoading(false);
+    }
+  }, [gameHistoryFilter, token]);
+
+  const handleOpenGamesModal = useCallback(() => {
+    setGamesModalOpen(true);
+    void fetchGameHistory({ page: 1 });
+  }, [fetchGameHistory]);
+
+  const handleGameHistoryFilterChange = useCallback((nextFilter: GameHistoryFilter) => {
+    setGameHistoryFilter(nextFilter);
+    void fetchGameHistory({ filter: nextFilter, page: 1 });
+  }, [fetchGameHistory]);
+
+  const handleGameHistoryOpen = useCallback((item: GameHistoryItem) => {
+    setGamesModalOpen(false);
+    if (item.game_id === gameId) return;
+    router.push(item.status === "waiting" ? `/waiting/${item.game_id}` : `/game/${item.game_id}`);
+  }, [gameId, router]);
+
+  const handleGameHistoryPrev = useCallback(() => {
+    if (!gameHistoryData?.has_previous) return;
+    void fetchGameHistory({ page: gameHistoryData.page - 1 });
+  }, [fetchGameHistory, gameHistoryData]);
+
+  const handleGameHistoryNext = useCallback(() => {
+    if (!gameHistoryData?.has_next) return;
+    void fetchGameHistory({ page: gameHistoryData.page + 1 });
+  }, [fetchGameHistory, gameHistoryData]);
 
   const syncState = useCallback(
     async (state?: GameState) => {
@@ -1414,6 +1478,7 @@ export default function GamePage() {
             onOpenRivalPicker={() => router.push("/settings?focus=rival")}
             onNewGame={() => void handleNewGame()}
             onGiveUp={() => void handleGiveUp()}
+            onOpenGames={handleOpenGamesModal}
             onOpenSettings={() => router.push("/settings")}
             onOpenProfile={() => setProfileModalOpen(true)}
             onLogout={handleLogout}
@@ -1558,6 +1623,21 @@ export default function GamePage() {
       </DragOverlay>
 
       <AnimatePresence>
+        {gamesModalOpen && (
+          <GameHistoryModal
+            data={gameHistoryData}
+            filter={gameHistoryFilter}
+            loading={gameHistoryLoading}
+            error={gameHistoryError}
+            activeGameId={gameId}
+            onClose={() => setGamesModalOpen(false)}
+            onFilterChange={handleGameHistoryFilterChange}
+            onPrevPage={handleGameHistoryPrev}
+            onNextPage={handleGameHistoryNext}
+            onRefresh={() => void fetchGameHistory({ page: gameHistoryData?.page ?? 1 })}
+            onOpenGame={handleGameHistoryOpen}
+          />
+        )}
         {profileModalOpen && (
           <ProfileModal
             profile={userProfile}

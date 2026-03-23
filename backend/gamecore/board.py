@@ -18,7 +18,7 @@ class Cell:
 
 
 class Board:
-    """15x15 Scrabble board with premium squares."""
+    """15x15 Libre Tiles board with premium squares."""
 
     def __init__(self, premiums_path: str | None = None) -> None:
         self.cells: list[list[Cell]] = [

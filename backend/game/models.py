@@ -5,7 +5,7 @@ from django.db import models
 
 
 class GameSession(models.Model):
-    """A single Scrabble game session."""
+    """A single Libre Tiles game session."""
 
     STATUS_CHOICES = [
         ("waiting", "Waiting for opponent"),

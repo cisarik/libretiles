@@ -15,6 +15,16 @@ export const PREMIUM_HEADER_STYLE: CSSProperties = {
     "radial-gradient(360px circle at var(--spotlight-x, 28%) var(--spotlight-y, 42%), rgba(255,215,128,0.16), transparent 60%), linear-gradient(145deg, rgba(17,14,11,0.90), rgba(8,8,7,0.97))",
 };
 
+export const PREMIUM_MODAL_STYLE: CSSProperties = {
+  backgroundImage:
+    "radial-gradient(460px circle at var(--spotlight-x, 50%) var(--spotlight-y, 28%), rgba(255,215,128,0.16), transparent 58%), linear-gradient(180deg, rgba(24,20,16,0.95), rgba(11,9,8,0.985))",
+};
+
+export const PREMIUM_MODAL_CARD_STYLE: CSSProperties = {
+  backgroundImage:
+    "radial-gradient(280px circle at var(--spotlight-x, 50%) var(--spotlight-y, 42%), rgba(255,215,128,0.10), transparent 62%), linear-gradient(180deg, rgba(25,21,18,0.76), rgba(12,10,8,0.84))",
+};
+
 export const PREMIUM_FOOTER_STYLE: CSSProperties = {
   backgroundImage:
     "radial-gradient(340px circle at var(--spotlight-x, 54%) var(--spotlight-y, 52%), rgba(255,215,128,0.14), transparent 62%), linear-gradient(145deg, rgba(16,13,11,0.90), rgba(8,8,7,0.97))",

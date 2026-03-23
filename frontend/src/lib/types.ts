@@ -96,6 +96,45 @@ export interface BillingSummary {
   total_tokens: number;
 }
 
+export type GameHistoryFilter = "all" | "vs_ai" | "vs_human";
+export type GameHistoryOutcome =
+  | "waiting"
+  | "in_progress"
+  | "won"
+  | "lost"
+  | "gave_up"
+  | "abandoned";
+
+export interface GameHistoryItem {
+  game_id: string;
+  game_mode: "vs_ai" | "vs_human";
+  status: "waiting" | "active" | "finished" | "abandoned";
+  outcome: GameHistoryOutcome;
+  opponent_label: string;
+  ai_model_display_name?: string | null;
+  my_score: number;
+  opponent_score: number;
+  move_count: number;
+  is_my_turn: boolean;
+  winner_slot: number | null;
+  game_end_reason: string;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  updated_at: string;
+}
+
+export interface GameHistoryResponse {
+  items: GameHistoryItem[];
+  page: number;
+  page_size: number;
+  total: number;
+  total_pages: number;
+  has_next: boolean;
+  has_previous: boolean;
+  game_mode: GameHistoryFilter;
+}
+
 export interface MoveResult {
   ok: boolean;
   error?: string;

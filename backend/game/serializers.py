@@ -38,6 +38,16 @@ class QueueCancelSerializer(serializers.Serializer):
     game_id = serializers.CharField(required=True, max_length=100)
 
 
+class GameHistoryQuerySerializer(serializers.Serializer):
+    game_mode = serializers.ChoiceField(
+        choices=["all", "vs_ai", "vs_human"],
+        required=False,
+        default="all",
+    )
+    page = serializers.IntegerField(required=False, min_value=1, default=1)
+    page_size = serializers.IntegerField(required=False, min_value=1, max_value=25, default=8)
+
+
 class SubmitMoveSerializer(serializers.Serializer):
     placements = serializers.ListField(
         child=serializers.DictField(), min_length=1, max_length=7
