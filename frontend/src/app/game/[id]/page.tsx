@@ -29,6 +29,7 @@ import { ProfileModal } from "@/components/game/ProfileModal";
 import { useGameStore, type BoardTheme } from "@/hooks/useGameStore";
 import { useIsCoarsePointer } from "@/hooks/useIsCoarsePointer";
 import { api } from "@/lib/api";
+import { PREMIUM_FOOTER_STYLE, handlePremiumSurfacePointer } from "@/lib/premiumSurface";
 import { isPlausibleRack } from "@/lib/rack";
 import { buildGameWebSocketUrl } from "@/lib/ws";
 import type {
@@ -536,6 +537,7 @@ export default function GamePage() {
   const aiTimeout = useGameStore((s) => s.aiTimeout);
   const aiMaxSteps = useGameStore((s) => s.aiMaxSteps);
   const boardTheme = useGameStore((s) => s.boardTheme);
+  const premiumLookEnabled = useGameStore((s) => s.premiumLookEnabled);
   const addAICandidate = useGameStore((s) => s.addAICandidate);
   const clearAICandidates = useGameStore((s) => s.clearAICandidates);
   const setAICountdown = useGameStore((s) => s.setAICountdown);
@@ -1429,9 +1431,20 @@ export default function GamePage() {
               />
             </div>
             <div
-              className="rounded-[1.55rem] border border-white/8 bg-black px-4 py-1.75 shadow-[0_22px_52px_rgba(0,0,0,0.28)]"
-              style={{ borderColor: frameBorderColor }}
+              className={`relative rounded-[1.55rem] border border-white/8 bg-black px-4 py-1.75 shadow-[0_22px_52px_rgba(0,0,0,0.28)] ${premiumLookEnabled ? "overflow-hidden backdrop-blur-[14px]" : ""}`}
+              style={
+                premiumLookEnabled
+                  ? { borderColor: frameBorderColor, ...PREMIUM_FOOTER_STYLE }
+                  : { borderColor: frameBorderColor }
+              }
+              onMouseMove={premiumLookEnabled ? handlePremiumSurfacePointer : undefined}
             >
+              {premiumLookEnabled ? (
+                <>
+                  <div className="pointer-events-none absolute inset-x-10 top-0 h-px bg-gradient-to-r from-transparent via-amber-200/54 to-transparent" />
+                  <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(255,214,120,0.08),transparent_40%)] opacity-80" />
+                </>
+              ) : null}
               {isMyTurn ? (
                 <div className="flex flex-col gap-1.75 lg:grid lg:grid-cols-[auto_minmax(0,1fr)_auto] lg:items-center lg:gap-2.5">
                   <div className="order-1 w-full lg:col-start-2 lg:row-start-1 lg:min-w-[430px] lg:w-auto">

@@ -6,13 +6,17 @@ import {
   useState,
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
-  type MouseEvent,
   type ReactNode,
 } from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import { useGameStore, type BoardTheme } from "@/hooks/useGameStore";
 import { api } from "@/lib/api";
+import {
+  PREMIUM_CREDIT_PANEL_STYLE,
+  PREMIUM_PANEL_STYLE,
+  handlePremiumSurfacePointer,
+} from "@/lib/premiumSurface";
 import type { AIModel } from "@/lib/types";
 
 const PROVIDER_ICONS: Record<string, string> = {
@@ -64,16 +68,6 @@ const MODAL_TRANSITION = {
   ease: [0.22, 1, 0.36, 1] as const,
 };
 
-const INTERACTIVE_PANEL_STYLE: CSSProperties = {
-  backgroundImage:
-    "radial-gradient(240px circle at var(--spotlight-x, 50%) var(--spotlight-y, 50%), rgba(251,191,36,0.12), transparent 64%), linear-gradient(180deg, rgba(25,21,18,0.92), rgba(14,12,10,0.97))",
-};
-
-const CREDIT_PANEL_STYLE: CSSProperties = {
-  backgroundImage:
-    "radial-gradient(320px circle at var(--spotlight-x, 48%) var(--spotlight-y, 45%), rgba(255,215,128,0.24), transparent 60%), linear-gradient(145deg, rgba(39,26,12,0.98), rgba(14,11,8,0.98))",
-};
-
 const SELECTED_ROW_CELL_STYLE: CSSProperties = {
   backgroundImage:
     "radial-gradient(300px circle at var(--spotlight-x, 18%) var(--spotlight-y, 50%), rgba(251,191,36,0.18), transparent 56%), linear-gradient(180deg, rgba(251,191,36,0.06), rgba(251,191,36,0.03))",
@@ -119,14 +113,6 @@ function noticeClasses(tone: NoticeTone): string {
   return "border-sky-400/25 bg-sky-500/10 text-sky-100";
 }
 
-function handleSurfacePointer(event: MouseEvent<HTMLElement>) {
-  const rect = event.currentTarget.getBoundingClientRect();
-  const x = event.clientX - rect.left;
-  const y = event.clientY - rect.top;
-  event.currentTarget.style.setProperty("--spotlight-x", `${x}px`);
-  event.currentTarget.style.setProperty("--spotlight-y", `${y}px`);
-}
-
 function handleSelectKeyDown(
   event: ReactKeyboardEvent<HTMLElement>,
   onSelect: () => void,
@@ -150,8 +136,8 @@ function SettingsPanel({
   return (
     <section
       className={`relative overflow-hidden rounded-[1.6rem] border border-white/8 p-4 shadow-[0_16px_40px_rgba(0,0,0,0.22)] transition-[border-color,box-shadow,transform] duration-300 hover:border-amber-200/20 hover:shadow-[0_20px_45px_rgba(0,0,0,0.26)] ${className}`}
-      style={INTERACTIVE_PANEL_STYLE}
-      onMouseMove={handleSurfacePointer}
+      style={PREMIUM_PANEL_STYLE}
+      onMouseMove={handlePremiumSurfacePointer}
     >
       <div className="absolute inset-x-5 top-0 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
       <div className="mb-4">
@@ -320,6 +306,55 @@ function ShinyEffectPanel({
   );
 }
 
+function PremiumLookPanel({
+  enabled,
+  onToggle,
+}: {
+  enabled: boolean;
+  onToggle: (enabled: boolean) => void;
+}) {
+  return (
+    <SettingsPanel
+      title="Premium Look"
+      description="Interactive amber spotlight for the game header and rack panel."
+    >
+      <div className="grid grid-cols-2 gap-3">
+        {[
+          { value: true, label: "On", description: "Premium interactive panels" },
+          { value: false, label: "Off", description: "Classic dark surfaces" },
+        ].map((choice) => {
+          const isSelected = enabled === choice.value;
+          return (
+            <motion.button
+              key={choice.label}
+              type="button"
+              whileHover={{ y: -1.5, scale: 1.01 }}
+              whileTap={{ scale: 0.985 }}
+              onClick={() => onToggle(choice.value)}
+              className={`min-h-[154px] rounded-[1.15rem] border px-4 py-4 text-left transition-[border-color,box-shadow,background-color,transform] duration-300 ${
+                isSelected
+                  ? "border-amber-300/45 bg-amber-400/10 shadow-[0_12px_30px_rgba(251,191,36,0.10)]"
+                  : "border-white/8 bg-stone-950/72 hover:border-white/14 hover:shadow-[0_12px_28px_rgba(0,0,0,0.2)]"
+              }`}
+            >
+              <div
+                className={`text-[1.45rem] font-black uppercase tracking-[0.08em] ${
+                  isSelected ? "text-amber-100" : "text-stone-100"
+                }`}
+              >
+                {choice.label}
+              </div>
+              <div className="mt-3 text-[0.95rem] uppercase leading-7 tracking-[0.1em] text-stone-400">
+                {choice.description}
+              </div>
+            </motion.button>
+          );
+        })}
+      </div>
+    </SettingsPanel>
+  );
+}
+
 export default function SettingsPage() {
   const router = useRouter();
   const token = useGameStore((s) => s.token);
@@ -335,6 +370,8 @@ export default function SettingsPage() {
   const setBoardTheme = useGameStore((s) => s.setBoardTheme);
   const boardShineEnabled = useGameStore((s) => s.boardShineEnabled);
   const setBoardShineEnabled = useGameStore((s) => s.setBoardShineEnabled);
+  const premiumLookEnabled = useGameStore((s) => s.premiumLookEnabled);
+  const setPremiumLookEnabled = useGameStore((s) => s.setPremiumLookEnabled);
 
   const [models, setModels] = useState<AIModel[]>([]);
   const [loading, setLoading] = useState(true);
@@ -597,8 +634,8 @@ export default function SettingsPage() {
             <motion.section
               whileHover={{ y: -2, scale: 1.004 }}
               className="relative overflow-hidden rounded-[1.8rem] border border-amber-300/20 p-4 shadow-[0_20px_55px_rgba(0,0,0,0.30)] transition-[border-color,box-shadow,transform] duration-300 hover:border-amber-200/28 hover:shadow-[0_24px_60px_rgba(0,0,0,0.34)] lg:w-[340px] lg:justify-self-end xl:w-[360px]"
-              style={CREDIT_PANEL_STYLE}
-              onMouseMove={handleSurfacePointer}
+              style={PREMIUM_CREDIT_PANEL_STYLE}
+              onMouseMove={handlePremiumSurfacePointer}
             >
               <div className="absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-amber-200/70 to-transparent" />
               <div className="relative flex items-end justify-between gap-4">
@@ -644,8 +681,8 @@ export default function SettingsPage() {
                     whileTap={{ scale: 0.995 }}
                     onClick={() => setModelsExpanded((current) => !current)}
                     className="group relative flex w-full items-center justify-between gap-4 rounded-[1.6rem] border border-white/8 bg-[linear-gradient(180deg,rgba(17,14,11,0.76),rgba(11,9,8,0.82))] px-4 py-4 text-left shadow-[0_16px_40px_rgba(0,0,0,0.2)] transition-[border-color,box-shadow,background-color,transform] duration-300 hover:border-amber-200/24 hover:shadow-[0_20px_45px_rgba(0,0,0,0.24)]"
-                    onMouseMove={handleSurfacePointer}
-                    style={INTERACTIVE_PANEL_STYLE}
+                    onMouseMove={handlePremiumSurfacePointer}
+                    style={PREMIUM_PANEL_STYLE}
                     aria-expanded={modelsExpanded}
                     aria-controls="settings-model-table"
                   >
@@ -705,8 +742,8 @@ export default function SettingsPage() {
                         {loading ? (
                           <div
                             className="relative overflow-hidden rounded-[1.85rem] border border-white/8 shadow-[0_18px_45px_rgba(0,0,0,0.24)]"
-                            style={INTERACTIVE_PANEL_STYLE}
-                            onMouseMove={handleSurfacePointer}
+                            style={PREMIUM_PANEL_STYLE}
+                            onMouseMove={handlePremiumSurfacePointer}
                           >
                             <div className="absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-white/12 to-transparent" />
                             <div className="border-b border-white/8 px-4 py-3">
@@ -731,8 +768,8 @@ export default function SettingsPage() {
                         ) : models.length > 0 ? (
                           <div
                             className="relative overflow-hidden rounded-[1.85rem] border border-white/8 shadow-[0_18px_45px_rgba(0,0,0,0.24)]"
-                            style={INTERACTIVE_PANEL_STYLE}
-                            onMouseMove={handleSurfacePointer}
+                            style={PREMIUM_PANEL_STYLE}
+                            onMouseMove={handlePremiumSurfacePointer}
                           >
                             <div className="absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-white/12 to-transparent" />
                             <div className="ornate-scrollbar overflow-x-auto">
@@ -769,7 +806,7 @@ export default function SettingsPage() {
                                         role="button"
                                         aria-disabled={Boolean(savingModelId)}
                                         aria-pressed={isSelected}
-                                        onMouseMove={handleSurfacePointer}
+                                        onMouseMove={handlePremiumSurfacePointer}
                                         onClick={() => void persistModelSelection(model.model_id)}
                                         onKeyDown={(event) =>
                                           handleSelectKeyDown(event, () => {
@@ -897,8 +934,8 @@ export default function SettingsPage() {
                         ) : (
                           <div
                             className="rounded-[1.7rem] border border-white/8 p-5 text-sm text-stone-400 shadow-[0_16px_40px_rgba(0,0,0,0.20)]"
-                            style={INTERACTIVE_PANEL_STYLE}
-                            onMouseMove={handleSurfacePointer}
+                            style={PREMIUM_PANEL_STYLE}
+                            onMouseMove={handlePremiumSurfacePointer}
                           >
                             No synced models are available yet. Run{" "}
                             <span className="font-mono text-stone-200">
@@ -937,6 +974,11 @@ export default function SettingsPage() {
               <ShinyEffectPanel
                 enabled={boardShineEnabled}
                 onToggle={setBoardShineEnabled}
+              />
+
+              <PremiumLookPanel
+                enabled={premiumLookEnabled}
+                onToggle={setPremiumLookEnabled}
               />
             </div>
           </div>

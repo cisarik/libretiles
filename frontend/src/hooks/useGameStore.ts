@@ -61,6 +61,8 @@ interface GameStore {
   setBoardTheme: (theme: BoardTheme) => void;
   boardShineEnabled: boolean;
   setBoardShineEnabled: (enabled: boolean) => void;
+  premiumLookEnabled: boolean;
+  setPremiumLookEnabled: (enabled: boolean) => void;
 
   // AI candidates (live during thinking)
   aiCandidates: AICandidate[];
@@ -153,6 +155,8 @@ export const useGameStore = create<GameStore>()(
       setBoardTheme: (boardTheme) => set({ boardTheme }),
       boardShineEnabled: true,
       setBoardShineEnabled: (boardShineEnabled) => set({ boardShineEnabled }),
+      premiumLookEnabled: true,
+      setPremiumLookEnabled: (premiumLookEnabled) => set({ premiumLookEnabled }),
 
       aiCandidates: [],
       addAICandidate: (candidate) =>
@@ -209,6 +213,7 @@ export const useGameStore = create<GameStore>()(
         aiMaxSteps: state.aiMaxSteps,
         boardTheme: state.boardTheme,
         boardShineEnabled: state.boardShineEnabled,
+        premiumLookEnabled: state.premiumLookEnabled,
       }),
     },
   ),

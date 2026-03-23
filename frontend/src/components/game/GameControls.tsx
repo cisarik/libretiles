@@ -1,6 +1,7 @@
 "use client";
 
 import { useGameStore } from "@/hooks/useGameStore";
+import { PREMIUM_GOLD_TEXT_SHADOW_CLASS } from "@/lib/premiumSurface";
 
 interface GameControlsProps {
   onPlay: () => void;
@@ -39,9 +40,11 @@ export function GameControls({ onPlay, onExchange, onPass, disabled }: GameContr
   const exchangeSelected = useGameStore((s) => s.exchangeSelected);
   const setExchangeMode = useGameStore((s) => s.setExchangeMode);
   const aiThinking = useGameStore((s) => s.aiThinking);
+  const premiumLookEnabled = useGameStore((s) => s.premiumLookEnabled);
 
   const isDisabled = disabled || aiThinking;
   const hasPending = pendingTiles.length > 0;
+  const premiumTitleClass = premiumLookEnabled ? PREMIUM_GOLD_TEXT_SHADOW_CLASS : "";
 
   const buttonBase =
     "inline-flex h-[2.65rem] items-center justify-center whitespace-nowrap rounded-full px-3 py-1.75 text-center transition-all duration-200 active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed touch-manipulation sm:h-auto sm:px-4 sm:py-2.25";
@@ -61,7 +64,7 @@ export function GameControls({ onPlay, onExchange, onPass, disabled }: GameContr
             disabled={exchangeSelected.size === 0}
             className={`${buttonBase} ${actionButtonBase} border-amber-300/22 bg-[linear-gradient(135deg,rgba(251,191,36,0.15),rgba(112,66,10,0.08))] shadow-[0_14px_30px_rgba(251,191,36,0.08)] hover:border-white/42 hover:bg-[linear-gradient(135deg,rgba(255,248,220,0.16),rgba(251,191,36,0.16),rgba(133,76,11,0.12))] hover:shadow-[0_16px_32px_rgba(255,255,255,0.06),0_0_24px_rgba(255,255,255,0.05)]`}
           >
-            <LuxeHoverText className="text-[1rem] font-black leading-none sm:text-[1.42rem]">
+            <LuxeHoverText className={`text-[1rem] font-black leading-none sm:text-[1.42rem] ${premiumTitleClass}`}>
               Confirm exchange
             </LuxeHoverText>
           </button>
@@ -69,7 +72,7 @@ export function GameControls({ onPlay, onExchange, onPass, disabled }: GameContr
             onClick={() => setExchangeMode(false)}
             className={`${buttonBase} ${actionButtonBase} border-white/12 bg-white/6 hover:border-white/42 hover:bg-[linear-gradient(135deg,rgba(255,255,255,0.12),rgba(255,255,255,0.06))] hover:shadow-[0_16px_32px_rgba(255,255,255,0.06),0_0_24px_rgba(255,255,255,0.04)]`}
           >
-            <LuxeHoverText className="text-[1rem] font-black leading-none sm:text-[1.42rem]">
+            <LuxeHoverText className={`text-[1rem] font-black leading-none sm:text-[1.42rem] ${premiumTitleClass}`}>
               Cancel
             </LuxeHoverText>
           </button>
@@ -81,7 +84,7 @@ export function GameControls({ onPlay, onExchange, onPass, disabled }: GameContr
             disabled={exchangeSelected.size === 0}
             className={`${buttonBase} ${actionButtonBase} border-amber-300/22 bg-[linear-gradient(135deg,rgba(251,191,36,0.15),rgba(112,66,10,0.08))] shadow-[0_14px_30px_rgba(251,191,36,0.08)] hover:border-white/42 hover:bg-[linear-gradient(135deg,rgba(255,248,220,0.16),rgba(251,191,36,0.16),rgba(133,76,11,0.12))] hover:shadow-[0_16px_32px_rgba(255,255,255,0.06),0_0_24px_rgba(255,255,255,0.05)]`}
           >
-            <LuxeHoverText className="text-[1.38rem] font-black leading-none sm:text-[1.46rem]">
+            <LuxeHoverText className={`text-[1.38rem] font-black leading-none sm:text-[1.46rem] ${premiumTitleClass}`}>
               Confirm exchange
             </LuxeHoverText>
           </button>
@@ -89,7 +92,7 @@ export function GameControls({ onPlay, onExchange, onPass, disabled }: GameContr
             onClick={() => setExchangeMode(false)}
             className={`${buttonBase} ${actionButtonBase} border-white/12 bg-white/6 hover:border-white/42 hover:bg-[linear-gradient(135deg,rgba(255,255,255,0.12),rgba(255,255,255,0.06))] hover:shadow-[0_16px_32px_rgba(255,255,255,0.06),0_0_24px_rgba(255,255,255,0.04)]`}
           >
-            <LuxeHoverText className="text-[1.34rem] font-black leading-none sm:text-[1.42rem]">
+            <LuxeHoverText className={`text-[1.34rem] font-black leading-none sm:text-[1.42rem] ${premiumTitleClass}`}>
               Cancel
             </LuxeHoverText>
           </button>
@@ -110,7 +113,7 @@ export function GameControls({ onPlay, onExchange, onPass, disabled }: GameContr
           disabled={isDisabled || hasPending}
           className={`${buttonBase} ${actionButtonBase} w-full border-amber-300/22 bg-[linear-gradient(135deg,rgba(251,191,36,0.15),rgba(112,66,10,0.08))] shadow-[0_14px_30px_rgba(251,191,36,0.08)] hover:border-white/42 hover:bg-[linear-gradient(135deg,rgba(255,248,220,0.16),rgba(251,191,36,0.16),rgba(133,76,11,0.12))] hover:shadow-[0_16px_32px_rgba(255,255,255,0.06),0_0_24px_rgba(255,255,255,0.05)]`}
         >
-          <LuxeHoverText className="text-[1.1rem] font-black leading-none sm:text-[1.48rem]">
+          <LuxeHoverText className={`text-[1.1rem] font-black leading-none sm:text-[1.48rem] ${premiumTitleClass}`}>
             Exchange
           </LuxeHoverText>
         </button>
@@ -119,7 +122,7 @@ export function GameControls({ onPlay, onExchange, onPass, disabled }: GameContr
           disabled={isDisabled || hasPending}
           className={`${buttonBase} ${actionButtonBase} w-full border-white/12 bg-white/6 hover:border-white/42 hover:bg-[linear-gradient(135deg,rgba(255,255,255,0.12),rgba(255,255,255,0.06))] hover:shadow-[0_16px_32px_rgba(255,255,255,0.06),0_0_24px_rgba(255,255,255,0.04)]`}
         >
-          <LuxeHoverText className="text-[1.1rem] font-black leading-none sm:text-[1.48rem]">
+          <LuxeHoverText className={`text-[1.1rem] font-black leading-none sm:text-[1.48rem] ${premiumTitleClass}`}>
             Pass
           </LuxeHoverText>
         </button>
@@ -129,7 +132,7 @@ export function GameControls({ onPlay, onExchange, onPass, disabled }: GameContr
             disabled={isDisabled || !hasPending}
             className={`${playButton} w-full min-w-[5rem]`}
           >
-            <span className="text-[1.12rem] font-black leading-none tracking-[0.01em] text-white [text-shadow:0_2px_0_rgba(0,0,0,0.55)] sm:text-[1.52rem]">
+            <span className={`text-[1.12rem] font-black leading-none tracking-[0.01em] text-white [text-shadow:0_2px_0_rgba(0,0,0,0.55)] sm:text-[1.52rem] ${premiumTitleClass}`}>
               Play
             </span>
           </button>
@@ -142,7 +145,7 @@ export function GameControls({ onPlay, onExchange, onPass, disabled }: GameContr
           disabled={isDisabled || hasPending}
           className={`${buttonBase} ${actionButtonBase} border-amber-300/22 bg-[linear-gradient(135deg,rgba(251,191,36,0.15),rgba(112,66,10,0.08))] shadow-[0_14px_30px_rgba(251,191,36,0.08)] hover:border-white/42 hover:bg-[linear-gradient(135deg,rgba(255,248,220,0.16),rgba(251,191,36,0.16),rgba(133,76,11,0.12))] hover:shadow-[0_16px_32px_rgba(255,255,255,0.06),0_0_24px_rgba(255,255,255,0.05)]`}
         >
-          <LuxeHoverText className="text-[1.18rem] font-black leading-none sm:text-[1.48rem]">
+          <LuxeHoverText className={`text-[1.18rem] font-black leading-none sm:text-[1.48rem] ${premiumTitleClass}`}>
             Exchange
           </LuxeHoverText>
         </button>
@@ -151,7 +154,7 @@ export function GameControls({ onPlay, onExchange, onPass, disabled }: GameContr
           disabled={isDisabled || hasPending}
           className={`${buttonBase} ${actionButtonBase} border-white/12 bg-white/6 hover:border-white/42 hover:bg-[linear-gradient(135deg,rgba(255,255,255,0.12),rgba(255,255,255,0.06))] hover:shadow-[0_16px_32px_rgba(255,255,255,0.06),0_0_24px_rgba(255,255,255,0.04)]`}
         >
-          <LuxeHoverText className="text-[1.18rem] font-black leading-none sm:text-[1.48rem]">
+          <LuxeHoverText className={`text-[1.18rem] font-black leading-none sm:text-[1.48rem] ${premiumTitleClass}`}>
             Pass
           </LuxeHoverText>
         </button>
@@ -164,7 +167,7 @@ export function GameControls({ onPlay, onExchange, onPass, disabled }: GameContr
             disabled={isDisabled || !hasPending}
             className={`${playButton} min-w-[5.8rem]`}
           >
-            <span className="text-[1.34rem] font-black leading-none tracking-[0.01em] text-white [text-shadow:0_2px_0_rgba(0,0,0,0.58)] sm:text-[1.52rem]">
+            <span className={`text-[1.34rem] font-black leading-none tracking-[0.01em] text-white [text-shadow:0_2px_0_rgba(0,0,0,0.58)] sm:text-[1.52rem] ${premiumTitleClass}`}>
               Play
             </span>
           </button>

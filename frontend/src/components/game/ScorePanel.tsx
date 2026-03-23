@@ -3,6 +3,11 @@
 import type { ReactNode } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useGameStore } from "@/hooks/useGameStore";
+import {
+  PREMIUM_GOLD_TEXT_SHADOW_CLASS,
+  PREMIUM_HEADER_STYLE,
+  handlePremiumSurfacePointer,
+} from "@/lib/premiumSurface";
 
 const LOGO_TILES = [
   { letter: "T", points: 1 },
@@ -300,6 +305,7 @@ export function ScorePanel({
   loggingOut = false,
 }: ScorePanelProps) {
   const gameState = useGameStore((s) => s.gameState);
+  const premiumLookEnabled = useGameStore((s) => s.premiumLookEnabled);
 
   const slots = gameState?.slots ?? [];
   const mySlot = slots.find((s) => s.slot === gameState?.my_slot);
@@ -316,12 +322,28 @@ export function ScorePanel({
     lastMovePoints != null && gameState?.last_move_player_slot === opponentSlot?.slot
       ? lastMovePoints
       : null;
+  const premiumTitleClass = premiumLookEnabled ? PREMIUM_GOLD_TEXT_SHADOW_CLASS : "";
+  const panelStyle = premiumLookEnabled
+    ? {
+        ...(frameBorderColor ? { borderColor: frameBorderColor } : {}),
+        ...PREMIUM_HEADER_STYLE,
+      }
+    : frameBorderColor
+      ? { borderColor: frameBorderColor }
+      : undefined;
 
   return (
     <div
-      className="relative rounded-[1.55rem] border border-white/8 bg-black px-4 py-1.5 shadow-[0_24px_56px_rgba(0,0,0,0.28)] sm:px-4.5 sm:py-1.5"
-      style={frameBorderColor ? { borderColor: frameBorderColor } : undefined}
+      className={`relative rounded-[1.55rem] border border-white/8 bg-black px-4 py-1.5 shadow-[0_24px_56px_rgba(0,0,0,0.28)] sm:px-4.5 sm:py-1.5 ${premiumLookEnabled ? "overflow-hidden backdrop-blur-[14px]" : ""}`}
+      style={panelStyle}
+      onMouseMove={premiumLookEnabled ? handlePremiumSurfacePointer : undefined}
     >
+      {premiumLookEnabled ? (
+        <>
+          <div className="pointer-events-none absolute inset-x-10 top-0 h-px bg-gradient-to-r from-transparent via-amber-200/58 to-transparent" />
+          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_left,rgba(255,214,120,0.10),transparent_34%)] opacity-85" />
+        </>
+      ) : null}
       <div className="grid gap-1 xl:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] xl:items-start xl:gap-x-4">
         <div className="hidden min-w-0 flex-col items-start gap-1 xl:flex xl:self-start">
           <LogoMark />
@@ -331,7 +353,7 @@ export function ScorePanel({
               disabled={disableGiveUp}
               className="group inline-flex h-[2.5rem] shrink-0 items-center justify-center whitespace-nowrap rounded-full border border-rose-400/22 bg-rose-500/10 px-3.5 py-2 text-center shadow-[0_14px_30px_rgba(0,0,0,0.18)] transition-all duration-200 active:scale-[0.97] hover:border-white/42 hover:bg-[linear-gradient(145deg,rgba(113,24,46,0.5),rgba(55,14,27,0.48))] hover:shadow-[0_16px_32px_rgba(255,255,255,0.06),0_0_24px_rgba(255,255,255,0.04)] disabled:cursor-not-allowed disabled:opacity-45 sm:h-auto sm:px-4 sm:py-2.5 xl:-translate-x-[15px] xl:-translate-y-[1px]"
             >
-              <LuxeHoverText className="text-[1.12rem] font-black leading-none sm:text-[1.32rem]">
+              <LuxeHoverText className={`text-[1.12rem] font-black leading-none sm:text-[1.32rem] ${premiumTitleClass}`}>
                 {givingUp ? "↩ Giving up..." : "↩ Give up"}
               </LuxeHoverText>
             </button>
@@ -399,6 +421,7 @@ export function ScorePanel({
               onClick={onOpenProfile}
               label="Profile"
               leading="👤"
+              textClassName={`text-[0.94rem] font-black leading-none sm:text-[1rem] ${premiumTitleClass}`}
             />
             <HeaderMiniButton
               onClick={onLogout}
@@ -406,6 +429,7 @@ export function ScorePanel({
               tone="danger"
               disabled={loggingOut}
               className="xl:translate-x-[10px]"
+              textClassName={`text-[0.94rem] font-black leading-none sm:text-[1rem] ${premiumTitleClass}`}
             />
           </div>
           <div className="flex flex-nowrap items-center justify-center gap-1.5 xl:-translate-y-[7px] sm:gap-2">
@@ -421,14 +445,14 @@ export function ScorePanel({
             <SettingsButton
               onClick={onOpenSettings}
               className="hidden xl:inline-flex"
-              textClassName="text-[1.12rem] font-black leading-none sm:text-[1.32rem]"
+              textClassName={`text-[1.12rem] font-black leading-none sm:text-[1.32rem] ${premiumTitleClass}`}
             />
             <button
               onClick={onNewGame}
               disabled={startingNewGame}
               className="group inline-flex h-[2.5rem] shrink-0 items-center justify-center whitespace-nowrap rounded-full border border-amber-200/40 bg-[linear-gradient(135deg,rgba(251,191,36,0.18),rgba(245,158,11,0.08))] px-3.5 py-2 text-center shadow-[0_14px_30px_rgba(251,191,36,0.12),0_0_28px_rgba(251,191,36,0.12)] transition-all duration-200 active:scale-[0.97] hover:border-white/48 hover:bg-[linear-gradient(135deg,rgba(255,248,220,0.18),rgba(251,191,36,0.18),rgba(245,158,11,0.12))] hover:shadow-[0_16px_32px_rgba(255,255,255,0.06),0_0_34px_rgba(255,255,255,0.06)] disabled:cursor-not-allowed disabled:opacity-50 sm:h-auto sm:px-4 sm:py-2.5 xl:translate-x-[15px]"
             >
-              <LuxeHoverText className="text-[1.12rem] font-black leading-none sm:text-[1.32rem]">
+              <LuxeHoverText className={`text-[1.12rem] font-black leading-none sm:text-[1.32rem] ${premiumTitleClass}`}>
                 {startingNewGame ? "Starting..." : "New game"}
               </LuxeHoverText>
             </button>
