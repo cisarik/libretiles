@@ -194,20 +194,20 @@ export function TileRack({
     .filter(({ index }) => !usedIndices.has(index));
   const rackHeightClass =
     tileSize === "lg"
-      ? "min-h-[4.5rem]"
+      ? "min-h-[3.6rem]"
       : tileSize === "rack"
-        ? "min-h-[3.7rem]"
+        ? "min-h-[3.45rem]"
       : tileSize === "md"
-        ? "min-h-[3.9rem]"
-        : "min-h-[3.3rem]";
+        ? "min-h-[3.65rem]"
+        : "min-h-[3.15rem]";
   const rackGapClass =
     tileSize === "lg"
-      ? "gap-2 sm:gap-2.5"
+      ? "gap-1.25 sm:gap-1.5"
       : tileSize === "rack"
-        ? "gap-1"
+        ? "gap-0.75"
       : tileSize === "md"
-        ? "gap-1.5 sm:gap-2"
-        : "gap-1.5";
+        ? "gap-1.25 sm:gap-1.5"
+        : "gap-1.25";
 
   return (
     <div className={`flex w-full items-center justify-center ${rackHeightClass} ${rackGapClass}`}>

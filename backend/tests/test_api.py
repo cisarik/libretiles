@@ -39,7 +39,54 @@ class AuthAPITest(TestCase):
         resp = self.client.get("/api/auth/me/")
         assert resp.status_code == 200
         assert resp.json()["username"] == "player1"
-        assert resp.json()["credit_balance"] == "100.00"
+        assert resp.json()["credit_balance"] == "10.000000"
+
+    def test_change_password(self) -> None:
+        User.objects.create_user(username="player1", password="pass1234")
+        login = self.client.post("/api/auth/login/", {
+            "username": "player1",
+            "password": "pass1234",
+        })
+        token = login.json()["access"]
+
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+        resp = self.client.post("/api/auth/change-password/", {
+            "current_password": "pass1234",
+            "new_password": "newpass1234",
+        })
+
+        assert resp.status_code == 200
+        assert resp.json() == {"ok": True}
+
+        old_login = self.client.post("/api/auth/login/", {
+            "username": "player1",
+            "password": "pass1234",
+        })
+        assert old_login.status_code == 401
+
+        new_login = self.client.post("/api/auth/login/", {
+            "username": "player1",
+            "password": "newpass1234",
+        })
+        assert new_login.status_code == 200
+
+    def test_change_password_rejects_wrong_current_password(self) -> None:
+        User.objects.create_user(username="player1", password="pass1234")
+        login = self.client.post("/api/auth/login/", {
+            "username": "player1",
+            "password": "pass1234",
+        })
+        token = login.json()["access"]
+
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+        resp = self.client.post("/api/auth/change-password/", {
+            "current_password": "wrongpass",
+            "new_password": "newpass1234",
+        })
+
+        assert resp.status_code == 400
+        assert resp.json()["ok"] is False
+        assert resp.json()["error"] == "Current password is incorrect."
 
 
 class CatalogAPITest(TestCase):
@@ -394,12 +441,12 @@ class GameAPITest(TestCase):
 
         assert resp.status_code == 200
         assert resp.json()["billing"]["charge_source"] == "token_usage"
-        assert resp.json()["billing"]["charged_credits"] == "0.14"
+        assert resp.json()["billing"]["charged_credits"] == "0.001400"
         assert resp.json()["state"]["last_move_billing"]["charged_usd"] == resp.json()["billing"]["charged_usd"]
 
         profile = self.client.get("/api/auth/me/")
         assert profile.status_code == 200
-        assert profile.json()["credit_balance"] == "99.86"
+        assert profile.json()["credit_balance"] == "9.998600"
 
     def test_charge_ai_turn_endpoint_deducts_credits(self) -> None:
         create_resp = self.client.post("/api/game/create/", {
@@ -425,11 +472,11 @@ class GameAPITest(TestCase):
 
         assert resp.status_code == 200
         assert resp.json()["charge_source"] == "token_usage"
-        assert resp.json()["charged_credits"] == "0.14"
+        assert resp.json()["charged_credits"] == "0.001400"
 
         profile = self.client.get("/api/auth/me/")
         assert profile.status_code == 200
-        assert profile.json()["credit_balance"] == "99.86"
+        assert profile.json()["credit_balance"] == "9.998600"
 
     def test_charge_ai_turn_accepts_nested_ai_sdk_usage_shape(self) -> None:
         create_resp = self.client.post("/api/game/create/", {
@@ -464,7 +511,7 @@ class GameAPITest(TestCase):
 
         assert resp.status_code == 200
         assert resp.json()["charge_source"] == "token_usage"
-        assert resp.json()["charged_credits"] == "0.16"
+        assert resp.json()["charged_credits"] == "0.001600"
         assert resp.json()["input_tokens"] == 1200
         assert resp.json()["output_tokens"] == 300
         assert resp.json()["total_tokens"] == 1500

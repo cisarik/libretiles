@@ -393,7 +393,7 @@ export async function POST(req: NextRequest) {
             type: "error",
             code: "insufficient_user_credit",
             error:
-              "Your credit balance is empty. Open settings to top up credit or switch to a cheaper AI model.",
+              "Your balance is empty. Open settings to top up or switch to a cheaper AI model.",
             credit_balance: profile.credit_balance,
           });
           controller.close();

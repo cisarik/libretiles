@@ -25,6 +25,7 @@ import { GameControls } from "@/components/game/GameControls";
 import { BlankPicker } from "@/components/game/BlankPicker";
 import { AIThinkingOverlay } from "@/components/game/AIThinkingOverlay";
 import { ChatPanel } from "@/components/game/ChatPanel";
+import { ProfileModal } from "@/components/game/ProfileModal";
 import { useGameStore, type BoardTheme } from "@/hooks/useGameStore";
 import { useIsCoarsePointer } from "@/hooks/useIsCoarsePointer";
 import { api } from "@/lib/api";
@@ -35,6 +36,7 @@ import type {
   GameState,
   MoveResult,
   MoveValidationResult,
+  UserProfile,
   WSTicketResponse,
 } from "@/lib/types";
 import { Tile } from "@/components/tiles/Tile";
@@ -128,7 +130,7 @@ async function consumeAIStream(
 // ---------- Toast types ----------
 type Toast = {
   id: string;
-  type: "invalid_word" | "placement_error" | "ai_pass" | "ai_played" | "error";
+  type: "invalid_word" | "placement_error" | "ai_pass" | "ai_played" | "error" | "success";
   message: string;
   words?: string[];
   score?: number;
@@ -174,9 +176,9 @@ function normalizeAIBlocker(
   if (code === "insufficient_user_credit") {
     return {
       kind: "user_credit",
-      title: "You are out of credits",
+      title: "Balance required",
       message:
-        "AI turns are paused until you top up credit or switch to a cheaper opponent.",
+        "AI turns are paused until you top up your balance or switch to a cheaper opponent.",
       creditBalance,
     };
   }
@@ -202,11 +204,18 @@ function formatDisplayedCost(chargedUsd?: string | null) {
   if (chargedUsd != null && chargedUsd !== "") {
     const numericUsd = Number.parseFloat(chargedUsd);
     if (Number.isFinite(numericUsd)) {
-      return `$${numericUsd.toFixed(6).replace(/0+$/, "").replace(/\.$/, ".000")}`;
+      return `$${numericUsd.toFixed(4).replace(/0+$/, "").replace(/\.$/, ".00")}`;
     }
   }
 
-  return "$0.000000";
+  return "$0.00";
+}
+
+function formatBalanceValue(value?: string | null) {
+  if (value == null || value === "") return "$0.00";
+  const numeric = Number.parseFloat(value);
+  if (!Number.isFinite(numeric)) return "$0.00";
+  return `$${numeric.toFixed(2)}`;
 }
 
 function BillingCaption({
@@ -414,6 +423,19 @@ function ToastOverlay({ toast, onDone }: { toast: Toast; onDone: () => void }) {
     );
   }
 
+  if (toast.type === "success") {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: -20 }}
+        className="fixed bottom-8 left-1/2 z-[60] -translate-x-1/2 rounded-xl border border-emerald-300/24 bg-emerald-950/88 px-4 py-3 text-sm text-emerald-100 shadow-xl shadow-emerald-500/10 backdrop-blur"
+      >
+        {toast.message}
+      </motion.div>
+    );
+  }
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
@@ -451,7 +473,7 @@ function AIBlockerOverlay({
         className="w-full max-w-md rounded-[1.8rem] border border-amber-300/20 bg-[linear-gradient(180deg,rgba(28,22,16,0.98),rgba(12,10,9,0.98))] p-6 shadow-[0_30px_90px_rgba(0,0,0,0.42)]"
       >
         <div className="text-[0.68rem] uppercase tracking-[0.28em] text-amber-200/66">
-          {modal.kind === "user_credit" ? "Credit Required" : "Service Budget"}
+          {modal.kind === "user_credit" ? "Balance Required" : "Service Budget"}
         </div>
         <h3 className="mt-3 text-2xl font-black tracking-tight text-stone-50">
           {modal.title}
@@ -461,7 +483,7 @@ function AIBlockerOverlay({
         </p>
         {modal.kind === "user_credit" && (
           <div className="mt-4 rounded-[1.1rem] border border-amber-300/18 bg-amber-400/8 px-4 py-3 text-sm text-amber-100">
-            Balance: <span className="font-black">${modal.creditBalance ?? "0.000"}</span>
+            Balance: <span className="font-black">{formatBalanceValue(modal.creditBalance)}</span>
           </div>
         )}
 
@@ -534,6 +556,9 @@ export default function GamePage() {
   const [startingNewGame, setStartingNewGame] = useState(false);
   const [givingUp, setGivingUp] = useState(false);
   const [newGameTransitioning, setNewGameTransitioning] = useState(false);
+  const [profileModalOpen, setProfileModalOpen] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
 
   const pointerSensor = useSensor(PointerSensor, { activationConstraint: { distance: 3 } });
   const touchSensor = useSensor(TouchSensor, {
@@ -554,6 +579,7 @@ export default function GamePage() {
       if (message.includes("API error 401")) {
         resetGameUi();
         setCreditBalance(null);
+        setUserProfile(null);
         setToken(null);
         return;
       }
@@ -574,13 +600,14 @@ export default function GamePage() {
   }, [gameState?.my_rack, setStartingRack]);
 
   useEffect(() => {
-    if (!token || creditBalance !== null) return;
+    if (!token || (creditBalance !== null && userProfile)) return;
     api.me(token)
       .then((profile) => {
+        setUserProfile(profile);
         setCreditBalance(profile.credit_balance);
       })
       .catch(() => {});
-  }, [token, creditBalance, setCreditBalance]);
+  }, [token, creditBalance, setCreditBalance, userProfile]);
 
   useEffect(() => {
     if (!token || !gameState || !selectedModelId || gameState.game_mode !== "vs_ai") return;
@@ -722,6 +749,51 @@ export default function GamePage() {
     setExchangeMode,
     showToast,
   ]);
+
+  const handleProfilePasswordChange = useCallback(async ({
+    currentPassword,
+    newPassword,
+  }: {
+    currentPassword: string;
+    newPassword: string;
+  }) => {
+    if (!token) {
+      return { ok: false, error: "Session expired." };
+    }
+
+    try {
+      const result = await api.changePassword(token, {
+        current_password: currentPassword,
+        new_password: newPassword,
+      });
+      if (!result.ok) {
+        return result;
+      }
+      showToast({
+        id: `password-${Date.now()}`,
+        type: "success",
+        message: "Password updated.",
+      });
+      return { ok: true };
+    } catch (err) {
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : "Unable to update password.",
+      };
+    }
+  }, [showToast, token]);
+
+  const handleLogout = useCallback(() => {
+    setLoggingOut(true);
+    setProfileModalOpen(false);
+    multiplayerSocketRef.current?.close();
+    resetGameUi();
+    setCreditBalance(null);
+    setUserProfile(null);
+    setStartingRack(null);
+    setToken(null);
+    router.push("/");
+  }, [resetGameUi, router, setCreditBalance, setStartingRack, setToken]);
 
   const syncState = useCallback(
     async (state?: GameState) => {
@@ -1218,6 +1290,33 @@ export default function GamePage() {
         ...dragPreviewTarget,
       }
     : null;
+  const scoreStatus = useMemo(() => {
+    if (!gameState || gameState.game_over) {
+      return { text: null, tone: "neutral" as const };
+    }
+    if (exchangeMode && isMyTurn) {
+      return { text: "Select tiles to exchange", tone: "active" as const };
+    }
+    if (showAIPrompt) {
+      return { text: "AI move ready", tone: "active" as const };
+    }
+    if (aiThinking) {
+      return {
+        text: gameState.game_mode === "vs_ai" ? "AI is thinking" : "Opponent is playing",
+        tone: "waiting" as const,
+      };
+    }
+    if (isMyTurn) {
+      return { text: "Your turn", tone: "active" as const };
+    }
+    if (gameState.game_mode === "vs_human") {
+      return {
+        text: `${opponentSlotInfo?.username ?? "Opponent"} is playing`,
+        tone: "waiting" as const,
+      };
+    }
+    return { text: "Waiting for the AI", tone: "waiting" as const };
+  }, [aiThinking, exchangeMode, gameState, isMyTurn, opponentSlotInfo?.username, showAIPrompt]);
   const frameBorderColor = THEME_FRAME_BORDER[boardTheme];
   const activeHeaderModelName = useMemo(() => {
     if (gameState?.game_mode === "vs_human") {
@@ -1302,32 +1401,39 @@ export default function GamePage() {
       </AnimatePresence>
 
       <div className="min-h-screen bg-gradient-to-br from-stone-950 via-stone-900 to-stone-950 text-stone-100">
-        <div className="mx-auto flex max-w-[960px] flex-col gap-3 px-4 py-3 sm:px-5 sm:py-4">
+        <div className="mx-auto flex max-w-[960px] flex-col gap-2 px-4 py-3 sm:px-5 sm:py-4">
           <ScorePanel
             opponentLabel={activeHeaderModelName}
             showRivalPicker={gameState?.game_mode === "vs_ai"}
             creditBalance={creditBalance}
             frameBorderColor={frameBorderColor}
+            statusText={scoreStatus.text}
+            statusTone={scoreStatus.tone}
             onOpenRivalPicker={() => router.push("/settings?focus=rival")}
             onNewGame={() => void handleNewGame()}
             onGiveUp={() => void handleGiveUp()}
             onOpenSettings={() => router.push("/settings")}
+            onOpenProfile={() => setProfileModalOpen(true)}
+            onLogout={handleLogout}
             startingNewGame={startingNewGame}
             givingUp={givingUp}
             disableGiveUp={givingUp || gameState?.game_over || aiThinking}
+            loggingOut={loggingOut}
           />
           <LayoutGroup id={`game-${gameId}-rack-board`}>
-            <Board
-              dragPreview={boardDragPreview}
-              isDraggingTile={!!activeDragTile}
-              onPlaceTile={handleBoardTilePlacement}
-            />
+            <div className="mt-5">
+              <Board
+                dragPreview={boardDragPreview}
+                isDraggingTile={!!activeDragTile}
+                onPlaceTile={handleBoardTilePlacement}
+              />
+            </div>
             <div
-              className="rounded-[1.55rem] border border-white/8 bg-black p-4 shadow-[0_22px_52px_rgba(0,0,0,0.28)]"
+              className="rounded-[1.55rem] border border-white/8 bg-black px-4 py-1.75 shadow-[0_22px_52px_rgba(0,0,0,0.28)]"
               style={{ borderColor: frameBorderColor }}
             >
               {isMyTurn ? (
-                <div className="flex flex-col gap-4 lg:grid lg:grid-cols-[auto_minmax(0,1fr)_auto] lg:items-center lg:gap-4">
+                <div className="flex flex-col gap-1.75 lg:grid lg:grid-cols-[auto_minmax(0,1fr)_auto] lg:items-center lg:gap-2.5">
                   <div className="order-1 w-full lg:col-start-2 lg:row-start-1 lg:min-w-[430px] lg:w-auto">
                     <TileRack
                       canPlaceByTap={rackCanPlace}
@@ -1351,7 +1457,7 @@ export default function GamePage() {
                   </div>
                   {showAIPrompt ? (
                     <>
-                      <div className="mt-4 flex justify-end lg:absolute lg:right-0 lg:top-1/2 lg:mt-0 lg:-translate-y-1/2">
+                      <div className="mt-2.5 flex justify-end lg:absolute lg:right-0 lg:top-1/2 lg:mt-0 lg:-translate-y-1/2">
                         <div className="rounded-full bg-transparent p-0 shadow-[0_22px_44px_rgba(0,0,0,0.38),0_0_30px_rgba(22,163,74,0.24)] transition-all duration-200 hover:shadow-[0_24px_48px_rgba(0,0,0,0.42),0_0_34px_rgba(34,197,94,0.28)]">
                           <button
                             onClick={() => setAiApproved(true)}
@@ -1374,13 +1480,7 @@ export default function GamePage() {
                         </motion.div>
                       )}
                     </>
-                  ) : (
-                    <div className="mt-4 text-center text-sm uppercase tracking-[0.16em] text-stone-400">
-                      {isMultiplayerGame
-                        ? `${opponentSlotInfo?.username ?? "Opponent"} is playing`
-                        : "Waiting for the AI"}
-                    </div>
-                  )}
+                  ) : null}
                 </div>
               )}
             </div>
@@ -1444,8 +1544,20 @@ export default function GamePage() {
         ) : null}
       </DragOverlay>
 
-      {/* Toast overlays */}
       <AnimatePresence>
+        {profileModalOpen && (
+          <ProfileModal
+            profile={userProfile}
+            onClose={() => setProfileModalOpen(false)}
+            onLogout={handleLogout}
+            onOpenSettings={() => {
+              setProfileModalOpen(false);
+              router.push("/settings");
+            }}
+            onChangePassword={handleProfilePasswordChange}
+            loggingOut={loggingOut}
+          />
+        )}
         {aiBlockerModal && (
           <AIBlockerOverlay
             modal={aiBlockerModal}

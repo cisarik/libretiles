@@ -79,11 +79,11 @@ function formatMoveCostValue(chargedUsd?: string | null): string {
   if (normalizedUsd && /^\d+(?:\.\d+)?$/.test(normalizedUsd)) {
     const numericUsd = Number.parseFloat(normalizedUsd);
     if (Number.isFinite(numericUsd)) {
-      return `$${numericUsd.toFixed(6).replace(/0+$/, "").replace(/\.$/, ".000")}`;
+      return `$${numericUsd.toFixed(4).replace(/0+$/, "").replace(/\.$/, ".00")}`;
     }
   }
 
-  return "$0.000000";
+  return "$0.00";
 }
 
 export function Board({

@@ -44,7 +44,7 @@ export function GameControls({ onPlay, onExchange, onPass, disabled }: GameContr
   const hasPending = pendingTiles.length > 0;
 
   const buttonBase =
-    "inline-flex h-[2.85rem] items-center justify-center whitespace-nowrap rounded-full px-3 py-2 text-center transition-all duration-200 active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed touch-manipulation sm:h-auto sm:px-4 sm:py-2.5";
+    "inline-flex h-[2.65rem] items-center justify-center whitespace-nowrap rounded-full px-3 py-1.75 text-center transition-all duration-200 active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed touch-manipulation sm:h-auto sm:px-4 sm:py-2.25";
   const actionButtonBase =
     "group min-w-0 border shadow-[0_14px_30px_rgba(0,0,0,0.18)] sm:flex-none";
   const playShell =
@@ -127,7 +127,7 @@ export function GameControls({ onPlay, onExchange, onPass, disabled }: GameContr
           <button
             onClick={onPlay}
             disabled={isDisabled || !hasPending}
-            className={`${playButton} w-full min-w-[5.3rem]`}
+            className={`${playButton} w-full min-w-[5rem]`}
           >
             <span className="text-[1.12rem] font-black leading-none tracking-[0.01em] text-white [text-shadow:0_2px_0_rgba(0,0,0,0.55)] sm:text-[1.52rem]">
               Play
@@ -162,7 +162,7 @@ export function GameControls({ onPlay, onExchange, onPass, disabled }: GameContr
           <button
             onClick={onPlay}
             disabled={isDisabled || !hasPending}
-            className={`${playButton} min-w-[6.1rem]`}
+            className={`${playButton} min-w-[5.8rem]`}
           >
             <span className="text-[1.34rem] font-black leading-none tracking-[0.01em] text-white [text-shadow:0_2px_0_rgba(0,0,0,0.58)] sm:text-[1.52rem]">
               Play

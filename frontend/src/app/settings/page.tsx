@@ -612,14 +612,14 @@ export default function SettingsPage() {
                   >
                     <span className="pointer-events-none absolute inset-0 bg-[linear-gradient(120deg,transparent,rgba(255,255,255,0.18),transparent)] opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
                     <span className="font-gold-money text-[1.04rem] font-black leading-none">
-                      Top up credit
+                      Top up balance
                     </span>
                   </motion.button>
                 </div>
 
                 <div className="order-2 text-right">
                   <div className="text-[0.68rem] uppercase tracking-[0.3em] text-amber-100/65">
-                    Credit Balance
+                    Balance
                   </div>
                   <motion.div
                     whileHover={{ scale: 1.015 }}

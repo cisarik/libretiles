@@ -12,11 +12,12 @@ from game.models import GameSession
 
 _ZERO = Decimal("0")
 _CENT = Decimal("0.01")
+_BALANCE_PRECISION = Decimal("0.000001")
 _USD_PRECISION = Decimal("0.000001")
 
 
 def ensure_credit_balance(user) -> CreditBalance:  # type: ignore[no-untyped-def]
-    starting_balance = Decimal(str(settings.DEFAULT_STARTING_CREDITS))
+    starting_balance = _quantize_credits(Decimal(str(settings.DEFAULT_STARTING_CREDITS)))
 
     with transaction.atomic():
         balance = CreditBalance.objects.select_for_update().filter(user=user).first()
@@ -28,7 +29,7 @@ def ensure_credit_balance(user) -> CreditBalance:  # type: ignore[no-untyped-def
 def build_balance_summary(user) -> dict[str, str | None]:  # type: ignore[no-untyped-def]
     balance = ensure_credit_balance(user)
     return {
-        "credit_balance": _format_decimal(balance.balance),
+        "credit_balance": _format_decimal(balance.balance, precision=_BALANCE_PRECISION),
         "credit_updated_at": balance.updated_at.isoformat() if balance.updated_at else None,
     }
 
@@ -46,8 +47,8 @@ def charge_ai_move(
 
     if credits_charge <= _ZERO:
         return {
-            "charged_credits": "0.00",
-            "remaining_credits": _format_decimal(balance.balance),
+            "charged_credits": _format_decimal(_ZERO, precision=_BALANCE_PRECISION),
+            "remaining_credits": _format_decimal(balance.balance, precision=_BALANCE_PRECISION),
             "charged_usd": _format_decimal(usd_charge, precision=_USD_PRECISION),
             "charge_source": charge_source,
             "model_id": ai_model.model_id if ai_model else None,
@@ -69,8 +70,11 @@ def charge_ai_move(
 
     locked_balance.refresh_from_db()
     return {
-        "charged_credits": _format_decimal(credits_charge),
-        "remaining_credits": _format_decimal(locked_balance.balance),
+        "charged_credits": _format_decimal(credits_charge, precision=_BALANCE_PRECISION),
+        "remaining_credits": _format_decimal(
+            locked_balance.balance,
+            precision=_BALANCE_PRECISION,
+        ),
         "charged_usd": _format_decimal(usd_charge, precision=_USD_PRECISION),
         "charge_source": charge_source,
         "model_id": ai_model.model_id if ai_model else None,
@@ -201,7 +205,7 @@ def _to_credits(usd_amount: Decimal) -> Decimal:
 
 
 def _quantize_credits(value: Decimal) -> Decimal:
-    return value.quantize(_CENT, rounding=ROUND_HALF_UP)
+    return value.quantize(_BALANCE_PRECISION, rounding=ROUND_HALF_UP)
 
 
 def _format_decimal(value: Decimal, *, precision: Decimal = _CENT) -> str:

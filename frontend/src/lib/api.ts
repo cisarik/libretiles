@@ -89,6 +89,15 @@ export const api = {
   me: (token: string) => request<UserProfile>("/api/auth/me/", { token }),
   updateMe: (token: string, data: Partial<Pick<UserProfile, "preferred_ai_model_id">>) =>
     request<UserProfile>("/api/auth/me/", { method: "PATCH", body: data, token }),
+  changePassword: (
+    token: string,
+    data: { current_password: string; new_password: string },
+  ) =>
+    request<{ ok: boolean; error?: string }>("/api/auth/change-password/", {
+      method: "POST",
+      body: data,
+      token,
+    }),
 
   // Catalog
   getModels: () => request<AIModel[]>("/api/catalog/models/"),

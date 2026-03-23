@@ -6,7 +6,7 @@ class CreditBalance(models.Model):
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="credit_balance"
     )
-    balance = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    balance = models.DecimalField(max_digits=12, decimal_places=6, default=0)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
@@ -28,7 +28,7 @@ class Transaction(models.Model):
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="transactions"
     )
     type = models.CharField(max_length=20, choices=TYPE_CHOICES)
-    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    amount = models.DecimalField(max_digits=12, decimal_places=6)
     description = models.TextField(blank=True, default="")
     stripe_payment_id = models.CharField(max_length=200, blank=True, default="")
     game = models.ForeignKey(
