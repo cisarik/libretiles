@@ -17,8 +17,8 @@ from django.db import connection, transaction
 from django.db.models import Count
 from django.utils import timezone
 
-from catalog.models import AIModel
-from catalog.selection import get_selectable_models
+from catalog.models import AIModel, AIPrompt
+from catalog.selection import get_selectable_models, get_selectable_prompts
 from gamecore.board import BOARD_SIZE, Board
 from gamecore.fastdict import load_dictionary
 from gamecore.game import PlayerState, apply_final_scoring, determine_end_reason
@@ -191,6 +191,15 @@ def _resolve_ai_model(
     return selectable_models[0] if selectable_models else None
 
 
+def _resolve_ai_prompt(*, ai_prompt_id: int | None) -> AIPrompt | None:
+    selectable_prompts = get_selectable_prompts()
+    if ai_prompt_id is not None:
+        for prompt in selectable_prompts:
+            if prompt.id == ai_prompt_id:
+                return prompt
+    return selectable_prompts[0] if selectable_prompts else None
+
+
 def _serialize_slot(slot: PlayerSlot) -> dict[str, Any]:
     username: str | None
     if slot.is_ai:
@@ -256,6 +265,9 @@ def _build_state(session: GameSession, *, current_user_id: int, my_slot: PlayerS
         "total_cost_usd": format(session.total_cost_usd, "f"),
         "ai_model_id": session.ai_model.model_id if session.ai_model else None,
         "ai_model_display_name": session.ai_model.display_name if session.ai_model else None,
+        "ai_prompt_id": session.ai_prompt_id,
+        "ai_prompt_name": session.ai_prompt.name if session.ai_prompt else None,
+        "ai_prompt_fitness": session.ai_prompt.fitness if session.ai_prompt else None,
         "slots": [_serialize_slot(slot) for slot in slots],
         "move_count": len(moves),
         "move_history": _serialize_move_history(session, moves=moves),
@@ -277,7 +289,7 @@ def _load_session_for_user(
     user_id: int,
     select_for_update: bool = False,
 ) -> tuple[GameSession, PlayerSlot]:
-    queryset = GameSession.objects.select_related("ai_model").prefetch_related(
+    queryset = GameSession.objects.select_related("ai_model", "ai_prompt").prefetch_related(
         "slots__user",
         "chat_messages__user",
         "moves__player_slot",
@@ -660,6 +672,7 @@ def create_game(
     game_mode: str = "vs_ai",
     ai_model_id: int | None = None,
     ai_model_model_id: str | None = None,
+    ai_prompt_id: int | None = None,
     variant_slug: str = "english",
 ) -> dict[str, Any]:
     if game_mode != "vs_ai":
@@ -669,6 +682,7 @@ def create_game(
         ai_model_id=ai_model_id,
         ai_model_model_id=ai_model_model_id,
     )
+    selected_ai_prompt = _resolve_ai_prompt(ai_prompt_id=ai_prompt_id)
     session = GameSession.objects.create(
         game_mode="vs_ai",
         status="active",
@@ -678,6 +692,7 @@ def create_game(
         premium_used=[],
         current_turn_slot=None,
         ai_model=selected_ai_model,
+        ai_prompt=selected_ai_prompt,
     )
     human_slot = PlayerSlot.objects.create(game=session, slot=0, user_id=user_id, is_ai=False, rack=[])
     ai_slot = PlayerSlot.objects.create(game=session, slot=1, is_ai=True, rack=[])
@@ -691,6 +706,8 @@ def create_game(
         "current_turn_slot": session.current_turn_slot,
         "ai_model_id": selected_ai_model.model_id if selected_ai_model else None,
         "ai_model_display_name": selected_ai_model.display_name if selected_ai_model else None,
+        "ai_prompt_id": selected_ai_prompt.id if selected_ai_prompt else None,
+        "ai_prompt_name": selected_ai_prompt.name if selected_ai_prompt else None,
     }
 
 
@@ -857,6 +874,27 @@ def set_game_ai_model(
         "ok": True,
         "ai_model_id": selected_ai_model.model_id,
         "ai_model_display_name": selected_ai_model.display_name,
+    }
+
+
+def set_game_ai_prompt(
+    *,
+    game_id: str,
+    user_id: int,
+    ai_prompt_id: int,
+) -> dict[str, Any]:
+    session, _player_slot, _ai_slot = _load_vs_ai_session(game_id=game_id, user_id=user_id)
+    selected_ai_prompt = _resolve_ai_prompt(ai_prompt_id=ai_prompt_id)
+    if selected_ai_prompt is None:
+        return {"ok": False, "error": "Unknown or unavailable AI prompt"}
+    if session.ai_prompt_id != selected_ai_prompt.id:
+        session.ai_prompt = selected_ai_prompt
+        session.save(update_fields=["ai_prompt", "updated_at"])
+    return {
+        "ok": True,
+        "ai_prompt_id": selected_ai_prompt.id,
+        "ai_prompt_name": selected_ai_prompt.name,
+        "ai_prompt_fitness": selected_ai_prompt.fitness,
     }
 
 
@@ -1128,6 +1166,10 @@ def get_ai_context(game_id: str, user_id: int) -> dict[str, Any]:
         "variant": session.variant_slug,
         "ai_model_id": session.ai_model.model_id if session.ai_model else None,
         "ai_model_display_name": session.ai_model.display_name if session.ai_model else None,
+        "ai_prompt_id": session.ai_prompt_id,
+        "ai_prompt_name": session.ai_prompt.name if session.ai_prompt else None,
+        "ai_prompt_fitness": session.ai_prompt.fitness if session.ai_prompt else None,
+        "ai_prompt_text": session.ai_prompt.prompt if session.ai_prompt else None,
         "is_first_move": _is_board_empty(session),
         "ai_move_max_output_tokens": settings.AI_MOVE_MAX_OUTPUT_TOKENS,
         "ai_move_timeout_seconds": settings.AI_MOVE_TIMEOUT_SECONDS,

@@ -1,5 +1,6 @@
 "use client";
 
+import { LuxeHoverText } from "@/components/game/LuxeHoverText";
 import { useGameStore } from "@/hooks/useGameStore";
 import { PREMIUM_GOLD_TEXT_SHADOW_CLASS } from "@/lib/premiumSurface";
 
@@ -8,30 +9,6 @@ interface GameControlsProps {
   onExchange: () => void;
   onPass: () => void;
   disabled?: boolean;
-}
-
-function LuxeHoverText({
-  children,
-  className,
-}: {
-  children: string;
-  className: string;
-}) {
-  return (
-    <span className={`relative inline-grid place-items-center text-center align-middle ${className}`}>
-      <span
-        className="col-start-1 row-start-1 font-gold-shiny transition-opacity duration-200 group-hover:opacity-0"
-      >
-        {children}
-      </span>
-      <span
-        aria-hidden="true"
-        className="pointer-events-none col-start-1 row-start-1 font-white-shiny opacity-0 transition-opacity duration-200 group-hover:opacity-100"
-      >
-        {children}
-      </span>
-    </span>
-  );
 }
 
 export function GameControls({ onPlay, onExchange, onPass, disabled }: GameControlsProps) {
@@ -58,7 +35,7 @@ export function GameControls({ onPlay, onExchange, onPass, disabled }: GameContr
   if (exchangeMode) {
     return (
       <>
-        <div className="order-2 grid w-full grid-cols-2 gap-2 lg:hidden">
+        <div className="order-3 grid w-full grid-cols-2 gap-2 lg:hidden">
           <button
             onClick={onExchange}
             disabled={exchangeSelected.size === 0}
@@ -98,7 +75,7 @@ export function GameControls({ onPlay, onExchange, onPass, disabled }: GameContr
           </button>
         </div>
 
-        <div className="order-3 w-full text-center text-sm uppercase tracking-[0.16em] text-stone-400 lg:col-start-2 lg:row-start-2 lg:order-2 lg:self-center">
+        <div className="order-4 w-full text-center text-sm uppercase tracking-[0.16em] text-stone-400 lg:col-start-2 lg:row-start-3 lg:order-2 lg:self-center">
           {exchangeSelected.size} tile{exchangeSelected.size !== 1 ? "s" : ""} selected
         </div>
       </>
@@ -107,7 +84,7 @@ export function GameControls({ onPlay, onExchange, onPass, disabled }: GameContr
 
   return (
     <>
-      <div className="order-2 grid w-full grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.08fr)] items-center gap-2 lg:hidden">
+      <div className="order-3 grid w-full grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.08fr)] items-center gap-2 lg:hidden">
         <button
           onClick={() => setExchangeMode(true)}
           disabled={isDisabled || hasPending}

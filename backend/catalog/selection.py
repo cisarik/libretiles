@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation
 
-from .models import AIModel
+from .models import AIModel, AIPrompt
 
 PINNED_MODEL_ID = "openai/gpt-5.4"
 DEFAULT_SELECTABLE_MODEL_LIMIT = 20
@@ -71,6 +71,14 @@ def get_selectable_models(
 
 def is_selectable_model(model_id: str) -> bool:
     return any(model.model_id == model_id for model in get_selectable_models())
+
+
+def get_selectable_prompts() -> list[AIPrompt]:
+    return list(AIPrompt.objects.filter(is_active=True).order_by("sort_order", "name"))
+
+
+def is_selectable_prompt(prompt_id: int) -> bool:
+    return any(prompt.id == prompt_id for prompt in get_selectable_prompts())
 
 
 def is_tool_capable_model(model: AIModel) -> bool:

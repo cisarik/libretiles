@@ -58,6 +58,9 @@ export interface GameState {
   total_cost_usd: string;
   ai_model_id: string | null;
   ai_model_display_name?: string | null;
+  ai_prompt_id?: number | null;
+  ai_prompt_name?: string | null;
+  ai_prompt_fitness?: number | null;
   slots: SlotInfo[];
   move_count: number;
   my_rack: string[];
@@ -83,6 +86,8 @@ export interface CreateGameResponse {
   current_turn_slot: number | null;
   ai_model_id: string | null;
   ai_model_display_name?: string | null;
+  ai_prompt_id?: number | null;
+  ai_prompt_name?: string | null;
 }
 
 export interface QueueJoinResponse {
@@ -195,6 +200,13 @@ export interface AIModel {
   cache_write_cost_per_million: string;
   combined_cost_per_million: string;
   is_flagship: boolean;
+}
+
+export interface AIPrompt {
+  id: number;
+  name: string;
+  prompt: string;
+  fitness: number;
 }
 
 export interface UserProfile {

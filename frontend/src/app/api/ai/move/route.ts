@@ -42,38 +42,51 @@ const AUTO_FINALIZE_VALID_CAP = 4;
 const EXTENDED_AUTO_FINALIZE_GRACE_MS = 6000;
 const EXTENDED_AUTO_FINALIZE_VALID_CAP = 7;
 
-async function backendPost(path: string, body: unknown, token: string) {
+function summarizeBackendBody(body: string) {
+  return body.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 220);
+}
+
+async function parseBackendJson(res: Response, path: string) {
+  const raw = await res.text();
+  try {
+    return JSON.parse(raw);
+  } catch {
+    const preview = summarizeBackendBody(raw);
+    throw new Error(
+      preview
+        ? `Backend ${path} returned non-JSON (${res.status}): ${preview}`
+        : `Backend ${path} returned non-JSON (${res.status})`,
+    );
+  }
+}
+
+async function backendRequest(
+  path: string,
+  token: string,
+  init?: { method?: "GET" | "POST" | "PATCH"; body?: unknown },
+) {
   const res = await fetch(`${BACKEND_URL}${path}`, {
-    method: "POST",
+    method: init?.method ?? "GET",
     cache: "no-store",
     headers: {
-      "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
+      ...(init?.body !== undefined ? { "Content-Type": "application/json" } : {}),
     },
-    body: JSON.stringify(body),
+    body: init?.body !== undefined ? JSON.stringify(init.body) : undefined,
   });
-  return res.json();
+  return parseBackendJson(res, path);
+}
+
+async function backendPost(path: string, body: unknown, token: string) {
+  return backendRequest(path, token, { method: "POST", body });
 }
 
 async function backendGet(path: string, token: string) {
-  const res = await fetch(`${BACKEND_URL}${path}`, {
-    cache: "no-store",
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  return res.json();
+  return backendRequest(path, token);
 }
 
 async function backendPatch(path: string, body: unknown, token: string) {
-  const res = await fetch(`${BACKEND_URL}${path}`, {
-    method: "PATCH",
-    cache: "no-store",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify(body),
-  });
-  return res.json();
+  return backendRequest(path, token, { method: "PATCH", body });
 }
 
 async function chargeAITurn(
@@ -261,12 +274,24 @@ export async function POST(req: NextRequest) {
   const stream = new ReadableStream({
     async start(controller) {
       const encoder = new TextEncoder();
+      let streamClosed = false;
 
       function emit(data: Record<string, unknown>) {
+        if (streamClosed) return;
         try {
           controller.enqueue(encoder.encode(sseEvent(data)));
         } catch {
           // stream may have been closed by the client
+        }
+      }
+
+      function closeStream() {
+        if (streamClosed) return;
+        streamClosed = true;
+        try {
+          controller.close();
+        } catch {
+          // already closed
         }
       }
 
@@ -377,7 +402,7 @@ export async function POST(req: NextRequest) {
               type: "error",
               error: updateResult.error ?? "Could not switch AI model",
             });
-            controller.close();
+            closeStream();
             return;
           }
         }
@@ -396,7 +421,7 @@ export async function POST(req: NextRequest) {
               "Your balance is empty. Open settings to top up or switch to a cheaper AI model.",
             credit_balance: profile.credit_balance,
           });
-          controller.close();
+          closeStream();
           return;
         }
 
@@ -408,7 +433,7 @@ export async function POST(req: NextRequest) {
 
         if (!context.compact_state) {
           emit({ type: "error", error: "Could not fetch game context" });
-          controller.close();
+          closeStream();
           return;
         }
 
@@ -437,6 +462,10 @@ export async function POST(req: NextRequest) {
           sessionModelId ||
           process.env.NEXT_PUBLIC_DEFAULT_MODEL ||
           "openai/gpt-5.4";
+        const activeMovePrompt =
+          typeof context.ai_prompt_text === "string" && context.ai_prompt_text.trim().length > 0
+            ? context.ai_prompt_text
+            : MOVE_SYSTEM_PROMPT;
         const model = getModel(resolvedModelId);
         let providerPath =
           isGatewayConfigured() && !canUseDirectOpenAIModel(resolvedModelId)
@@ -466,7 +495,7 @@ export async function POST(req: NextRequest) {
               model: activeModel,
               maxOutputTokens,
               temperature: 0.15,
-              system: MOVE_SYSTEM_PROMPT,
+              system: activeMovePrompt,
               prompt: buildMoveUserPrompt(context),
               abortSignal: abortController.signal,
               tools: {
@@ -475,7 +504,8 @@ export async function POST(req: NextRequest) {
                     "Validate a proposed tile placement on the board. Returns " +
                     "legality, all words formed, per-word scores, and total score. " +
                     "Call this BEFORE finalizing any move. Only use it for " +
-                    "high-confidence English candidates, not random dictionary guesses.",
+                    "plausible English candidates, hooks, extensions, or premium shots, " +
+                    "not random dictionary guesses.",
                   inputSchema: z.object({
                     placements: z
                       .array(placementSchema)
@@ -513,7 +543,7 @@ export async function POST(req: NextRequest) {
                   description:
                     "Check if words are valid in the Collins Scrabble Words " +
                     "(2019) English dictionary (279,496 words). Use this only " +
-                    "to confirm words formed by a legal placement, never to brainstorm random strings.",
+                    "to confirm words formed by a plausible legal placement, never to brainstorm random strings.",
                   inputSchema: z.object({
                     words: z
                       .array(z.string())
@@ -779,7 +809,7 @@ export async function POST(req: NextRequest) {
             timed_out: timedOut,
             auto_finalized: autoFinalized,
           });
-          controller.close();
+          closeStream();
           return;
         }
 
@@ -803,7 +833,7 @@ export async function POST(req: NextRequest) {
             timed_out: timedOut,
             auto_finalized: autoFinalized,
           });
-          controller.close();
+          closeStream();
           return;
         }
 
@@ -852,7 +882,7 @@ export async function POST(req: NextRequest) {
             candidates_found: candidates.length,
             auto_finalized: autoFinalized,
           });
-          controller.close();
+          closeStream();
           return;
         }
 
@@ -884,11 +914,7 @@ export async function POST(req: NextRequest) {
             code: normalizedError.code,
             error: normalizedError.message,
           });
-          try {
-            controller.close();
-          } catch {
-            // already closed
-          }
+          closeStream();
           return;
         }
 
@@ -930,11 +956,7 @@ export async function POST(req: NextRequest) {
           });
         }
       } finally {
-        try {
-          controller.close();
-        } catch {
-          // already closed
-        }
+        closeStream();
       }
     },
   });

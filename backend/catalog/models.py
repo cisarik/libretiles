@@ -52,3 +52,22 @@ class AIModel(models.Model):
 
     def __str__(self) -> str:
         return f"{self.display_name} ({self.provider})"
+
+
+class AIPrompt(models.Model):
+    """Prompt preset available for AI move generation."""
+
+    name = models.CharField(max_length=100, unique=True)
+    prompt = models.TextField()
+    fitness = models.FloatField(default=0.0)
+    is_active = models.BooleanField(default=True)
+    sort_order = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["sort_order", "name"]
+        db_table = "catalog_ai_prompt"
+
+    def __str__(self) -> str:
+        return self.name

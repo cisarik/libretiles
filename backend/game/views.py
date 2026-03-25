@@ -14,6 +14,7 @@ from .serializers import (
     QueueJoinSerializer,
     SubmitMoveSerializer,
     UpdateGameAIModelSerializer,
+    UpdateGameAIPromptSerializer,
     ValidateMoveSerializer,
     ValidateWordsSerializer,
 )
@@ -36,6 +37,7 @@ class CreateGameView(APIView):
             game_mode=serializer.validated_data["game_mode"],
             ai_model_id=serializer.validated_data.get("ai_model_id"),
             ai_model_model_id=serializer.validated_data.get("ai_model_model_id"),
+            ai_prompt_id=serializer.validated_data.get("ai_prompt_id"),
             variant_slug=serializer.validated_data["variant_slug"],
         )
         return Response(result, status=status.HTTP_201_CREATED if result.get("ok", True) else 400)
@@ -200,6 +202,23 @@ class GameAIModelView(APIView):
                 game_id=game_id,
                 user_id=request.user.id,
                 ai_model_model_id=serializer.validated_data["ai_model_model_id"],
+            )
+        except Exception as error:
+            return _service_error_response(error)
+        return Response(result, status=200 if result.get("ok") else 400)
+
+
+class GameAIPromptView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def patch(self, request, game_id):  # type: ignore[no-untyped-def]
+        serializer = UpdateGameAIPromptSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            result = services.set_game_ai_prompt(
+                game_id=game_id,
+                user_id=request.user.id,
+                ai_prompt_id=serializer.validated_data["ai_prompt_id"],
             )
         except Exception as error:
             return _service_error_response(error)

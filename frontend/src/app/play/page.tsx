@@ -35,6 +35,7 @@ export default function PlayPage() {
   const router = useRouter();
   const token = useGameStore((state) => state.token);
   const selectedModelId = useGameStore((state) => state.selectedModelId);
+  const selectedPromptId = useGameStore((state) => state.selectedPromptId);
   const premiumLookEnabled = useGameStore((state) => state.premiumLookEnabled);
   const setStartingDraw = useGameStore((state) => state.setStartingDraw);
   const setStartingRack = useGameStore((state) => state.setStartingRack);
@@ -97,6 +98,7 @@ export default function PlayPage() {
       const result = (await api.createGame(token, {
         game_mode: "vs_ai",
         ai_model_model_id: selectedModelId || undefined,
+        ai_prompt_id: selectedPromptId ?? undefined,
       })) as CreateGameResponse;
       resetGameUi();
       setStartingDraw(result.starting_draw);

@@ -24,6 +24,8 @@ interface GameStore {
   // AI model selection
   selectedModelId: string;
   setSelectedModelId: (id: string) => void;
+  selectedPromptId: number | null;
+  setSelectedPromptId: (id: number | null) => void;
 
   // Game state
   gameState: GameState | null;
@@ -104,6 +106,8 @@ export const useGameStore = create<GameStore>()(
 
       selectedModelId: process.env.NEXT_PUBLIC_DEFAULT_MODEL || "openai/gpt-5.4",
       setSelectedModelId: (selectedModelId) => set({ selectedModelId }),
+      selectedPromptId: null,
+      setSelectedPromptId: (selectedPromptId) => set({ selectedPromptId }),
 
       gameState: null,
       setGameState: (gameState) => set({ gameState }),
@@ -209,6 +213,7 @@ export const useGameStore = create<GameStore>()(
       partialize: (state) => ({
         token: state.token,
         selectedModelId: state.selectedModelId,
+        selectedPromptId: state.selectedPromptId,
         aiTimeout: state.aiTimeout,
         aiMaxSteps: state.aiMaxSteps,
         boardTheme: state.boardTheme,

@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useGameStore } from "@/hooks/useGameStore";
+import { LuxeHoverText } from "@/components/game/LuxeHoverText";
 import {
   PREMIUM_GOLD_TEXT_SHADOW_CLASS,
   PREMIUM_HEADER_STYLE,
@@ -22,30 +23,6 @@ function formatCreditBalance(value?: string | null) {
   const numeric = Number.parseFloat(value);
   if (!Number.isFinite(numeric)) return "$--.--";
   return `$${numeric.toFixed(2)}`;
-}
-
-function LuxeHoverText({
-  children,
-  className,
-}: {
-  children: string;
-  className: string;
-}) {
-  return (
-    <span className={`relative inline-grid place-items-center text-center align-middle ${className}`}>
-      <span
-        className="col-start-1 row-start-1 font-gold-shiny transition-opacity duration-200 group-hover:opacity-0"
-      >
-        {children}
-      </span>
-      <span
-        aria-hidden="true"
-        className="pointer-events-none col-start-1 row-start-1 font-white-shiny opacity-0 transition-opacity duration-200 group-hover:opacity-100"
-      >
-        {children}
-      </span>
-    </span>
-  );
 }
 
 function IconTooltip({
@@ -88,7 +65,7 @@ function LogoTile({
 
 function LogoMark() {
   return (
-    <div className="relative z-0 flex min-w-0 translate-y-[15px] items-start gap-2.5">
+    <div className="relative z-0 flex min-w-0 -translate-y-[5px] items-start gap-2.5">
       <div className="font-gold-shiny text-[1.94rem] font-black leading-[0.92] tracking-tight sm:text-[2.02rem]">
         Libre
       </div>
@@ -171,39 +148,6 @@ function AnimatedScore({
   );
 }
 
-function StatusNotice({
-  text,
-  tone = "neutral",
-}: {
-  text?: string | null;
-  tone?: "active" | "waiting" | "neutral";
-}) {
-  const palette =
-    tone === "active"
-      ? "text-emerald-100"
-      : tone === "waiting"
-        ? "text-sky-100"
-        : "text-stone-300";
-
-  if (!text) return null;
-
-  return (
-    <AnimatePresence mode="wait">
-      <motion.div
-        key={text}
-        initial={{ opacity: 0, y: 8, scale: 0.96 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        exit={{ opacity: 0, y: -8, scale: 0.96 }}
-        transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-        className={`inline-flex items-center gap-2 text-[1.02rem] font-semibold leading-none tracking-tight drop-shadow-[0_8px_18px_rgba(0,0,0,0.22)] sm:text-[1.12rem] ${palette}`}
-      >
-        <span className="h-1.5 w-1.5 rounded-full bg-current opacity-80" />
-        <span>{text}</span>
-      </motion.div>
-    </AnimatePresence>
-  );
-}
-
 function SettingsButton({
   onClick,
   className,
@@ -218,7 +162,7 @@ function SettingsButton({
   return (
     <button
       onClick={onClick}
-      className={`group relative h-[2.5rem] shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-full border border-amber-300/18 bg-[linear-gradient(145deg,rgba(31,23,16,0.86),rgba(13,10,8,0.92))] px-3 py-2 text-center shadow-[0_14px_30px_rgba(0,0,0,0.18)] transition-all duration-200 active:scale-[0.97] hover:border-white/42 hover:bg-[linear-gradient(145deg,rgba(78,64,46,0.96),rgba(26,21,16,0.98))] hover:shadow-[0_16px_32px_rgba(255,255,255,0.06),0_0_24px_rgba(255,255,255,0.05)] sm:h-auto sm:px-4 sm:py-2.5 ${className ?? "inline-flex"}`}
+      className={`group relative h-[2.5rem] shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-full border border-amber-300/22 bg-[linear-gradient(145deg,rgba(50,36,22,0.96),rgba(15,11,8,0.98))] px-3 py-2 text-center shadow-[0_16px_34px_rgba(0,0,0,0.24),0_0_28px_rgba(251,191,36,0.08)] transition-all duration-200 active:scale-[0.97] hover:border-amber-100/52 hover:bg-[linear-gradient(145deg,rgba(97,76,48,0.98),rgba(29,22,16,0.99))] hover:shadow-[0_18px_38px_rgba(0,0,0,0.28),0_0_32px_rgba(251,191,36,0.12)] sm:h-auto sm:px-4 sm:py-2.5 ${className ?? "inline-flex"}`}
     >
       {iconOnly ? (
         <>
@@ -303,15 +247,15 @@ function HeaderMiniButton({
 }) {
   const toneClasses =
     tone === "danger"
-      ? "border-rose-300/20 bg-rose-500/8 hover:border-rose-200/40 hover:bg-[linear-gradient(145deg,rgba(113,24,46,0.48),rgba(55,14,27,0.42))]"
-      : "border-white/10 bg-white/[0.04] hover:border-white/18 hover:bg-white/[0.07]";
+      ? "border-rose-300/24 bg-[linear-gradient(145deg,rgba(86,24,41,0.64),rgba(37,13,21,0.72))] hover:border-rose-100/40 hover:bg-[linear-gradient(145deg,rgba(113,31,54,0.78),rgba(55,16,30,0.82))]"
+      : "border-amber-300/16 bg-[linear-gradient(145deg,rgba(34,26,18,0.88),rgba(14,11,8,0.94))] hover:border-amber-100/32 hover:bg-[linear-gradient(145deg,rgba(72,58,40,0.94),rgba(22,17,13,0.98))]";
 
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className={`group relative z-[20] inline-flex h-[2.1rem] shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full border px-3 py-1.5 text-center shadow-[0_10px_24px_rgba(0,0,0,0.18)] transition-all duration-200 active:scale-[0.97] hover:z-[220] disabled:cursor-not-allowed disabled:opacity-50 ${toneClasses} ${className ?? ""}`}
+      className={`group relative z-[20] inline-flex h-[2.1rem] shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full border px-3 py-1.5 text-center shadow-[0_12px_28px_rgba(0,0,0,0.24),0_0_24px_rgba(251,191,36,0.05)] transition-all duration-200 active:scale-[0.97] hover:z-[220] hover:shadow-[0_16px_32px_rgba(0,0,0,0.28),0_0_28px_rgba(251,191,36,0.08)] disabled:cursor-not-allowed disabled:opacity-50 ${toneClasses} ${className ?? ""}`}
     >
       {iconOnly ? (
         <>
@@ -334,12 +278,13 @@ function HeaderMiniButton({
 interface ScorePanelProps {
   opponentLabel: string;
   showRivalPicker?: boolean;
+  showPromptPicker?: boolean;
+  promptLabel?: string | null;
   creditBalance?: string | null;
   frameBorderColor?: string;
-  statusText?: string | null;
-  statusTone?: "active" | "waiting" | "neutral";
   onBack: () => void;
   onOpenRivalPicker: () => void;
+  onOpenPromptPicker: () => void;
   onNewGame: () => void;
   onGiveUp: () => void;
   onOpenGames: () => void;
@@ -355,12 +300,13 @@ interface ScorePanelProps {
 export function ScorePanel({
   opponentLabel,
   showRivalPicker = false,
+  showPromptPicker = false,
+  promptLabel,
   creditBalance,
   frameBorderColor,
-  statusText,
-  statusTone = "neutral",
   onBack,
   onOpenRivalPicker,
+  onOpenPromptPicker,
   onNewGame,
   onGiveUp,
   onOpenGames,
@@ -402,7 +348,7 @@ export function ScorePanel({
 
   return (
     <div
-      className={`relative isolate overflow-visible rounded-[1.55rem] border border-white/8 bg-black px-4 py-1.5 shadow-[0_24px_56px_rgba(0,0,0,0.28)] sm:px-4.5 sm:py-1.5 ${premiumLookEnabled ? "backdrop-blur-[14px]" : ""}`}
+      className={`relative isolate overflow-visible rounded-[1.55rem] border border-white/8 bg-black px-3 py-1 shadow-[0_24px_56px_rgba(0,0,0,0.28)] sm:px-3.5 sm:py-1 ${premiumLookEnabled ? "backdrop-blur-[14px]" : ""}`}
       style={panelStyle}
       onMouseMove={premiumLookEnabled ? handlePremiumSurfacePointer : undefined}
     >
@@ -412,7 +358,7 @@ export function ScorePanel({
           <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_left,rgba(255,214,120,0.10),transparent_34%)] opacity-85" />
         </>
       ) : null}
-      <div className="absolute right-[10px] top-[10px] z-[25] hidden items-center gap-2 xl:flex">
+      <div className="absolute right-[-1px] top-[-1px] z-[25] hidden items-center gap-[1px] xl:flex">
         <HeaderMiniButton
           onClick={onGiveUp}
           label={givingUp ? "Giving up..." : "Give up"}
@@ -433,10 +379,10 @@ export function ScorePanel({
       <div className="grid gap-1 xl:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] xl:items-start xl:gap-x-4">
         <div className="hidden min-w-0 flex-col items-start gap-1 xl:flex xl:self-start">
           <LogoMark />
-          <div className="flex items-center gap-3 xl:absolute xl:bottom-[10px] xl:left-[10px] xl:z-[180]">
+          <div className="flex items-center gap-[1px] xl:absolute xl:bottom-[-1px] xl:left-[-1px] xl:z-[180]">
             <button
               onClick={onBack}
-              className="group relative inline-flex h-[2.7rem] w-[2.95rem] shrink-0 items-center justify-center rounded-full border border-rose-400/22 bg-rose-500/10 px-0 py-0 text-center shadow-[0_14px_30px_rgba(0,0,0,0.18)] transition-all duration-200 active:scale-[0.97] hover:border-white/42 hover:bg-[linear-gradient(145deg,rgba(113,24,46,0.5),rgba(55,14,27,0.48))] hover:shadow-[0_16px_32px_rgba(255,255,255,0.06),0_0_24px_rgba(255,255,255,0.04)] disabled:cursor-not-allowed disabled:opacity-45"
+              className="group relative inline-flex h-[2.86rem] w-[3.08rem] shrink-0 items-center justify-center rounded-[1.08rem] rounded-bl-[1.45rem] border border-rose-400/24 bg-[linear-gradient(145deg,rgba(96,25,46,0.62),rgba(42,14,23,0.7))] px-0 py-0 text-center shadow-[0_16px_34px_rgba(0,0,0,0.24)] transition-all duration-200 active:scale-[0.97] hover:border-rose-100/40 hover:bg-[linear-gradient(145deg,rgba(123,33,59,0.76),rgba(53,16,29,0.82))] hover:shadow-[0_18px_38px_rgba(0,0,0,0.28),0_0_26px_rgba(244,114,182,0.10)] disabled:cursor-not-allowed disabled:opacity-45"
             >
               <span className={`text-[1.2rem] leading-none ${premiumTitleClass}`}>↩</span>
               <IconTooltip label="Back to boards" align="left" />
@@ -477,7 +423,7 @@ export function ScorePanel({
               labelClassName="flex min-h-[1.05rem] -translate-x-[20px] items-center justify-center text-[0.78rem] font-semibold tracking-[0.18em] text-white sm:text-[0.86rem]"
               scoreClassName="translate-x-[5px]"
               label={(
-                <div className="relative inline-flex items-center justify-center leading-none">
+                <div className="relative inline-flex items-center justify-center gap-2 leading-none">
                   {showRivalPicker ? (
                     <button
                       type="button"
@@ -492,21 +438,25 @@ export function ScorePanel({
                   ) : (
                     <span className="shrink-0 uppercase text-white">{opponentLabel}</span>
                   )}
+                  {showPromptPicker ? (
+                    <HeaderMiniButton
+                      onClick={onOpenPromptPicker}
+                      label="Prompt"
+                      leading="📝"
+                      iconOnly
+                      className="h-[2.04rem] w-[2.04rem] border-amber-300/24 bg-[linear-gradient(145deg,rgba(96,74,28,0.9),rgba(29,21,12,0.96))] px-0 py-0 shadow-[0_12px_26px_rgba(0,0,0,0.22),0_0_24px_rgba(251,191,36,0.08)] hover:border-amber-100/42 hover:bg-[linear-gradient(145deg,rgba(134,104,39,0.96),rgba(39,28,16,0.98))] hover:shadow-[0_16px_30px_rgba(0,0,0,0.28),0_0_30px_rgba(251,191,36,0.12)]"
+                      tooltipLabel={promptLabel ? `Prompt: ${promptLabel}` : "Prompt presets"}
+                      tooltipAlign="right"
+                    />
+                  ) : null}
                 </div>
               )}
             />
           </div>
-          <div className="mt-[-0.06rem] grid grid-cols-[minmax(4.8rem,max-content)_auto_minmax(4.8rem,max-content)] justify-center gap-3 sm:grid-cols-[minmax(5.1rem,max-content)_auto_minmax(5.1rem,max-content)] sm:gap-4">
-            <div className="flex justify-center xl:-translate-x-[10px] xl:-translate-y-[2px]">
-              <StatusNotice text={statusText} tone={statusTone} />
-            </div>
-            <div />
-            <div />
-          </div>
         </div>
 
         <div className="flex flex-col items-center gap-1.5 xl:col-start-3 xl:items-end xl:self-start">
-          <div className="flex flex-nowrap items-center justify-center gap-1.5 xl:absolute xl:bottom-[10px] xl:right-[10px] sm:gap-2">
+          <div className="flex flex-nowrap items-center justify-center gap-[1px] xl:absolute xl:bottom-[-1px] xl:right-[-1px] sm:gap-[1px]">
             <SettingsButton
               onClick={onOpenSettings}
               className="inline-flex xl:hidden"
@@ -531,7 +481,7 @@ export function ScorePanel({
             <button
               onClick={onNewGame}
               disabled={startingNewGame}
-              className="group inline-flex h-[2.5rem] shrink-0 items-center justify-center whitespace-nowrap rounded-full border border-amber-200/40 bg-[linear-gradient(135deg,rgba(251,191,36,0.18),rgba(245,158,11,0.08))] px-3.5 py-2 text-center shadow-[0_14px_30px_rgba(251,191,36,0.12),0_0_28px_rgba(251,191,36,0.12)] transition-all duration-200 active:scale-[0.97] hover:border-white/48 hover:bg-[linear-gradient(135deg,rgba(255,248,220,0.18),rgba(251,191,36,0.18),rgba(245,158,11,0.12))] hover:shadow-[0_16px_32px_rgba(255,255,255,0.06),0_0_34px_rgba(255,255,255,0.06)] disabled:cursor-not-allowed disabled:opacity-50 sm:h-auto sm:px-4 sm:py-2.5"
+              className="group inline-flex h-[2.5rem] shrink-0 items-center justify-center whitespace-nowrap rounded-[1.1rem] rounded-br-[1.45rem] border border-amber-200/40 bg-[linear-gradient(135deg,rgba(251,191,36,0.18),rgba(245,158,11,0.08))] px-3.5 py-2 text-center shadow-[0_14px_30px_rgba(251,191,36,0.12),0_0_28px_rgba(251,191,36,0.12)] transition-all duration-200 active:scale-[0.97] hover:border-white/48 hover:bg-[linear-gradient(135deg,rgba(255,248,220,0.18),rgba(251,191,36,0.18),rgba(245,158,11,0.12))] hover:shadow-[0_16px_32px_rgba(255,255,255,0.06),0_0_34px_rgba(255,255,255,0.06)] disabled:cursor-not-allowed disabled:opacity-50 sm:h-auto sm:px-4 sm:py-2.5"
             >
               <LuxeHoverText className={`text-[1.12rem] font-black leading-none sm:text-[1.32rem] ${premiumTitleClass}`}>
                 {startingNewGame ? "Starting..." : "New game"}

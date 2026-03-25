@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import logging
+
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from django.db import transaction
 
 from .models import GameSession
+
+logger = logging.getLogger(__name__)
 
 
 def room_name(game_id: str) -> str:
@@ -15,7 +19,12 @@ def _group_send(group: str, message: dict) -> None:
     channel_layer = get_channel_layer()
     if channel_layer is None:
         return
-    async_to_sync(channel_layer.group_send)(group, message)
+    try:
+        # Realtime delivery is best-effort. A missing Redis instance must not
+        # break core game actions like moves, passes, or chat persistence.
+        async_to_sync(channel_layer.group_send)(group, message)
+    except Exception as error:  # pragma: no cover - exercised via API tests
+        logger.warning("Skipping realtime publish for %s: %s", group, error)
 
 
 def publish_game_state_refresh(session: GameSession, *, event_name: str) -> None:

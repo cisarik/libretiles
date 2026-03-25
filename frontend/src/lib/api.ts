@@ -1,5 +1,6 @@
 import type {
   AIModel,
+  AIPrompt,
   GameHistoryFilter,
   GameHistoryResponse,
   GameHistorySort,
@@ -108,7 +109,12 @@ export const api = {
   // Game
   createGame: (
     token: string,
-    data: { game_mode?: "vs_ai"; ai_model_id?: number; ai_model_model_id?: string },
+    data: {
+      game_mode?: "vs_ai";
+      ai_model_id?: number;
+      ai_model_model_id?: string;
+      ai_prompt_id?: number;
+    },
   ) => request("/api/game/create/", { method: "POST", body: data, token }),
 
   joinHumanQueue: (
@@ -137,9 +143,20 @@ export const api = {
       `/api/game/${gameId}/ai-model/`,
       { method: "PATCH", body: data, token },
     ),
+  updateGameAIPrompt: (
+    token: string,
+    gameId: string,
+    data: { ai_prompt_id: number },
+  ) =>
+    request<{ ok: boolean; ai_prompt_id: number; ai_prompt_name: string; ai_prompt_fitness: number }>(
+      `/api/game/${gameId}/ai-prompt/`,
+      { method: "PATCH", body: data, token },
+    ),
 
   getGameState: (token: string, gameId: string) =>
     request(`/api/game/${gameId}/`, { token }),
+
+  getPrompts: () => request<AIPrompt[]>("/api/catalog/prompts/"),
 
   listGameHistory: (
     token: string,

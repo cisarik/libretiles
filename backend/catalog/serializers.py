@@ -10,7 +10,7 @@ from .selection import (
     get_input_cost_per_token,
     get_output_cost_per_token,
 )
-from .models import AIModel
+from .models import AIModel, AIPrompt
 
 _DISPLAY_PRECISION = Decimal("0.01")
 _MILLION = Decimal("1000000")
@@ -66,3 +66,14 @@ class AIModelSerializer(serializers.ModelSerializer):
 
     def _format_cost(self, value: Decimal) -> str:
         return format((value * _MILLION).quantize(_DISPLAY_PRECISION), "f")
+
+
+class AIPromptSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AIPrompt
+        fields = (
+            "id",
+            "name",
+            "prompt",
+            "fitness",
+        )

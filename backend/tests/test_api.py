@@ -10,7 +10,7 @@ from rest_framework.test import APIClient
 
 from accounts.models import User
 from catalog.gateway_sync import GatewayModelRecord
-from catalog.models import AIModel
+from catalog.models import AIModel, AIPrompt
 
 
 class AuthAPITest(TestCase):
@@ -205,6 +205,34 @@ class CatalogAPITest(TestCase):
             "openai/gpt-5.2",
         ]
 
+    def test_list_prompts_returns_active_catalog(self) -> None:
+        visible = AIPrompt.objects.create(
+            name="Bench",
+            prompt="Try short hooks first.",
+            fitness=1.5,
+            sort_order=5,
+            is_active=True,
+        )
+        AIPrompt.objects.create(
+            name="Hidden",
+            prompt="Do not expose this.",
+            fitness=9.9,
+            sort_order=1,
+            is_active=False,
+        )
+
+        resp = self.client.get("/api/catalog/prompts/")
+        assert resp.status_code == 200
+        data = resp.json()
+        names = [item["name"] for item in data]
+
+        assert "Initial" in names
+        assert "Bench" in names
+        assert "Hidden" not in names
+
+        visible_item = next(item for item in data if item["id"] == visible.id)
+        assert visible_item["fitness"] == 1.5
+
     def test_sync_gateway_models_command(self) -> None:
         manual = AIModel.objects.create(
             provider="openai",
@@ -310,6 +338,30 @@ class GameAPITest(TestCase):
         assert resp.status_code == 201
         assert resp.json()["ai_model_id"] == self.ai_model.model_id
 
+    def test_create_game_with_prompt_returns_prompt_metadata(self) -> None:
+        prompt = AIPrompt.objects.create(
+            name="Tempo Search",
+            prompt="Short plausible words first.",
+            fitness=1.25,
+            sort_order=5,
+        )
+
+        resp = self.client.post("/api/game/create/", {
+            "game_mode": "vs_ai",
+            "ai_model_model_id": self.ai_model.model_id,
+            "ai_prompt_id": prompt.id,
+        })
+
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["ai_prompt_id"] == prompt.id
+        assert data["ai_prompt_name"] == prompt.name
+
+        state = self.client.get(f"/api/game/{data['game_id']}/")
+        assert state.status_code == 200
+        assert state.json()["ai_prompt_id"] == prompt.id
+        assert state.json()["ai_prompt_name"] == prompt.name
+
     def test_get_game_state(self) -> None:
         create_resp = self.client.post("/api/game/create/", {
             "game_mode": "vs_ai",
@@ -339,6 +391,26 @@ class GameAPITest(TestCase):
         resp = self.client.post(f"/api/game/{game_id}/pass/")
         assert resp.status_code == 200
         assert resp.json()["ok"] is True
+
+    @patch("game.realtime.async_to_sync")
+    def test_ai_pass_succeeds_when_realtime_publish_fails(self, mock_async_to_sync) -> None:
+        create_resp = self.client.post("/api/game/create/", {"game_mode": "vs_ai"})
+        game_id = create_resp.json()["game_id"]
+        from game.models import GameSession
+
+        session = GameSession.objects.get(public_id=game_id)
+        session.current_turn_slot = 1
+        session.save(update_fields=["current_turn_slot"])
+
+        def fail_group_send(*_args, **_kwargs) -> None:
+            raise ConnectionError("Redis unavailable")
+
+        mock_async_to_sync.return_value = fail_group_send
+
+        resp = self.client.post(f"/api/game/{game_id}/ai-pass/")
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is True
+        assert resp.json()["state"]["current_turn_slot"] == 0
 
     def test_validate_words(self) -> None:
         create_resp = self.client.post("/api/game/create/", {"game_mode": "vs_ai"})
@@ -645,6 +717,41 @@ class GameAPITest(TestCase):
         state = self.client.get(f"/api/game/{game_id}/")
         assert state.status_code == 200
         assert state.json()["ai_model_id"] == alternative_model.model_id
+
+    def test_can_switch_game_ai_prompt_during_game(self) -> None:
+        prompt = AIPrompt.objects.create(
+            name="Anchor Sprint",
+            prompt="Validate short hooks and premiums quickly.",
+            fitness=2.25,
+            sort_order=5,
+        )
+        create_resp = self.client.post("/api/game/create/", {
+            "game_mode": "vs_ai",
+            "ai_model_model_id": self.ai_model.model_id,
+        })
+        game_id = create_resp.json()["game_id"]
+
+        resp = self.client.patch(
+            f"/api/game/{game_id}/ai-prompt/",
+            {"ai_prompt_id": prompt.id},
+            format="json",
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["ai_prompt_id"] == prompt.id
+        assert resp.json()["ai_prompt_name"] == prompt.name
+        assert resp.json()["ai_prompt_fitness"] == prompt.fitness
+
+        state = self.client.get(f"/api/game/{game_id}/")
+        assert state.status_code == 200
+        assert state.json()["ai_prompt_id"] == prompt.id
+        assert state.json()["ai_prompt_name"] == prompt.name
+
+        context = self.client.get(f"/api/game/{game_id}/ai-context/")
+        assert context.status_code == 200
+        assert context.json()["ai_prompt_id"] == prompt.id
+        assert context.json()["ai_prompt_name"] == prompt.name
+        assert context.json()["ai_prompt_text"] == prompt.prompt
 
     def test_apply_ai_move_returns_human_view_state(self) -> None:
         from game.models import GameSession

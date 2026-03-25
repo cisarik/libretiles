@@ -44,6 +44,13 @@ class GameSession(models.Model):
         on_delete=models.SET_NULL,
         help_text="AI model for vs_ai games",
     )
+    ai_prompt = models.ForeignKey(
+        "catalog.AIPrompt",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        help_text="AI prompt preset for vs_ai games",
+    )
 
     game_over = models.BooleanField(default=False)
     game_end_reason = models.CharField(max_length=50, blank=True, default="")

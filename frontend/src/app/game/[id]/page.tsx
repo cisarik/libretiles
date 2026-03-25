@@ -27,6 +27,9 @@ import { AIThinkingOverlay } from "@/components/game/AIThinkingOverlay";
 import { ChatPanel } from "@/components/game/ChatPanel";
 import { ProfileModal } from "@/components/game/ProfileModal";
 import { GameHistoryModal } from "@/components/game/GameHistoryModal";
+import { PromptCatalogModal } from "@/components/game/PromptCatalogModal";
+import { PromptPreviewModal } from "@/components/game/PromptPreviewModal";
+import { TurnStatusNotice } from "@/components/game/TurnStatusNotice";
 import { useGameStore, type BoardTheme } from "@/hooks/useGameStore";
 import { useIsCoarsePointer } from "@/hooks/useIsCoarsePointer";
 import { api } from "@/lib/api";
@@ -35,6 +38,7 @@ import { isPlausibleRack } from "@/lib/rack";
 import { buildGameWebSocketUrl } from "@/lib/ws";
 import type {
   AICandidate,
+  AIPrompt,
   GameHistoryFilter,
   GameHistoryItem,
   GameHistoryResponse,
@@ -130,6 +134,28 @@ async function consumeAIStream(
         }
       } catch { /* malformed line */ }
     }
+  }
+}
+
+function isHtmlResponse(body: string, contentType: string | null) {
+  return contentType?.includes("text/html") === true || /<!doctype html|<html/i.test(body);
+}
+
+async function getStreamStartError(response: Response) {
+  const raw = await response.text();
+
+  try {
+    const parsed = JSON.parse(raw) as { error?: string; message?: string; detail?: string };
+    return parsed.error || parsed.message || parsed.detail || `AI route failed (${response.status}).`;
+  } catch {
+    if (isHtmlResponse(raw, response.headers.get("content-type"))) {
+      return `AI route failed (${response.status}) before the stream started.`;
+    }
+
+    const preview = raw.replace(/\s+/g, " ").trim().slice(0, 220);
+    return preview
+      ? `AI route failed (${response.status}): ${preview}`
+      : `AI route failed (${response.status}).`;
   }
 }
 
@@ -539,6 +565,8 @@ export default function GamePage() {
   const aiThinking = useGameStore((s) => s.aiThinking);
   const openBlankPicker = useGameStore((s) => s.openBlankPicker);
   const selectedModelId = useGameStore((s) => s.selectedModelId);
+  const selectedPromptId = useGameStore((s) => s.selectedPromptId);
+  const setSelectedPromptId = useGameStore((s) => s.setSelectedPromptId);
   const aiTimeout = useGameStore((s) => s.aiTimeout);
   const aiMaxSteps = useGameStore((s) => s.aiMaxSteps);
   const boardTheme = useGameStore((s) => s.boardTheme);
@@ -565,6 +593,8 @@ export default function GamePage() {
   const [newGameTransitioning, setNewGameTransitioning] = useState(false);
   const [profileModalOpen, setProfileModalOpen] = useState(false);
   const [gamesModalOpen, setGamesModalOpen] = useState(false);
+  const [promptsModalOpen, setPromptsModalOpen] = useState(false);
+  const [promptPreview, setPromptPreview] = useState<AIPrompt | null>(null);
   const [loggingOut, setLoggingOut] = useState(false);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [gameHistoryFilter, setGameHistoryFilter] = useState<GameHistoryFilter>("vs_ai");
@@ -572,6 +602,9 @@ export default function GamePage() {
   const [gameHistoryData, setGameHistoryData] = useState<GameHistoryResponse | null>(null);
   const [gameHistoryLoading, setGameHistoryLoading] = useState(false);
   const [gameHistoryError, setGameHistoryError] = useState<string | null>(null);
+  const [prompts, setPrompts] = useState<AIPrompt[]>([]);
+  const [promptsLoading, setPromptsLoading] = useState(false);
+  const [savingPromptId, setSavingPromptId] = useState<number | null>(null);
 
   const pointerSensor = useSensor(PointerSensor, { activationConstraint: { distance: 3 } });
   const touchSensor = useSensor(TouchSensor, {
@@ -646,6 +679,48 @@ export default function GamePage() {
       cancelled = true;
     };
   }, [token, gameId, gameState, selectedModelId, setGameState]);
+
+  useEffect(() => {
+    if (!token || !gameState || selectedPromptId == null || gameState.game_mode !== "vs_ai") return;
+    if (gameState.ai_prompt_id === selectedPromptId) return;
+
+    let cancelled = false;
+    const previousPromptId = gameState.ai_prompt_id ?? null;
+    setSavingPromptId(selectedPromptId);
+
+    api
+      .updateGameAIPrompt(token, gameId, { ai_prompt_id: selectedPromptId })
+      .then((result) => {
+        if (cancelled || !result.ok) return;
+        const latestState = useGameStore.getState().gameState;
+        if (!latestState) return;
+        setGameState({
+          ...latestState,
+          ai_prompt_id: result.ai_prompt_id,
+          ai_prompt_name: result.ai_prompt_name,
+          ai_prompt_fitness: result.ai_prompt_fitness,
+        });
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSelectedPromptId(previousPromptId);
+          setToast({
+            id: `prompt-${Date.now()}`,
+            type: "error",
+            message: "Could not switch AI prompt right now.",
+          });
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setSavingPromptId((current) => (current === selectedPromptId ? null : current));
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [token, gameId, gameState, selectedPromptId, setGameState, setSelectedPromptId]);
 
   useEffect(() => {
     return () => { if (countdownRef.current) clearInterval(countdownRef.current); };
@@ -800,6 +875,8 @@ export default function GamePage() {
     setLoggingOut(true);
     setProfileModalOpen(false);
     setGamesModalOpen(false);
+    setPromptsModalOpen(false);
+    setPromptPreview(null);
     multiplayerSocketRef.current?.close();
     resetGameUi();
     setCreditBalance(null);
@@ -840,10 +917,42 @@ export default function GamePage() {
     }
   }, [gameHistoryFilter, gameHistorySort, token]);
 
+  const fetchPrompts = useCallback(async () => {
+    setPromptsLoading(true);
+    try {
+      const result = await fetch("/api/prompts", { cache: "no-store" });
+      const catalog = (await result.json().catch(() => [])) as unknown;
+      setPrompts(Array.isArray(catalog) ? (catalog as AIPrompt[]) : []);
+    } catch {
+      setPrompts([]);
+    } finally {
+      setPromptsLoading(false);
+    }
+  }, []);
+
   const handleOpenGamesModal = useCallback(() => {
     setGamesModalOpen(true);
     void fetchGameHistory({ page: 1 });
   }, [fetchGameHistory]);
+
+  const handleOpenPromptsModal = useCallback(() => {
+    setPromptsModalOpen(true);
+    void fetchPrompts();
+  }, [fetchPrompts]);
+
+  const handlePromptSelect = useCallback((prompt: AIPrompt) => {
+    setSelectedPromptId(prompt.id);
+    setPromptsModalOpen(false);
+  }, [setSelectedPromptId]);
+
+  const handlePromptPreview = useCallback((prompt: AIPrompt) => {
+    setPromptPreview(prompt);
+  }, []);
+
+  const handlePromptSelectFromPreview = useCallback((prompt: AIPrompt) => {
+    handlePromptSelect(prompt);
+    setPromptPreview(null);
+  }, [handlePromptSelect]);
 
   const handleGameHistoryFilterChange = useCallback((nextFilter: GameHistoryFilter) => {
     setGameHistoryFilter(nextFilter);
@@ -927,6 +1036,10 @@ export default function GamePage() {
           max_steps: aiMaxSteps,
         }),
       });
+      const contentType = res.headers.get("content-type") ?? "";
+      if (!res.ok || !contentType.includes("text/event-stream")) {
+        throw new Error(await getStreamStartError(res));
+      }
 
       let doneData: Record<string, unknown> | null = null;
 
@@ -1366,7 +1479,7 @@ export default function GamePage() {
         ...dragPreviewTarget,
       }
     : null;
-  const scoreStatus = useMemo(() => {
+  const turnStatus = useMemo(() => {
     if (!gameState || gameState.game_over) {
       return { text: null, tone: "neutral" as const };
     }
@@ -1403,6 +1516,15 @@ export default function GamePage() {
     }
     return gameState?.ai_model_display_name ?? humanizeModelId(gameState?.ai_model_id) ?? "Choose rival";
   }, [gameState?.ai_model_display_name, gameState?.ai_model_id, gameState?.game_mode, opponentSlotInfo?.username, selectedModelId]);
+  const effectivePromptId = selectedPromptId ?? gameState?.ai_prompt_id ?? null;
+  const activePromptLabel = useMemo(() => {
+    if (gameState?.game_mode !== "vs_ai") return null;
+    if (effectivePromptId != null) {
+      const selectedPrompt = prompts.find((prompt) => prompt.id === effectivePromptId);
+      if (selectedPrompt) return selectedPrompt.name;
+    }
+    return gameState?.ai_prompt_name ?? "Initial";
+  }, [effectivePromptId, gameState?.ai_prompt_name, gameState?.game_mode, prompts]);
   const rackTileSize = isCoarsePointer ? "rack" : "lg";
 
   const handleRackTileSelect = useCallback((tile: { letter: string; index: number }) => {
@@ -1481,12 +1603,13 @@ export default function GamePage() {
           <ScorePanel
             opponentLabel={activeHeaderModelName}
             showRivalPicker={gameState?.game_mode === "vs_ai"}
+            showPromptPicker={gameState?.game_mode === "vs_ai"}
+            promptLabel={activePromptLabel}
             creditBalance={creditBalance}
             frameBorderColor={frameBorderColor}
-            statusText={scoreStatus.text}
-            statusTone={scoreStatus.tone}
             onBack={() => router.push("/play")}
             onOpenRivalPicker={() => router.push("/settings?focus=rival")}
+            onOpenPromptPicker={handleOpenPromptsModal}
             onNewGame={() => void handleNewGame()}
             onGiveUp={() => void handleGiveUp()}
             onOpenGames={handleOpenGamesModal}
@@ -1522,7 +1645,7 @@ export default function GamePage() {
                 </>
               ) : null}
               {isMyTurn ? (
-                <div className="flex flex-col gap-1.75 lg:grid lg:grid-cols-[auto_minmax(0,1fr)_auto] lg:items-center lg:gap-2.5">
+                <div className="flex flex-col gap-2 lg:grid lg:grid-cols-[auto_minmax(0,1fr)_auto] lg:grid-rows-[auto_auto_auto] lg:items-center lg:gap-x-2.5 lg:gap-y-1.75">
                   <div className="order-1 w-full lg:col-start-2 lg:row-start-1 lg:min-w-[430px] lg:w-auto">
                     <TileRack
                       canPlaceByTap={rackCanPlace}
@@ -1540,13 +1663,13 @@ export default function GamePage() {
                   />
                 </div>
               ) : (
-                <div className="relative">
+                <div className="relative flex flex-col gap-2">
                   <div className="mx-auto w-full max-w-fit opacity-55 saturate-75">
                     <TileRack dragEnabled={!isCoarsePointer} tileSize={rackTileSize} />
                   </div>
                   {showAIPrompt ? (
                     <>
-                      <div className="mt-2.5 flex justify-end lg:absolute lg:right-0 lg:top-1/2 lg:mt-0 lg:-translate-y-1/2">
+                      <div className="flex justify-center lg:absolute lg:right-0 lg:top-1/2 lg:mt-0 lg:-translate-y-1/2">
                         <div className="rounded-full bg-transparent p-0 shadow-[0_22px_44px_rgba(0,0,0,0.38),0_0_30px_rgba(22,163,74,0.24)] transition-all duration-200 hover:shadow-[0_24px_48px_rgba(0,0,0,0.42),0_0_34px_rgba(34,197,94,0.28)]">
                           <button
                             onClick={() => setAiApproved(true)}
@@ -1573,6 +1696,11 @@ export default function GamePage() {
                 </div>
               )}
             </div>
+            {turnStatus.text ? (
+              <section className="flex justify-center pt-2" aria-live="polite">
+                <TurnStatusNotice text={turnStatus.text} tone={turnStatus.tone} />
+              </section>
+            ) : null}
           </LayoutGroup>
 
           {isMultiplayerGame && (
@@ -1662,6 +1790,26 @@ export default function GamePage() {
             }}
             onChangePassword={handleProfilePasswordChange}
             loggingOut={loggingOut}
+          />
+        )}
+        {promptsModalOpen && (
+          <PromptCatalogModal
+            prompts={prompts}
+            selectedPromptId={effectivePromptId}
+            loading={promptsLoading}
+            savingPromptId={savingPromptId}
+            onClose={() => setPromptsModalOpen(false)}
+            onSelect={handlePromptSelect}
+            onPreview={handlePromptPreview}
+          />
+        )}
+        {promptPreview && (
+          <PromptPreviewModal
+            prompt={promptPreview}
+            selected={effectivePromptId === promptPreview.id}
+            saving={savingPromptId === promptPreview.id}
+            onSelect={handlePromptSelectFromPreview}
+            onClose={() => setPromptPreview(null)}
           />
         )}
         {aiBlockerModal && (

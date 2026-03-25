@@ -1,12 +1,13 @@
 from rest_framework import serializers
 
-from catalog.selection import get_selectable_models
+from catalog.selection import get_selectable_models, get_selectable_prompts
 
 
 class CreateGameSerializer(serializers.Serializer):
     game_mode = serializers.ChoiceField(choices=["vs_ai"], default="vs_ai")
     ai_model_id = serializers.IntegerField(required=False, allow_null=True)
     ai_model_model_id = serializers.CharField(required=False, allow_blank=False, max_length=200)
+    ai_prompt_id = serializers.IntegerField(required=False, allow_null=True)
     variant_slug = serializers.CharField(default="english", max_length=50)
 
     def validate(self, attrs: dict) -> dict:
@@ -16,6 +17,7 @@ class CreateGameSerializer(serializers.Serializer):
         selectable_models = get_selectable_models()
         selectable_db_ids = {model.id for model in selectable_models}
         selectable_model_ids = {model.model_id for model in selectable_models}
+        selectable_prompt_ids = {prompt.id for prompt in get_selectable_prompts()}
 
         ai_model_id = attrs.get("ai_model_id")
         if ai_model_id is not None and ai_model_id not in selectable_db_ids:
@@ -26,6 +28,10 @@ class CreateGameSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 {"ai_model_model_id": "Unknown or unavailable AI model."}
             )
+
+        ai_prompt_id = attrs.get("ai_prompt_id")
+        if ai_prompt_id is not None and ai_prompt_id not in selectable_prompt_ids:
+            raise serializers.ValidationError({"ai_prompt_id": "Unknown or unavailable AI prompt."})
 
         return attrs
 
@@ -85,4 +91,14 @@ class UpdateGameAIModelSerializer(serializers.Serializer):
         selectable_model_ids = {model.model_id for model in get_selectable_models()}
         if value not in selectable_model_ids:
             raise serializers.ValidationError("Unknown or unavailable AI model.")
+        return value
+
+
+class UpdateGameAIPromptSerializer(serializers.Serializer):
+    ai_prompt_id = serializers.IntegerField(required=True)
+
+    def validate_ai_prompt_id(self, value: int) -> int:
+        selectable_prompt_ids = {prompt.id for prompt in get_selectable_prompts()}
+        if value not in selectable_prompt_ids:
+            raise serializers.ValidationError("Unknown or unavailable AI prompt.")
         return value
