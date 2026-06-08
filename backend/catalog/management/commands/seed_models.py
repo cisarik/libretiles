@@ -21,6 +21,7 @@ DEFAULT_MODELS = [
         "description": "Current flagship default for strongest general play.",
         "quality_tier": "elite",
         "cost_per_game": "3.50",
+        "tags": ["tool-use"],
         "sort_order": 10,
     },
     {
@@ -30,6 +31,7 @@ DEFAULT_MODELS = [
         "description": "Cheaper GPT-5.4 family option with strong move quality.",
         "quality_tier": "standard",
         "cost_per_game": "1.50",
+        "tags": ["tool-use"],
         "sort_order": 20,
     },
     {
@@ -39,6 +41,7 @@ DEFAULT_MODELS = [
         "description": "Premium tier for maximum strength at a much higher token price.",
         "quality_tier": "elite",
         "cost_per_game": "20.00",
+        "tags": ["tool-use"],
         "sort_order": 30,
     },
     {
@@ -48,6 +51,7 @@ DEFAULT_MODELS = [
         "description": "Very expensive strategic model for long-form reasoning.",
         "quality_tier": "premium",
         "cost_per_game": "8.00",
+        "tags": ["tool-use"],
         "sort_order": 40,
     },
     {
@@ -57,6 +61,7 @@ DEFAULT_MODELS = [
         "description": "Fast Google model. Good value for money.",
         "quality_tier": "standard",
         "cost_per_game": "2.00",
+        "tags": ["tool-use"],
         "sort_order": 50,
     },
     {
@@ -66,7 +71,25 @@ DEFAULT_MODELS = [
         "description": "Anthropic's balanced model. Thoughtful, creative play.",
         "quality_tier": "premium",
         "cost_per_game": "5.00",
+        "tags": ["tool-use"],
         "sort_order": 60,
+    },
+    {
+        "provider": "lmstudio",
+        "model_id": "lmstudio/qwen3-14b-sk",
+        "display_name": "Qwen3 14B SK (LM Studio)",
+        "description": (
+            "Local offline opponent served by LM Studio at http://localhost:1234/v1. "
+            "Uses the loaded qwen3-14b-sk model and charges no credits."
+        ),
+        "quality_tier": "standard",
+        "cost_per_game": "0.00",
+        "gateway_managed": False,
+        "gateway_available": True,
+        "context_window": 32768,
+        "tags": ["tool-use"],
+        "pricing": {},
+        "sort_order": 5,
     },
 ]
 

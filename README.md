@@ -87,7 +87,15 @@ Open http://localhost:3000, register, choose a mode, and play.
 | `BACKEND_URL` | `http://localhost:8000` | Backend URL (server-side) |
 | `OPENAI_API_KEY` | - | OpenAI API key (local dev) |
 | `AI_GATEWAY_API_KEY` | - | Vercel AI Gateway key (production) |
-| `NEXT_PUBLIC_DEFAULT_MODEL` | `openai/gpt-4o-mini` | Default AI model |
+| `NEXT_PUBLIC_DEFAULT_MODEL` | `openai/gpt-5.4` | Default AI model |
+| `LM_STUDIO_BASE_URL` | `http://localhost:1234/v1` | OpenAI-compatible LM Studio server for local/offline AI |
+| `LM_STUDIO_API_KEY` | `lm-studio` | Non-empty bearer token sent to LM Studio |
+
+### Local offline AI with LM Studio
+
+Start LM Studio's local server, load `qwen3-14b-sk`, then run `poetry run python manage.py seed_models` from `backend/`. Select **Qwen3 14B SK (LM Studio)** in Settings, or set `NEXT_PUBLIC_DEFAULT_MODEL=lmstudio/qwen3-14b-sk` in `frontend/.env.local`.
+
+The `lmstudio/` prefix is Libre Tiles' catalog/provider marker. The frontend sends the part after the prefix (`qwen3-14b-sk`) to LM Studio's OpenAI-compatible `/v1/chat/completions` endpoint. Local LM Studio turns have zero token price and do not require a positive credit balance.
 
 ### Docker (optional PostgreSQL + Redis)
 

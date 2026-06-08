@@ -25,8 +25,10 @@ import {
   canUseDirectOpenAIModel,
   getDirectModel,
   getModel,
+  getProviderPath,
   isGatewayConfigured,
 } from "@/lib/ai-gateway";
+import { isLocalAIModelId } from "@/lib/local-ai";
 import { MOVE_SYSTEM_PROMPT, buildMoveUserPrompt } from "@/lib/prompts";
 
 const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8000";
@@ -407,24 +409,6 @@ export async function POST(req: NextRequest) {
           }
         }
 
-        const profile = await backendGet("/api/auth/me/", token).catch(() => null);
-        const availableCredits =
-          typeof profile?.credit_balance === "string"
-            ? Number.parseFloat(profile.credit_balance)
-            : Number.NaN;
-
-        if (Number.isFinite(availableCredits) && availableCredits <= 0) {
-          emit({
-            type: "error",
-            code: "insufficient_user_credit",
-            error:
-              "Your balance is empty. Open settings to top up or switch to a cheaper AI model.",
-            credit_balance: profile.credit_balance,
-          });
-          closeStream();
-          return;
-        }
-
         // 1. Fetch game context
         const context = await backendGet(
           `/api/game/${game_id}/ai-context/`,
@@ -462,17 +446,31 @@ export async function POST(req: NextRequest) {
           sessionModelId ||
           process.env.NEXT_PUBLIC_DEFAULT_MODEL ||
           "openai/gpt-5.4";
+        const isLocalModel = isLocalAIModelId(resolvedModelId);
+        const profile = await backendGet("/api/auth/me/", token).catch(() => null);
+        const availableCredits =
+          typeof profile?.credit_balance === "string"
+            ? Number.parseFloat(profile.credit_balance)
+            : Number.NaN;
+
+        if (!isLocalModel && Number.isFinite(availableCredits) && availableCredits <= 0) {
+          emit({
+            type: "error",
+            code: "insufficient_user_credit",
+            error:
+              "Your balance is empty. Open settings to top up or switch to a cheaper AI model.",
+            credit_balance: profile.credit_balance,
+          });
+          closeStream();
+          return;
+        }
+
         const activeMovePrompt =
           typeof context.ai_prompt_text === "string" && context.ai_prompt_text.trim().length > 0
             ? context.ai_prompt_text
             : MOVE_SYSTEM_PROMPT;
         const model = getModel(resolvedModelId);
-        let providerPath =
-          isGatewayConfigured() && !canUseDirectOpenAIModel(resolvedModelId)
-            ? "gateway"
-            : isGatewayConfigured()
-              ? "gateway"
-              : "direct_openai";
+        let providerPath = getProviderPath(resolvedModelId);
         let gatewayFallbackUsed = false;
 
         emit({

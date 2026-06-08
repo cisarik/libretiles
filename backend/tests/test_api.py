@@ -127,6 +127,37 @@ class CatalogAPITest(TestCase):
         assert combined_costs == sorted(combined_costs, reverse=True)
         assert data[0]["combined_cost_per_million"]
 
+    def test_list_models_keeps_local_lmstudio_model_selectable_after_gateway_sync(self) -> None:
+        for index in range(22):
+            AIModel.objects.create(
+                provider="openai",
+                model_id=f"openai/gpt-5-expensive-{index}",
+                display_name=f"GPT-5 Expensive {index}",
+                gateway_available=True,
+                model_type="language",
+                tags=["tool-use"],
+                pricing={
+                    "input": "0.000020",
+                    "output": "0.000040",
+                },
+            )
+
+        AIModel.objects.create(
+            provider="lmstudio",
+            model_id="lmstudio/qwen3-14b-sk",
+            display_name="Qwen3 14B SK (LM Studio)",
+            gateway_available=False,
+            is_active=True,
+            model_type="language",
+            tags=["tool-use"],
+        )
+
+        resp = self.client.get("/api/catalog/models/")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) == 20
+        assert any(item["model_id"] == "lmstudio/qwen3-14b-sk" for item in data)
+
     def test_list_models_falls_back_to_active_models_before_first_sync(self) -> None:
         AIModel.objects.create(
             provider="openai",
@@ -250,6 +281,14 @@ class CatalogAPITest(TestCase):
             gateway_available=True,
             is_active=True,
         )
+        local = AIModel.objects.create(
+            provider="lmstudio",
+            model_id="lmstudio/qwen3-14b-sk",
+            display_name="Qwen3 14B SK (LM Studio)",
+            gateway_managed=False,
+            gateway_available=True,
+            is_active=True,
+        )
 
         models = [
             GatewayModelRecord(
@@ -298,6 +337,10 @@ class CatalogAPITest(TestCase):
         retired = AIModel.objects.get(model_id="openai/retired-model")
         assert retired.gateway_available is False
         assert retired.is_active is False
+
+        local.refresh_from_db()
+        assert local.gateway_available is True
+        assert local.is_active is True
 
 
 class GameAPITest(TestCase):

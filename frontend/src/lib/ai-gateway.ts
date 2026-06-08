@@ -18,12 +18,18 @@
 
 import { createOpenAI } from "@ai-sdk/openai";
 import type { LanguageModel } from "ai";
+import { isLocalAIModelId, stripLocalAIModelPrefix } from "@/lib/local-ai";
 
 const AI_GATEWAY_API_KEY = process.env.AI_GATEWAY_API_KEY;
 const AI_GATEWAY_BASE_URL =
   process.env.AI_GATEWAY_BASE_URL || "https://ai-gateway.vercel.sh/v1";
 const DEFAULT_MODEL =
   process.env.NEXT_PUBLIC_DEFAULT_MODEL || "openai/gpt-5.4";
+const LM_STUDIO_BASE_URL =
+  process.env.LM_STUDIO_BASE_URL || "http://localhost:1234/v1";
+const LM_STUDIO_API_KEY = process.env.LM_STUDIO_API_KEY || "lm-studio";
+
+export type AIProviderPath = "gateway" | "direct_openai" | "lmstudio";
 
 export function isGatewayConfigured(): boolean {
   return !!AI_GATEWAY_API_KEY;
@@ -43,6 +49,14 @@ function createGatewayProvider() {
 function createDirectProvider() {
   return createOpenAI({
     apiKey: process.env.OPENAI_API_KEY,
+  });
+}
+
+function createLMStudioProvider() {
+  return createOpenAI({
+    baseURL: LM_STUDIO_BASE_URL,
+    apiKey: LM_STUDIO_API_KEY,
+    name: "lmstudio",
   });
 }
 
@@ -66,12 +80,36 @@ export function getDirectModel(modelId?: string): LanguageModel {
   return provider.chat(stripProviderPrefix(id));
 }
 
+export function getLMStudioModel(modelId?: string): LanguageModel {
+  const id = stripLocalAIModelPrefix(modelId || DEFAULT_MODEL);
+  const provider = createLMStudioProvider();
+  return provider.chat(id);
+}
+
+export function getProviderPath(modelId?: string): AIProviderPath {
+  const id = modelId || DEFAULT_MODEL;
+
+  if (isLocalAIModelId(id)) {
+    return "lmstudio";
+  }
+
+  if (isGatewayConfigured()) {
+    return "gateway";
+  }
+
+  return "direct_openai";
+}
+
 /**
  * Get a LanguageModel instance for the given model ID.
  * Uses .chat() to force Chat Completions API (not Responses API).
  */
 export function getModel(modelId?: string): LanguageModel {
   const id = modelId || DEFAULT_MODEL;
+
+  if (isLocalAIModelId(id)) {
+    return getLMStudioModel(id);
+  }
 
   if (isGatewayConfigured()) {
     const provider = createGatewayProvider();

@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  useCallback,
   useEffect,
   useRef,
   useState,
@@ -12,6 +13,7 @@ import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import { useGameStore, type BoardTheme } from "@/hooks/useGameStore";
 import { api } from "@/lib/api";
+import { DEFAULT_LOCAL_AI_MODEL_ID, isLocalAIModelId } from "@/lib/local-ai";
 import {
   PREMIUM_CREDIT_PANEL_STYLE,
   PREMIUM_PANEL_STYLE,
@@ -20,6 +22,7 @@ import {
 import type { AIModel } from "@/lib/types";
 
 const PROVIDER_ICONS: Record<string, string> = {
+  lmstudio: "LM",
   openai: "🤖",
   google: "🔮",
   anthropic: "🧠",
@@ -80,6 +83,16 @@ type Notice = {
   text: string;
 } | null;
 
+type LocalAIStatus = {
+  ok: boolean;
+  reachable: boolean;
+  base_url: string;
+  model_id: string;
+  matching_model_loaded: boolean;
+  models: string[];
+  error?: string;
+} | null;
+
 function formatContextWindow(value?: number | null): string {
   if (!value) return "n/a";
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
@@ -94,6 +107,11 @@ function formatUsdPerToken(value?: string): string {
   const perToken = numeric / 1_000_000;
   const digits = perToken >= 0.0001 ? 6 : 8;
   return `$${perToken.toFixed(digits).replace(/0+$/, "").replace(/\.$/, "")}`;
+}
+
+function formatModelPrice(model: AIModel): string {
+  if (isLocalAIModelId(model.model_id)) return "Local";
+  return formatUsdPerToken(model.combined_cost_per_million);
 }
 
 function formatBalanceUsd(value?: string | null): string {
@@ -355,6 +373,151 @@ function PremiumLookPanel({
   );
 }
 
+function LocalAIStatusPill({
+  status,
+  checking,
+}: {
+  status: LocalAIStatus;
+  checking: boolean;
+}) {
+  if (checking) {
+    return (
+      <span className="rounded-full border border-sky-300/22 bg-sky-400/10 px-3 py-1 text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-sky-100">
+        Checking
+      </span>
+    );
+  }
+
+  if (!status?.reachable) {
+    return (
+      <span className="rounded-full border border-amber-300/24 bg-amber-400/12 px-3 py-1 text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-amber-100">
+        Offline
+      </span>
+    );
+  }
+
+  if (!status.matching_model_loaded) {
+    return (
+      <span className="rounded-full border border-amber-300/24 bg-amber-400/12 px-3 py-1 text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-amber-100">
+        Server ready
+      </span>
+    );
+  }
+
+  return (
+    <span className="rounded-full border border-emerald-300/24 bg-emerald-400/12 px-3 py-1 text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-emerald-100">
+      Ready
+    </span>
+  );
+}
+
+function LMStudioPanel({
+  localModel,
+  selectedModelId,
+  savingModelId,
+  status,
+  checkingStatus,
+  onSelect,
+  onRefreshStatus,
+}: {
+  localModel: AIModel | null;
+  selectedModelId: string;
+  savingModelId: string | null;
+  status: LocalAIStatus;
+  checkingStatus: boolean;
+  onSelect: (modelId: string) => void;
+  onRefreshStatus: () => void;
+}) {
+  const modelId = localModel?.model_id ?? DEFAULT_LOCAL_AI_MODEL_ID;
+  const isSelected = selectedModelId === modelId;
+  const isSaving = savingModelId === modelId;
+  const canSelect = Boolean(localModel) && !savingModelId;
+  const loadedModels = status?.models?.length ? status.models.join(", ") : "none";
+
+  return (
+    <section
+      className="relative overflow-hidden rounded-[1.6rem] border border-emerald-300/18 p-4 shadow-[0_18px_44px_rgba(0,0,0,0.24)] transition-[border-color,box-shadow,transform] duration-300 hover:border-emerald-200/26 hover:shadow-[0_22px_50px_rgba(0,0,0,0.28)]"
+      style={PREMIUM_PANEL_STYLE}
+      onMouseMove={handlePremiumSurfacePointer}
+    >
+      <div className="absolute inset-x-5 top-0 h-px bg-gradient-to-r from-transparent via-emerald-200/42 to-transparent" />
+      <div className="relative grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <span className="flex h-11 min-w-11 items-center justify-center rounded-[0.95rem] border border-emerald-300/20 bg-emerald-400/10 px-2 text-[0.8rem] font-black uppercase tracking-[0.12em] text-emerald-100">
+              LM
+            </span>
+            <h2 className="font-gold-shiny text-2xl font-black tracking-tight sm:text-[2.05rem]">
+              LM Studio
+            </h2>
+            <span className="rounded-full border border-emerald-300/24 bg-emerald-400/12 px-3 py-1 text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-emerald-100">
+              Free
+            </span>
+            {isSelected ? (
+              <span className="rounded-full border border-amber-300/24 bg-amber-300/12 px-3 py-1 text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-amber-100">
+                Active
+              </span>
+            ) : null}
+            <LocalAIStatusPill status={status} checking={checkingStatus} />
+          </div>
+
+          <div className="mt-3 grid gap-2 text-[0.82rem] uppercase tracking-[0.12em] text-stone-400 sm:grid-cols-3">
+            <div className="min-w-0">
+              <div className="text-stone-500">Model</div>
+              <div className="mt-1 break-all font-mono text-stone-100">
+                {modelId}
+              </div>
+            </div>
+            <div className="min-w-0">
+              <div className="text-stone-500">Endpoint</div>
+              <div className="mt-1 break-all font-mono text-stone-100">
+                {status?.base_url ?? "http://localhost:1234/v1"}
+              </div>
+            </div>
+            <div className="min-w-0">
+              <div className="text-stone-500">Loaded</div>
+              <div className="mt-1 truncate font-mono text-stone-100">
+                {loadedModels}
+              </div>
+            </div>
+          </div>
+
+          {!localModel ? (
+            <div className="mt-3 rounded-[1rem] border border-amber-300/18 bg-amber-400/8 px-3 py-2 text-sm text-amber-100">
+              LM Studio model is missing from the backend catalog.
+            </div>
+          ) : null}
+        </div>
+
+        <div className="flex flex-wrap gap-2 lg:justify-end">
+          <motion.button
+            type="button"
+            whileHover={{ y: -1.5 }}
+            whileTap={{ scale: 0.985 }}
+            onClick={() => onSelect(modelId)}
+            disabled={!canSelect || isSelected}
+            className="rounded-full border border-emerald-200/42 bg-[linear-gradient(135deg,rgba(16,185,129,0.18),rgba(255,255,255,0.04))] px-5 py-2.5 shadow-[0_12px_28px_rgba(16,185,129,0.10)] transition-[border-color,box-shadow,background-color,transform] duration-300 hover:border-emerald-100/62 hover:bg-[linear-gradient(135deg,rgba(16,185,129,0.24),rgba(255,255,255,0.06))] disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <span className="font-gold-shiny text-[1.06rem] font-black leading-none">
+              {isSaving ? "Saving..." : isSelected ? "Selected" : "Use free local AI"}
+            </span>
+          </motion.button>
+          <motion.button
+            type="button"
+            whileHover={{ y: -1.5 }}
+            whileTap={{ scale: 0.985 }}
+            onClick={onRefreshStatus}
+            disabled={checkingStatus}
+            className="rounded-full border border-white/12 bg-white/5 px-4 py-2.5 text-[0.78rem] font-semibold uppercase tracking-[0.16em] text-stone-200 transition-[border-color,background-color,transform] duration-300 hover:border-white/22 hover:bg-white/8 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Refresh
+          </motion.button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export default function SettingsPage() {
   const router = useRouter();
   const token = useGameStore((s) => s.token);
@@ -381,7 +544,36 @@ export default function SettingsPage() {
   const [accountSyncAvailable, setAccountSyncAvailable] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
   const [modelsExpanded, setModelsExpanded] = useState(false);
+  const [localAIStatus, setLocalAIStatus] = useState<LocalAIStatus>(null);
+  const [checkingLocalAIStatus, setCheckingLocalAIStatus] = useState(false);
   const rivalSectionRef = useRef<HTMLElement | null>(null);
+
+  const localModel =
+    models.find((model) => isLocalAIModelId(model.model_id)) ?? null;
+
+  const refreshLocalAIStatus = useCallback(async (modelId?: string) => {
+    const targetModelId = modelId ?? localModel?.model_id ?? DEFAULT_LOCAL_AI_MODEL_ID;
+    setCheckingLocalAIStatus(true);
+    try {
+      const result = (await fetch(
+        `/api/ai/local/status?model=${encodeURIComponent(targetModelId)}`,
+        { cache: "no-store" },
+      ).then((response) => response.json())) as LocalAIStatus;
+      setLocalAIStatus(result);
+    } catch {
+      setLocalAIStatus({
+        ok: false,
+        reachable: false,
+        base_url: "http://localhost:1234/v1",
+        model_id: targetModelId,
+        matching_model_loaded: false,
+        models: [],
+        error: "LM Studio status check failed.",
+      });
+    } finally {
+      setCheckingLocalAIStatus(false);
+    }
+  }, [localModel?.model_id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -425,7 +617,8 @@ export default function SettingsPage() {
 
         if (
           nextModels.length > 0 &&
-          !nextModels.some((model) => model.model_id === localSelectedModelId)
+          !nextModels.some((model) => model.model_id === localSelectedModelId) &&
+          !isLocalAIModelId(localSelectedModelId)
         ) {
           setSelectedModelId(nextModels[0].model_id);
         }
@@ -439,6 +632,10 @@ export default function SettingsPage() {
       cancelled = true;
     };
   }, [token, setCreditBalance, setSelectedModelId]);
+
+  useEffect(() => {
+    void refreshLocalAIStatus(localModel?.model_id ?? DEFAULT_LOCAL_AI_MODEL_ID);
+  }, [localModel?.model_id, refreshLocalAIStatus]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -458,6 +655,11 @@ export default function SettingsPage() {
   const selectedModel =
     models.find((model) => model.model_id === selectedModelId) ?? models[0] ?? null;
   const displayedModels = [...models].sort((left, right) => {
+    const localDiff =
+      Number(isLocalAIModelId(right.model_id)) -
+      Number(isLocalAIModelId(left.model_id));
+    if (localDiff !== 0) return localDiff;
+
     const priceDiff =
       Number.parseFloat(right.combined_cost_per_million) -
       Number.parseFloat(left.combined_cost_per_million);
@@ -672,6 +874,16 @@ export default function SettingsPage() {
 
         <div className="ornate-scrollbar relative flex-1 min-h-0 overflow-y-auto p-4 sm:p-5">
           <div className="flex min-h-0 flex-col gap-4">
+            <LMStudioPanel
+              localModel={localModel}
+              selectedModelId={selectedModelId}
+              savingModelId={savingModelId}
+              status={localAIStatus}
+              checkingStatus={checkingLocalAIStatus}
+              onSelect={(modelId) => void persistModelSelection(modelId)}
+              onRefreshStatus={() => void refreshLocalAIStatus()}
+            />
+
             <section ref={rivalSectionRef} className="min-h-0">
               <div className="flex min-h-0 flex-col">
                 <div className="pb-4">
@@ -921,7 +1133,7 @@ export default function SettingsPage() {
                                               isSelected ? "text-amber-100" : "text-stone-100"
                                             }`}
                                           >
-                                            {formatUsdPerToken(model.combined_cost_per_million)}
+                                            {formatModelPrice(model)}
                                           </div>
                                         </td>
                                       </tr>

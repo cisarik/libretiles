@@ -8,6 +8,7 @@ import httpx
 from django.utils import timezone as django_timezone
 
 from .models import AIModel
+from .selection import LOCAL_MODEL_PREFIX, LOCAL_MODEL_PROVIDER
 
 GATEWAY_MODELS_URL = "https://ai-gateway.vercel.sh/v1/models"
 AUTO_SORT_ORDER_START = 1000
@@ -107,7 +108,11 @@ def sync_gateway_models(
         else:
             unchanged += 1
 
-    missing = AIModel.objects.exclude(model_id__in=seen_model_ids)
+    missing = (
+        AIModel.objects.exclude(model_id__in=seen_model_ids)
+        .exclude(provider=LOCAL_MODEL_PROVIDER)
+        .exclude(model_id__startswith=LOCAL_MODEL_PREFIX)
+    )
     for obj in missing:
         changed_fields = _set_if_changed(obj, "gateway_available", False)
         changed_fields.extend(_set_if_changed(obj, "last_synced_at", now))

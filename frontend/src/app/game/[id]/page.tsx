@@ -33,6 +33,7 @@ import { TurnStatusNotice } from "@/components/game/TurnStatusNotice";
 import { useGameStore, type BoardTheme } from "@/hooks/useGameStore";
 import { useIsCoarsePointer } from "@/hooks/useIsCoarsePointer";
 import { api } from "@/lib/api";
+import { isLocalAIModelId } from "@/lib/local-ai";
 import { PREMIUM_FOOTER_STYLE, handlePremiumSurfacePointer } from "@/lib/premiumSurface";
 import { isPlausibleRack } from "@/lib/rack";
 import { buildGameWebSocketUrl } from "@/lib/ws";
@@ -1003,8 +1004,13 @@ export default function GamePage() {
     if (gameState.current_turn_slot !== aiSlotNumber) return;
     if (aiInFlightRef.current) return;
 
+    const activeModelId = selectedModelId || gameState.ai_model_id;
     const availableCredits = creditBalance ? Number.parseFloat(creditBalance) : Number.NaN;
-    if (Number.isFinite(availableCredits) && availableCredits <= 0) {
+    if (
+      !isLocalAIModelId(activeModelId) &&
+      Number.isFinite(availableCredits) &&
+      availableCredits <= 0
+    ) {
       const blocker = normalizeAIBlocker("", "insufficient_user_credit", creditBalance);
       setAiApproved(false);
       if (blocker) {
@@ -1013,8 +1019,6 @@ export default function GamePage() {
       }
       return;
     }
-
-    const activeModelId = selectedModelId || gameState.ai_model_id;
 
     aiInFlightRef.current = true;
     clearAICandidates();
