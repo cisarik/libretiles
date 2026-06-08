@@ -827,6 +827,8 @@ export async function POST(req: NextRequest) {
             })
           : null;
         const runtimeModelId = localPrepareResult?.runtimeModelId ?? resolvedModelId;
+        const effectiveContextLength =
+          localPrepareResult?.effectiveContextLength ?? lmStudioContextLength;
         if (!runtimeModelId) {
           emit({
             type: "error",
@@ -861,8 +863,14 @@ export async function POST(req: NextRequest) {
           emit({
             type: "thinking",
             status: "local_model_loaded",
-            message: `LM Studio model is loaded with ${lmStudioContextLength} context tokens.`,
-            lmstudio_context_length: lmStudioContextLength,
+            message: localPrepareResult?.contextClamped
+              ? `LM Studio model is loaded with ${effectiveContextLength} context tokens (requested ${lmStudioContextLength}, capped to the model max ${localPrepareResult?.modelMaxContextLength}).`
+              : `LM Studio model is loaded with ${effectiveContextLength} context tokens.`,
+            lmstudio_context_length: effectiveContextLength,
+            lmstudio_requested_context_length: lmStudioContextLength,
+            lmstudio_model_max_context_length:
+              localPrepareResult?.modelMaxContextLength ?? null,
+            lmstudio_context_clamped: localPrepareResult?.contextClamped ?? false,
             lmstudio_reload_after_turn: lmStudioReloadAfterTurn,
             lmstudio_loaded_before_prepare:
               localPrepareResult?.loadedBeforePrepare ?? false,
@@ -881,7 +889,13 @@ export async function POST(req: NextRequest) {
           max_output_tokens: maxOutputTokens,
           requested_max_output_tokens: requestedMaxOutputTokens,
           local_max_output_tokens: localMaxOutputTokens,
-          lmstudio_context_length: isLocalModel ? lmStudioContextLength : null,
+          lmstudio_context_length: isLocalModel ? effectiveContextLength : null,
+          lmstudio_requested_context_length: isLocalModel
+            ? lmStudioContextLength
+            : null,
+          lmstudio_model_max_context_length: isLocalModel
+            ? localPrepareResult?.modelMaxContextLength ?? null
+            : null,
           lmstudio_reload_after_turn: isLocalModel
             ? lmStudioReloadAfterTurn
             : null,
@@ -1225,7 +1239,16 @@ export async function POST(req: NextRequest) {
           max_output_tokens: maxOutputTokens,
           requested_max_output_tokens: requestedMaxOutputTokens,
           local_max_output_tokens: localMaxOutputTokens,
-          lmstudio_context_length: isLocalModel ? lmStudioContextLength : null,
+          lmstudio_context_length: isLocalModel ? effectiveContextLength : null,
+          lmstudio_requested_context_length: isLocalModel
+            ? lmStudioContextLength
+            : null,
+          lmstudio_model_max_context_length: isLocalModel
+            ? localPrepareResult?.modelMaxContextLength ?? null
+            : null,
+          lmstudio_context_clamped: isLocalModel
+            ? localPrepareResult?.contextClamped ?? null
+            : null,
           lmstudio_reload_after_turn: isLocalModel
             ? lmStudioReloadAfterTurn
             : null,

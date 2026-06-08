@@ -1,3 +1,4 @@
+import { useGameStore } from "@/hooks/useGameStore";
 import type {
   AIModel,
   AIPrompt,
@@ -53,20 +54,79 @@ interface RequestOptions {
   token?: string | null;
 }
 
-async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-  if (opts.token) {
-    headers["Authorization"] = `Bearer ${opts.token}`;
+// Shared in-flight refresh so concurrent 401s trigger only one refresh call.
+let refreshPromise: Promise<string | null> | null = null;
+
+/**
+ * Exchange the stored refresh token for a fresh access token.
+ * Updates the store on success; clears auth (forcing re-login) on failure.
+ */
+async function refreshAccessToken(): Promise<string | null> {
+  const { refreshToken } = useGameStore.getState();
+  if (!refreshToken) return null;
+
+  if (!refreshPromise) {
+    refreshPromise = (async () => {
+      try {
+        const res = await fetch(`${resolveApiBase()}/api/auth/refresh/`, {
+          method: "POST",
+          cache: "no-store",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ refresh: refreshToken }),
+        });
+        if (!res.ok) {
+          useGameStore.getState().clearAuth();
+          return null;
+        }
+        const data = (await res.json().catch(() => null)) as
+          | { access?: string; refresh?: string }
+          | null;
+        if (!data?.access) {
+          useGameStore.getState().clearAuth();
+          return null;
+        }
+        useGameStore.getState().setToken(data.access);
+        if (data.refresh) {
+          useGameStore.getState().setRefreshToken(data.refresh);
+        }
+        return data.access;
+      } catch {
+        return null;
+      } finally {
+        refreshPromise = null;
+      }
+    })();
   }
 
-  const res = await fetch(`${resolveApiBase()}${path}`, {
-    method: opts.method || "GET",
-    cache: "no-store",
-    headers,
-    body: opts.body ? JSON.stringify(opts.body) : undefined,
-  });
+  return refreshPromise;
+}
+
+async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
+  const sendRequest = (bearer?: string | null) => {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (bearer) {
+      headers["Authorization"] = `Bearer ${bearer}`;
+    }
+    return fetch(`${resolveApiBase()}${path}`, {
+      method: opts.method || "GET",
+      cache: "no-store",
+      headers,
+      body: opts.body ? JSON.stringify(opts.body) : undefined,
+    });
+  };
+
+  let res = await sendRequest(opts.token);
+
+  // Access tokens expire (2h). On an authenticated 401, transparently refresh
+  // the access token once and retry, so the user is not kicked out mid-session.
+  if (res.status === 401 && opts.token) {
+    const newAccess = await refreshAccessToken();
+    if (newAccess) {
+      res = await sendRequest(newAccess);
+    }
+  }
 
   if (!res.ok) {
     const text = await res.text();

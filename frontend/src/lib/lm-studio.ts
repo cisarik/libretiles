@@ -232,6 +232,10 @@ export async function prepareLMStudioModelForTurn({
   instanceId: string;
   loadedBeforePrepare: boolean;
   loadedContextLength: number | null;
+  requestedContextLength: number;
+  effectiveContextLength: number;
+  modelMaxContextLength: number | null;
+  contextClamped: boolean;
   loadResult: Record<string, unknown> | null;
 }> {
   const models = await fetchLMStudioModelCatalog(signal);
@@ -252,6 +256,10 @@ export async function prepareLMStudioModelForTurn({
         instanceId: getLMStudioInstanceId(loadResult, runtimeModelId),
         loadedBeforePrepare: false,
         loadedContextLength: null,
+        requestedContextLength: contextLength,
+        effectiveContextLength: contextLength,
+        modelMaxContextLength: null,
+        contextClamped: false,
         loadResult,
       };
     }
@@ -261,12 +269,24 @@ export async function prepareLMStudioModelForTurn({
     );
   }
 
+  // Clamp the requested context window to what the model actually supports so a
+  // user-configured value that exceeds the model's max never fails the load.
+  const modelMaxContextLength =
+    typeof selected.max_context_length === "number" &&
+    selected.max_context_length > 0
+      ? selected.max_context_length
+      : null;
+  const effectiveContextLength = modelMaxContextLength
+    ? Math.min(contextLength, modelMaxContextLength)
+    : contextLength;
+  const contextClamped = effectiveContextLength !== contextLength;
+
   const loadedBeforePrepare = selected.state === "loaded";
   const loadedContextLength = selected.loaded_context_length ?? null;
   const needsLoad =
     reloadBeforeTurn ||
     !loadedBeforePrepare ||
-    loadedContextLength !== contextLength;
+    loadedContextLength !== effectiveContextLength;
 
   if (loadedBeforePrepare && needsLoad) {
     await unloadLMStudioModel(selected.id, signal).catch((error) => {
@@ -280,7 +300,7 @@ export async function prepareLMStudioModelForTurn({
   const loadResult = needsLoad
     ? await loadLMStudioModel({
         modelId: selected.id,
-        contextLength,
+        contextLength: effectiveContextLength,
         signal,
       })
     : null;
@@ -290,6 +310,10 @@ export async function prepareLMStudioModelForTurn({
     instanceId: getLMStudioInstanceId(loadResult, selected.id),
     loadedBeforePrepare,
     loadedContextLength,
+    requestedContextLength: contextLength,
+    effectiveContextLength,
+    modelMaxContextLength,
+    contextClamped,
     loadResult,
   };
 }

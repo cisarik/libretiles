@@ -21,6 +21,7 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
 
   const setToken = useGameStore((s) => s.setToken);
+  const setRefreshToken = useGameStore((s) => s.setRefreshToken);
   const selectedModelId = useGameStore((s) => s.selectedModelId);
   const setSelectedModelId = useGameStore((s) => s.setSelectedModelId);
   const setCreditBalance = useGameStore((s) => s.setCreditBalance);
@@ -39,8 +40,9 @@ export default function Home() {
           // User may already exist — fall through to login
         }
       }
-      const { access } = await api.login({ username, password });
+      const { access, refresh } = await api.login({ username, password });
       setToken(access);
+      setRefreshToken(refresh);
       const profile = await api.me(access);
       setCreditBalance(profile.credit_balance);
 

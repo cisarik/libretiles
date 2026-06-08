@@ -18,6 +18,9 @@ interface GameStore {
   // Auth
   token: string | null;
   setToken: (token: string | null) => void;
+  refreshToken: string | null;
+  setRefreshToken: (token: string | null) => void;
+  clearAuth: () => void;
   creditBalance: string | null;
   setCreditBalance: (balance: string | null) => void;
 
@@ -105,6 +108,9 @@ export const useGameStore = create<GameStore>()(
     (set) => ({
       token: null,
       setToken: (token) => set({ token }),
+      refreshToken: null,
+      setRefreshToken: (refreshToken) => set({ refreshToken }),
+      clearAuth: () => set({ token: null, refreshToken: null, creditBalance: null }),
       creditBalance: null,
       setCreditBalance: (creditBalance) => set({ creditBalance }),
 
@@ -222,6 +228,7 @@ export const useGameStore = create<GameStore>()(
       ),
       partialize: (state) => ({
         token: state.token,
+        refreshToken: state.refreshToken,
         selectedModelId: state.selectedModelId,
         selectedPromptId: state.selectedPromptId,
         aiTimeout: state.aiTimeout,

@@ -548,7 +548,7 @@ export default function GamePage() {
   const isCoarsePointer = useIsCoarsePointer();
 
   const token = useGameStore((s) => s.token);
-  const setToken = useGameStore((s) => s.setToken);
+  const clearAuth = useGameStore((s) => s.clearAuth);
   const creditBalance = useGameStore((s) => s.creditBalance);
   const setCreditBalance = useGameStore((s) => s.setCreditBalance);
   const gameState = useGameStore((s) => s.gameState);
@@ -627,9 +627,8 @@ export default function GamePage() {
       const message = err instanceof Error ? err.message : String(err);
       if (message.includes("API error 401")) {
         resetGameUi();
-        setCreditBalance(null);
         setUserProfile(null);
-        setToken(null);
+        clearAuth();
         return;
       }
       setToast({
@@ -638,7 +637,7 @@ export default function GamePage() {
         message,
       });
     }
-  }, [token, gameId, resetGameUi, router, setCreditBalance, setGameState, setToken]);
+  }, [token, gameId, resetGameUi, router, setGameState, clearAuth]);
 
   useEffect(() => { fetchState(); }, [fetchState]);
 
@@ -882,12 +881,11 @@ export default function GamePage() {
     setPromptPreview(null);
     multiplayerSocketRef.current?.close();
     resetGameUi();
-    setCreditBalance(null);
     setUserProfile(null);
     setStartingRack(null);
-    setToken(null);
+    clearAuth();
     router.push("/");
-  }, [resetGameUi, router, setCreditBalance, setStartingRack, setToken]);
+  }, [resetGameUi, router, setStartingRack, clearAuth]);
 
   const fetchGameHistory = useCallback(async ({
     page = 1,

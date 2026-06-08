@@ -59,14 +59,14 @@ function WordCandidate({
       className={`
         flex items-center gap-2 px-2.5 py-2 rounded-xl transition-all
         ${isBest
-          ? "bg-amber-500/15 border border-amber-400/30"
-          : "bg-stone-800/30"
+          ? "bg-amber-500/20 border border-amber-400/40 shadow-md shadow-amber-500/10"
+          : "bg-stone-700/45 border border-white/10"
         }
       `}
     >
       {/* Rank */}
       <span className={`text-xs font-bold w-5 text-center shrink-0 ${
-        isBest ? "text-amber-400" : valid ? "text-stone-500" : "text-stone-600"
+        isBest ? "text-amber-400" : valid ? "text-stone-300" : "text-stone-600"
       }`}>
         {valid ? `#${rank}` : "—"}
       </span>
@@ -240,9 +240,11 @@ export function AIThinkingOverlay() {
             )}
 
             {/* Stats bar */}
-            <div className="flex items-center justify-between text-[10px] text-stone-600 border-t border-stone-800/50 pt-2">
+            <div className="flex items-center justify-between text-xs text-stone-400 border-t border-stone-800/50 pt-2">
               <span>{aiCandidates.length} tried</span>
-              <span>{validSorted.length} valid</span>
+              <span className="text-sm font-bold text-white">
+                {validSorted.length} valid
+              </span>
               <span>{rejectedCount > 0 ? `${rejectedCount} rejected` : ""}</span>
             </div>
           </motion.div>
