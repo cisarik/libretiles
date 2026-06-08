@@ -88,7 +88,7 @@ export function Tile({
           ? "ring-2 ring-sky-400 -translate-y-1 shadow-[0_14px_26px_rgba(56,189,248,0.22)]"
           : ""
         }
-        ${isDragging ? "shadow-[0_22px_42px_rgba(0,0,0,0.42)]" : "shadow-[0_10px_18px_rgba(120,88,36,0.22),0_2px_0_rgba(255,255,255,0.34)_inset,0_-2px_0_rgba(176,124,31,0.08)_inset]"}
+        ${isDragging ? "shadow-[0_10px_18px_rgba(0,0,0,0.24),0_2px_0_rgba(255,255,255,0.34)_inset,0_-2px_0_rgba(176,124,31,0.08)_inset]" : "shadow-[0_10px_18px_rgba(120,88,36,0.22),0_2px_0_rgba(255,255,255,0.34)_inset,0_-2px_0_rgba(176,124,31,0.08)_inset]"}
       `}
       style={{
         perspective: size === "board" ? "none" : "220px",

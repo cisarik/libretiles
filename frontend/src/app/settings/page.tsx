@@ -14,7 +14,6 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useGameStore, type BoardTheme } from "@/hooks/useGameStore";
 import { api } from "@/lib/api";
 import {
-  DEFAULT_LOCAL_AI_MODEL_ID,
   LOCAL_AI_AUTO_MODEL_ID,
   isLocalAIModelId,
 } from "@/lib/local-ai";
@@ -80,6 +79,11 @@ const SELECTED_ROW_CELL_STYLE: CSSProperties = {
     "radial-gradient(300px circle at var(--spotlight-x, 18%) var(--spotlight-y, 50%), rgba(251,191,36,0.18), transparent 56%), linear-gradient(180deg, rgba(251,191,36,0.06), rgba(251,191,36,0.03))",
 };
 
+const SELECTED_LOCAL_ROW_CELL_STYLE: CSSProperties = {
+  backgroundImage:
+    "radial-gradient(300px circle at var(--spotlight-x, 18%) var(--spotlight-y, 50%), rgba(16,185,129,0.28), transparent 58%), linear-gradient(180deg, rgba(16,185,129,0.16), rgba(16,185,129,0.07))",
+};
+
 type NoticeTone = "success" | "warning" | "info";
 
 type Notice = {
@@ -135,6 +139,55 @@ function noticeClasses(tone: NoticeTone): string {
     return "border-amber-400/25 bg-amber-500/10 text-amber-100";
   }
   return "border-sky-400/25 bg-sky-500/10 text-sky-100";
+}
+
+function getPreferredLocalModel(models: AIModel[]): AIModel | null {
+  return (
+    models.find((model) => model.model_id === LOCAL_AI_AUTO_MODEL_ID) ??
+    models.find((model) => isLocalAIModelId(model.model_id)) ??
+    null
+  );
+}
+
+function normalizeLocalModelSelection(modelId: string, models: AIModel[]): string {
+  const preferredLocalModel = getPreferredLocalModel(models);
+  if (
+    preferredLocalModel &&
+    isLocalAIModelId(modelId) &&
+    modelId !== preferredLocalModel.model_id
+  ) {
+    return preferredLocalModel.model_id;
+  }
+
+  return modelId;
+}
+
+function getLocalAIStatusBadge(status: LocalAIStatus, checking: boolean) {
+  if (checking) {
+    return {
+      label: "Checking",
+      className: "border-sky-300/22 bg-sky-400/10 text-sky-100",
+    };
+  }
+
+  if (!status?.reachable) {
+    return {
+      label: "Offline",
+      className: "border-amber-300/24 bg-amber-400/12 text-amber-100",
+    };
+  }
+
+  if (!status.matching_model_loaded && !status.runtime_model_id) {
+    return {
+      label: "Load model",
+      className: "border-amber-300/24 bg-amber-400/12 text-amber-100",
+    };
+  }
+
+  return {
+    label: "Ready",
+    className: "border-emerald-300/28 bg-emerald-300/16 text-emerald-50",
+  };
 }
 
 function handleSelectKeyDown(
@@ -379,151 +432,6 @@ function PremiumLookPanel({
   );
 }
 
-function LocalAIStatusPill({
-  status,
-  checking,
-}: {
-  status: LocalAIStatus;
-  checking: boolean;
-}) {
-  if (checking) {
-    return (
-      <span className="rounded-full border border-sky-300/22 bg-sky-400/10 px-3 py-1 text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-sky-100">
-        Checking
-      </span>
-    );
-  }
-
-  if (!status?.reachable) {
-    return (
-      <span className="rounded-full border border-amber-300/24 bg-amber-400/12 px-3 py-1 text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-amber-100">
-        Offline
-      </span>
-    );
-  }
-
-  if (!status.matching_model_loaded && !status.runtime_model_id) {
-    return (
-      <span className="rounded-full border border-amber-300/24 bg-amber-400/12 px-3 py-1 text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-amber-100">
-        No loaded model
-      </span>
-    );
-  }
-
-  return (
-    <span className="rounded-full border border-emerald-300/24 bg-emerald-400/12 px-3 py-1 text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-emerald-100">
-      Ready
-    </span>
-  );
-}
-
-function LMStudioPanel({
-  localModel,
-  selectedModelId,
-  savingModelId,
-  status,
-  checkingStatus,
-  onSelect,
-  onRefreshStatus,
-}: {
-  localModel: AIModel | null;
-  selectedModelId: string;
-  savingModelId: string | null;
-  status: LocalAIStatus;
-  checkingStatus: boolean;
-  onSelect: (modelId: string) => void;
-  onRefreshStatus: () => void;
-}) {
-  const modelId = localModel?.model_id ?? DEFAULT_LOCAL_AI_MODEL_ID;
-  const isSelected = selectedModelId === modelId;
-  const isSaving = savingModelId === modelId;
-  const canSelect = Boolean(localModel) && !savingModelId;
-  const runtimeModel = status?.runtime_model_id ?? "none";
-
-  return (
-    <section
-      className="relative overflow-hidden rounded-[1.6rem] border border-emerald-300/18 p-4 shadow-[0_18px_44px_rgba(0,0,0,0.24)] transition-[border-color,box-shadow,transform] duration-300 hover:border-emerald-200/26 hover:shadow-[0_22px_50px_rgba(0,0,0,0.28)]"
-      style={PREMIUM_PANEL_STYLE}
-      onMouseMove={handlePremiumSurfacePointer}
-    >
-      <div className="absolute inset-x-5 top-0 h-px bg-gradient-to-r from-transparent via-emerald-200/42 to-transparent" />
-      <div className="relative grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2.5">
-            <span className="flex h-11 min-w-11 items-center justify-center rounded-[0.95rem] border border-emerald-300/20 bg-emerald-400/10 px-2 text-[0.8rem] font-black uppercase tracking-[0.12em] text-emerald-100">
-              LM
-            </span>
-            <h2 className="font-gold-shiny text-2xl font-black tracking-tight sm:text-[2.05rem]">
-              LM Studio
-            </h2>
-            <span className="rounded-full border border-emerald-300/24 bg-emerald-400/12 px-3 py-1 text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-emerald-100">
-              Free
-            </span>
-            {isSelected ? (
-              <span className="rounded-full border border-amber-300/24 bg-amber-300/12 px-3 py-1 text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-amber-100">
-                Active
-              </span>
-            ) : null}
-            <LocalAIStatusPill status={status} checking={checkingStatus} />
-          </div>
-
-          <div className="mt-3 grid gap-2 text-[0.82rem] uppercase tracking-[0.12em] text-stone-400 sm:grid-cols-3">
-            <div className="min-w-0">
-              <div className="text-stone-500">Model</div>
-              <div className="mt-1 break-all font-mono text-stone-100">
-                {modelId}
-              </div>
-            </div>
-            <div className="min-w-0">
-              <div className="text-stone-500">Endpoint</div>
-              <div className="mt-1 break-all font-mono text-stone-100">
-                {status?.base_url ?? "http://localhost:1234/v1"}
-              </div>
-            </div>
-            <div className="min-w-0">
-              <div className="text-stone-500">Loaded</div>
-              <div className="mt-1 truncate font-mono text-stone-100">
-                {runtimeModel}
-              </div>
-            </div>
-          </div>
-
-          {!localModel ? (
-            <div className="mt-3 rounded-[1rem] border border-amber-300/18 bg-amber-400/8 px-3 py-2 text-sm text-amber-100">
-              LM Studio model is missing from the backend catalog.
-            </div>
-          ) : null}
-        </div>
-
-        <div className="flex flex-wrap gap-2 lg:justify-end">
-          <motion.button
-            type="button"
-            whileHover={{ y: -1.5 }}
-            whileTap={{ scale: 0.985 }}
-            onClick={() => onSelect(modelId)}
-            disabled={!canSelect || isSelected}
-            className="rounded-full border border-emerald-200/42 bg-[linear-gradient(135deg,rgba(16,185,129,0.18),rgba(255,255,255,0.04))] px-5 py-2.5 shadow-[0_12px_28px_rgba(16,185,129,0.10)] transition-[border-color,box-shadow,background-color,transform] duration-300 hover:border-emerald-100/62 hover:bg-[linear-gradient(135deg,rgba(16,185,129,0.24),rgba(255,255,255,0.06))] disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <span className="font-gold-shiny text-[1.06rem] font-black leading-none">
-              {isSaving ? "Saving..." : isSelected ? "Selected" : "Use free local AI"}
-            </span>
-          </motion.button>
-          <motion.button
-            type="button"
-            whileHover={{ y: -1.5 }}
-            whileTap={{ scale: 0.985 }}
-            onClick={onRefreshStatus}
-            disabled={checkingStatus}
-            className="rounded-full border border-white/12 bg-white/5 px-4 py-2.5 text-[0.78rem] font-semibold uppercase tracking-[0.16em] text-stone-200 transition-[border-color,background-color,transform] duration-300 hover:border-white/22 hover:bg-white/8 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            Refresh
-          </motion.button>
-        </div>
-      </div>
-    </section>
-  );
-}
-
 export default function SettingsPage() {
   const router = useRouter();
   const token = useGameStore((s) => s.token);
@@ -554,14 +462,11 @@ export default function SettingsPage() {
   const [checkingLocalAIStatus, setCheckingLocalAIStatus] = useState(false);
   const rivalSectionRef = useRef<HTMLElement | null>(null);
 
-  const preferredLocalModel =
-    models.find((model) => model.model_id === LOCAL_AI_AUTO_MODEL_ID) ??
-    models.find((model) => isLocalAIModelId(model.model_id)) ??
-    null;
+  const preferredLocalModel = getPreferredLocalModel(models);
 
   const refreshLocalAIStatus = useCallback(async (modelId?: string) => {
     const targetModelId =
-      modelId ?? preferredLocalModel?.model_id ?? DEFAULT_LOCAL_AI_MODEL_ID;
+      modelId ?? preferredLocalModel?.model_id ?? LOCAL_AI_AUTO_MODEL_ID;
     setCheckingLocalAIStatus(true);
     try {
       const result = (await fetch(
@@ -607,6 +512,11 @@ export default function SettingsPage() {
         setModels(nextModels);
         setAccountSyncAvailable(profileResult.ok);
 
+        let nextSelectedModelId = normalizeLocalModelSelection(
+          localSelectedModelId,
+          nextModels,
+        );
+
         if (profileResult.profile) {
           setCreditBalance(profileResult.profile.credit_balance);
           if (
@@ -616,7 +526,10 @@ export default function SettingsPage() {
                 model.model_id === profileResult.profile.preferred_ai_model_id,
             )
           ) {
-            setSelectedModelId(profileResult.profile.preferred_ai_model_id);
+            nextSelectedModelId = normalizeLocalModelSelection(
+              profileResult.profile.preferred_ai_model_id,
+              nextModels,
+            );
           }
         } else if (token) {
           setNotice({
@@ -625,10 +538,14 @@ export default function SettingsPage() {
           });
         }
 
+        if (nextSelectedModelId !== localSelectedModelId) {
+          setSelectedModelId(nextSelectedModelId);
+        }
+
         if (
           nextModels.length > 0 &&
-          !nextModels.some((model) => model.model_id === localSelectedModelId) &&
-          !isLocalAIModelId(localSelectedModelId)
+          !nextModels.some((model) => model.model_id === nextSelectedModelId) &&
+          !isLocalAIModelId(nextSelectedModelId)
         ) {
           setSelectedModelId(nextModels[0].model_id);
         }
@@ -644,7 +561,7 @@ export default function SettingsPage() {
   }, [token, setCreditBalance, setSelectedModelId]);
 
   useEffect(() => {
-    void refreshLocalAIStatus(preferredLocalModel?.model_id ?? DEFAULT_LOCAL_AI_MODEL_ID);
+    void refreshLocalAIStatus(preferredLocalModel?.model_id ?? LOCAL_AI_AUTO_MODEL_ID);
   }, [preferredLocalModel?.model_id, refreshLocalAIStatus]);
 
   useEffect(() => {
@@ -662,9 +579,18 @@ export default function SettingsPage() {
     return () => window.cancelAnimationFrame(frame);
   }, []);
 
+  const selectableModels = models.filter((model) => {
+    if (!isLocalAIModelId(model.model_id)) return true;
+    if (!preferredLocalModel) return true;
+    return model.model_id === preferredLocalModel.model_id;
+  });
   const selectedModel =
-    models.find((model) => model.model_id === selectedModelId) ?? models[0] ?? null;
-  const displayedModels = [...models].sort((left, right) => {
+    selectableModels.find((model) => model.model_id === selectedModelId) ??
+    (isLocalAIModelId(selectedModelId) ? preferredLocalModel : null) ??
+    selectableModels[0] ??
+    null;
+  const selectedModelIsLocal = isLocalAIModelId(selectedModel?.model_id);
+  const displayedModels = [...selectableModels].sort((left, right) => {
     const localDiff =
       Number(isLocalAIModelId(right.model_id)) -
       Number(isLocalAIModelId(left.model_id));
@@ -884,16 +810,6 @@ export default function SettingsPage() {
 
         <div className="ornate-scrollbar relative flex-1 min-h-0 overflow-y-auto p-4 sm:p-5">
           <div className="flex min-h-0 flex-col gap-4">
-            <LMStudioPanel
-              localModel={preferredLocalModel}
-              selectedModelId={selectedModelId}
-              savingModelId={savingModelId}
-              status={localAIStatus}
-              checkingStatus={checkingLocalAIStatus}
-              onSelect={(modelId) => void persistModelSelection(modelId)}
-              onRefreshStatus={() => void refreshLocalAIStatus()}
-            />
-
             <section ref={rivalSectionRef} className="min-h-0">
               <div className="flex min-h-0 flex-col">
                 <div className="pb-4">
@@ -902,7 +818,11 @@ export default function SettingsPage() {
                     whileHover={{ y: -1.5 }}
                     whileTap={{ scale: 0.995 }}
                     onClick={() => setModelsExpanded((current) => !current)}
-                    className="group relative flex w-full items-center justify-between gap-4 rounded-[1.6rem] border border-white/8 bg-[linear-gradient(180deg,rgba(17,14,11,0.76),rgba(11,9,8,0.82))] px-4 py-4 text-left shadow-[0_16px_40px_rgba(0,0,0,0.2)] transition-[border-color,box-shadow,background-color,transform] duration-300 hover:border-amber-200/24 hover:shadow-[0_20px_45px_rgba(0,0,0,0.24)]"
+                    className={`group relative flex w-full items-center justify-between gap-4 rounded-[1.6rem] border px-4 py-4 text-left shadow-[0_16px_40px_rgba(0,0,0,0.2)] transition-[border-color,box-shadow,background-color,transform] duration-300 hover:shadow-[0_20px_45px_rgba(0,0,0,0.24)] ${
+                      selectedModelIsLocal
+                        ? "border-emerald-300/16 bg-[linear-gradient(180deg,rgba(10,33,25,0.72),rgba(8,18,14,0.84))] hover:border-emerald-200/28"
+                        : "border-white/8 bg-[linear-gradient(180deg,rgba(17,14,11,0.76),rgba(11,9,8,0.82))] hover:border-amber-200/24"
+                    }`}
                     onMouseMove={handlePremiumSurfacePointer}
                     style={PREMIUM_PANEL_STYLE}
                     aria-expanded={modelsExpanded}
@@ -916,7 +836,13 @@ export default function SettingsPage() {
                         </span>
                       </div>
                       <div className="mt-2 min-w-0 pl-[2.7rem]">
-                        <div className="truncate font-gold-shiny text-[1.35rem] font-black sm:text-[1.55rem]">
+                        <div
+                          className={`truncate text-[1.35rem] font-black sm:text-[1.55rem] ${
+                            selectedModelIsLocal
+                              ? "text-emerald-100"
+                              : "font-gold-shiny"
+                          }`}
+                        >
                           {selectedModel?.display_name ?? "No rival selected"}
                         </div>
                       </div>
@@ -925,7 +851,11 @@ export default function SettingsPage() {
                     <motion.div
                       animate={{ rotate: modelsExpanded ? 180 : 0 }}
                       transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-                      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-amber-300/18 bg-white/5 text-amber-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
+                      className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full border bg-white/5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] ${
+                        selectedModelIsLocal
+                          ? "border-emerald-300/22 text-emerald-100"
+                          : "border-amber-300/18 text-amber-100"
+                      }`}
                     >
                       <svg
                         viewBox="0 0 24 24"
@@ -1013,6 +943,39 @@ export default function SettingsPage() {
                                   {displayedModels.map((model) => {
                                     const isSelected = selectedModelId === model.model_id;
                                     const isSaving = savingModelId === model.model_id;
+                                    const isLocal = isLocalAIModelId(model.model_id);
+                                    const localStatusBadge = getLocalAIStatusBadge(
+                                      localAIStatus,
+                                      checkingLocalAIStatus,
+                                    );
+                                    const selectedCellStyle = isLocal
+                                      ? SELECTED_LOCAL_ROW_CELL_STYLE
+                                      : SELECTED_ROW_CELL_STYLE;
+                                    const rowBackgroundClass = isSelected
+                                      ? isLocal
+                                        ? "bg-[linear-gradient(90deg,rgba(16,185,129,0.20),rgba(16,185,129,0.08)_46%,rgba(16,185,129,0.03))]"
+                                        : "bg-[linear-gradient(90deg,rgba(251,191,36,0.12),rgba(251,191,36,0.03)_42%,transparent)]"
+                                      : isLocal
+                                        ? "bg-[linear-gradient(90deg,rgba(16,185,129,0.07),rgba(16,185,129,0.025)_48%,transparent)] hover:bg-emerald-400/[0.065]"
+                                        : "hover:bg-white/[0.035]";
+                                    const focusBorderClass = isLocal
+                                      ? "group-focus-visible:border-emerald-300/30"
+                                      : "group-focus-visible:border-amber-300/24";
+                                    const idleBorderClass = isLocal
+                                      ? "border-b border-emerald-300/12 group-hover:border-emerald-300/26"
+                                      : "border-b border-white/6 group-hover:border-amber-300/14";
+                                    const selectedLeftCellClass = isLocal
+                                      ? "border-y border-l border-emerald-300/52 shadow-[inset_0_0_0_1px_rgba(16,185,129,0.22)]"
+                                      : "border-y border-l border-amber-300/44 shadow-[inset_0_0_0_1px_rgba(251,191,36,0.18)]";
+                                    const selectedMiddleCellClass = isLocal
+                                      ? "border-y border-emerald-300/52 shadow-[inset_0_0_0_1px_rgba(16,185,129,0.22)]"
+                                      : "border-y border-amber-300/44 shadow-[inset_0_0_0_1px_rgba(251,191,36,0.18)]";
+                                    const selectedRightCellClass = isLocal
+                                      ? "border-y border-r border-emerald-300/52 shadow-[inset_0_0_0_1px_rgba(16,185,129,0.22)]"
+                                      : "border-y border-r border-amber-300/44 shadow-[inset_0_0_0_1px_rgba(251,191,36,0.18)]";
+                                    const selectedTextClass = isLocal
+                                      ? "text-emerald-50"
+                                      : "text-amber-100";
                                     const contextShare =
                                       model.context_window && maxContextWindow > 0
                                         ? Math.max(
@@ -1035,26 +998,28 @@ export default function SettingsPage() {
                                             void persistModelSelection(model.model_id);
                                           })
                                         }
-                                        className={`group cursor-pointer outline-none transition-[background-color,box-shadow,transform] duration-300 ${
-                                          isSelected
-                                            ? "bg-[linear-gradient(90deg,rgba(251,191,36,0.12),rgba(251,191,36,0.03)_42%,transparent)]"
-                                            : "hover:bg-white/[0.035]"
-                                        } ${savingModelId ? "pointer-events-none opacity-75" : ""}`}
+                                        className={`group cursor-pointer outline-none transition-[background-color,box-shadow,transform] duration-300 ${rowBackgroundClass} ${savingModelId ? "pointer-events-none opacity-75" : ""}`}
                                       >
                                         <td
-                                          className={`px-4 py-5 align-top transition-[border-color,box-shadow,background-color] duration-300 group-focus-visible:border-amber-300/24 ${
+                                          className={`px-4 py-5 align-top transition-[border-color,box-shadow,background-color] duration-300 ${focusBorderClass} ${
                                             isSelected
-                                              ? "border-y border-l border-amber-300/44 shadow-[inset_0_0_0_1px_rgba(251,191,36,0.18)]"
-                                              : "border-b border-white/6 group-hover:border-amber-300/14"
+                                              ? selectedLeftCellClass
+                                              : idleBorderClass
                                           } rounded-l-[1.35rem]`}
-                                          style={isSelected ? SELECTED_ROW_CELL_STYLE : undefined}
+                                          style={isSelected ? selectedCellStyle : undefined}
                                         >
                                           <div className="flex min-w-0 items-start gap-3">
                                             <div
-                                              className={`mt-0.5 flex h-12 w-12 shrink-0 items-center justify-center rounded-[1rem] border text-[1.75rem] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] ${
+                                              className={`mt-0.5 flex h-12 w-12 shrink-0 items-center justify-center rounded-[1rem] border font-black shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] ${
+                                                isLocal ? "text-[1rem] tracking-[0.08em]" : "text-[1.75rem]"
+                                              } ${
                                                 isSelected
-                                                  ? "border-amber-300/28 bg-amber-200/8"
-                                                  : "border-white/10 bg-stone-950/78"
+                                                  ? isLocal
+                                                    ? "border-emerald-200/42 bg-emerald-300/18 text-emerald-50"
+                                                    : "border-amber-300/28 bg-amber-200/8"
+                                                  : isLocal
+                                                    ? "border-emerald-300/20 bg-emerald-950/42 text-emerald-100"
+                                                    : "border-white/10 bg-stone-950/78"
                                               }`}
                                             >
                                               {PROVIDER_ICONS[model.provider] || "🔧"}
@@ -1062,18 +1027,41 @@ export default function SettingsPage() {
                                             <div className="min-w-0 flex-1">
                                               <div className="flex flex-wrap items-center gap-2">
                                                 <div className="truncate text-[1.3rem] font-black sm:text-[1.38rem]">
-                                                  <span className={isSelected ? "font-gold-shiny" : "font-gold-dark"}>
+                                                  <span
+                                                    className={
+                                                      isLocal
+                                                        ? isSelected
+                                                          ? "text-emerald-50"
+                                                          : "text-emerald-200"
+                                                        : isSelected
+                                                          ? "font-gold-shiny"
+                                                          : "font-gold-dark"
+                                                    }
+                                                  >
                                                     {model.display_name}
                                                   </span>
                                                 </div>
-                                                <span
-                                                  className={`rounded-full px-2.5 py-1 text-[0.72rem] font-semibold uppercase tracking-[0.18em] ${
-                                                    QUALITY_COLORS[model.quality_tier] ||
-                                                    QUALITY_COLORS.standard
-                                                  }`}
-                                                >
-                                                  {model.quality_tier}
-                                                </span>
+                                                {isLocal ? (
+                                                  <>
+                                                    <span className="rounded-full border border-emerald-300/26 bg-emerald-300/14 px-2.5 py-1 text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-emerald-50">
+                                                      Free
+                                                    </span>
+                                                    <span
+                                                      className={`rounded-full border px-2.5 py-1 text-[0.72rem] font-semibold uppercase tracking-[0.18em] ${localStatusBadge.className}`}
+                                                    >
+                                                      {localStatusBadge.label}
+                                                    </span>
+                                                  </>
+                                                ) : (
+                                                  <span
+                                                    className={`rounded-full px-2.5 py-1 text-[0.72rem] font-semibold uppercase tracking-[0.18em] ${
+                                                      QUALITY_COLORS[model.quality_tier] ||
+                                                      QUALITY_COLORS.standard
+                                                    }`}
+                                                  >
+                                                    {model.quality_tier}
+                                                  </span>
+                                                )}
                                                 {model.is_flagship && (
                                                   <span className="rounded-full border border-amber-300/20 bg-amber-400/12 px-2.5 py-1 text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-amber-100">
                                                     Flagship
@@ -1084,7 +1072,9 @@ export default function SettingsPage() {
                                                     className={`rounded-full border px-2.5 py-1 text-[0.72rem] font-semibold uppercase tracking-[0.18em] ${
                                                       isSaving
                                                         ? "border-sky-400/24 bg-sky-400/12 text-sky-100"
-                                                        : "border-amber-300/24 bg-amber-300/12 text-amber-100"
+                                                        : isLocal
+                                                          ? "border-emerald-200/34 bg-emerald-300/18 text-emerald-50"
+                                                          : "border-amber-300/24 bg-amber-300/12 text-amber-100"
                                                     }`}
                                                   >
                                                     {isSaving ? "Saving" : "Active"}
@@ -1105,25 +1095,29 @@ export default function SettingsPage() {
                                         <td
                                           className={`px-4 py-5 text-right align-middle transition-[border-color,box-shadow,background-color] duration-300 ${
                                             isSelected
-                                              ? "border-y border-amber-300/44 shadow-[inset_0_0_0_1px_rgba(251,191,36,0.18)]"
-                                              : "border-b border-white/6 group-hover:border-amber-300/14"
+                                              ? selectedMiddleCellClass
+                                              : idleBorderClass
                                           }`}
-                                          style={isSelected ? SELECTED_ROW_CELL_STYLE : undefined}
+                                          style={isSelected ? selectedCellStyle : undefined}
                                         >
                                           <div className="ml-auto flex w-[220px] items-center gap-4 sm:w-[260px]">
                                             <div className="relative h-3.5 flex-1 overflow-hidden rounded-full border border-white/8 bg-black/68 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
                                               <div
                                                 className={`absolute inset-y-0 left-0 rounded-full ${
                                                   isSelected
-                                                    ? "bg-[linear-gradient(90deg,rgba(252,211,77,0.72),rgba(245,158,11,0.74))] shadow-[0_0_12px_rgba(251,191,36,0.18)]"
-                                                    : "bg-[linear-gradient(90deg,rgba(255,255,255,0.26),rgba(245,158,11,0.52))]"
+                                                    ? isLocal
+                                                      ? "bg-[linear-gradient(90deg,rgba(110,231,183,0.82),rgba(16,185,129,0.82))] shadow-[0_0_12px_rgba(16,185,129,0.20)]"
+                                                      : "bg-[linear-gradient(90deg,rgba(252,211,77,0.72),rgba(245,158,11,0.74))] shadow-[0_0_12px_rgba(251,191,36,0.18)]"
+                                                    : isLocal
+                                                      ? "bg-[linear-gradient(90deg,rgba(110,231,183,0.42),rgba(16,185,129,0.58))]"
+                                                      : "bg-[linear-gradient(90deg,rgba(255,255,255,0.26),rgba(245,158,11,0.52))]"
                                                 }`}
                                                 style={{ width: `${contextShare}%` }}
                                               />
                                             </div>
                                             <div
                                               className={`w-16 text-right text-base font-semibold sm:text-[1.15rem] ${
-                                                isSelected ? "text-amber-100" : "text-stone-100"
+                                                isSelected ? selectedTextClass : isLocal ? "text-emerald-100" : "text-stone-100"
                                               }`}
                                             >
                                               {formatContextWindow(model.context_window)}
@@ -1133,14 +1127,14 @@ export default function SettingsPage() {
                                         <td
                                           className={`px-4 py-5 text-right align-middle transition-[border-color,box-shadow,background-color] duration-300 ${
                                             isSelected
-                                              ? "border-y border-r border-amber-300/44 shadow-[inset_0_0_0_1px_rgba(251,191,36,0.18)]"
-                                              : "border-b border-white/6 group-hover:border-amber-300/14"
+                                              ? selectedRightCellClass
+                                              : idleBorderClass
                                           } rounded-r-[1.35rem]`}
-                                          style={isSelected ? SELECTED_ROW_CELL_STYLE : undefined}
+                                          style={isSelected ? selectedCellStyle : undefined}
                                         >
                                           <div
                                             className={`text-base font-semibold sm:text-[1.15rem] ${
-                                              isSelected ? "text-amber-100" : "text-stone-100"
+                                              isSelected ? selectedTextClass : isLocal ? "text-emerald-100" : "text-stone-100"
                                             }`}
                                           >
                                             {formatModelPrice(model)}

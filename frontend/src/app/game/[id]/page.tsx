@@ -1754,7 +1754,7 @@ export default function GamePage() {
         }}
       >
         {activeDragTile ? (
-          <div className="pointer-events-none -translate-y-2 drop-shadow-[0_20px_36px_rgba(0,0,0,0.38)]">
+          <div className="pointer-events-none -translate-y-2">
             <Tile
               letter={activeDragTile.letter}
               isBlank={activeDragTile.letter === "?"}
