@@ -57,6 +57,10 @@ const STEP_CHOICES = [
   { value: 80, label: "80", description: "Max pressure" },
 ];
 
+const LOCAL_CONTEXT_MIN = 512;
+const LOCAL_CONTEXT_MAX = 32768;
+const LOCAL_CONTEXT_PRESETS = [1256, 2048, 4096, 8192];
+
 const BOARD_THEME_CHOICES: Array<{
   value: BoardTheme;
   label: string;
@@ -141,6 +145,14 @@ function noticeClasses(tone: NoticeTone): string {
   return "border-sky-400/25 bg-sky-500/10 text-sky-100";
 }
 
+function clampContextLength(value: number): number {
+  if (!Number.isFinite(value)) return 4096;
+  return Math.min(
+    Math.max(Math.round(value), LOCAL_CONTEXT_MIN),
+    LOCAL_CONTEXT_MAX,
+  );
+}
+
 function getPreferredLocalModel(models: AIModel[]): AIModel | null {
   return (
     models.find((model) => model.model_id === LOCAL_AI_AUTO_MODEL_ID) ??
@@ -179,7 +191,7 @@ function getLocalAIStatusBadge(status: LocalAIStatus, checking: boolean) {
 
   if (!status.matching_model_loaded && !status.runtime_model_id) {
     return {
-      label: "Load model",
+      label: "Auto load",
       className: "border-amber-300/24 bg-amber-400/12 text-amber-100",
     };
   }
@@ -276,6 +288,102 @@ function ChoiceGrid({
             </motion.button>
           );
         })}
+      </div>
+    </SettingsPanel>
+  );
+}
+
+function LocalAIRuntimePanel({
+  contextLength,
+  reloadAfterTurn,
+  onContextLengthChange,
+  onReloadAfterTurnChange,
+}: {
+  contextLength: number;
+  reloadAfterTurn: boolean;
+  onContextLengthChange: (tokens: number) => void;
+  onReloadAfterTurnChange: (enabled: boolean) => void;
+}) {
+  const normalizedContextLength = clampContextLength(contextLength);
+
+  return (
+    <SettingsPanel
+      title="LM Studio Runtime"
+      description="Applied before each local AI turn."
+      className="border-emerald-300/12"
+    >
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+        <div className="min-w-0">
+          <label
+            htmlFor="local-ai-context-length"
+            className="text-[0.78rem] font-semibold uppercase tracking-[0.2em] text-emerald-100/80"
+          >
+            Context window
+          </label>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <input
+              id="local-ai-context-length"
+              type="number"
+              inputMode="numeric"
+              min={LOCAL_CONTEXT_MIN}
+              max={LOCAL_CONTEXT_MAX}
+              step={128}
+              value={normalizedContextLength}
+              onChange={(event) =>
+                onContextLengthChange(clampContextLength(Number(event.target.value)))
+              }
+              className="h-11 w-32 rounded-[0.9rem] border border-emerald-300/22 bg-emerald-950/30 px-3 font-mono text-sm font-semibold text-emerald-50 outline-none transition-colors focus:border-emerald-200/54"
+            />
+            <div className="flex flex-wrap gap-2">
+              {LOCAL_CONTEXT_PRESETS.map((preset) => {
+                const isSelected = normalizedContextLength === preset;
+                return (
+                  <button
+                    key={preset}
+                    type="button"
+                    onClick={() => onContextLengthChange(preset)}
+                    className={`rounded-full border px-3 py-1.5 text-[0.74rem] font-semibold uppercase tracking-[0.14em] transition-colors ${
+                      isSelected
+                        ? "border-emerald-200/46 bg-emerald-300/18 text-emerald-50"
+                        : "border-white/10 bg-white/5 text-stone-300 hover:border-emerald-300/28 hover:text-emerald-100"
+                    }`}
+                  >
+                    {preset}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          role="switch"
+          aria-checked={reloadAfterTurn}
+          onClick={() => onReloadAfterTurnChange(!reloadAfterTurn)}
+          className={`flex min-w-[13rem] items-center justify-between gap-4 rounded-[1.1rem] border px-4 py-3 text-left transition-colors ${
+            reloadAfterTurn
+              ? "border-emerald-200/34 bg-emerald-300/14 text-emerald-50"
+              : "border-white/10 bg-stone-950/72 text-stone-300 hover:border-emerald-300/24"
+          }`}
+        >
+          <span className="text-[0.82rem] font-semibold uppercase tracking-[0.16em]">
+            Reload after turn
+          </span>
+          <span
+            className={`relative h-6 w-11 rounded-full border transition-colors ${
+              reloadAfterTurn
+                ? "border-emerald-200/42 bg-emerald-400/28"
+                : "border-white/12 bg-black/40"
+            }`}
+          >
+            <span
+              className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow-[0_4px_12px_rgba(0,0,0,0.28)] transition-transform ${
+                reloadAfterTurn ? "translate-x-5" : "translate-x-1"
+              }`}
+            />
+          </span>
+        </button>
       </div>
     </SettingsPanel>
   );
@@ -443,6 +551,12 @@ export default function SettingsPage() {
   const setAITimeout = useGameStore((s) => s.setAITimeout);
   const aiMaxSteps = useGameStore((s) => s.aiMaxSteps);
   const setAIMaxSteps = useGameStore((s) => s.setAIMaxSteps);
+  const localAIContextLength = useGameStore((s) => s.localAIContextLength);
+  const setLocalAIContextLength = useGameStore((s) => s.setLocalAIContextLength);
+  const localAIReloadAfterTurn = useGameStore((s) => s.localAIReloadAfterTurn);
+  const setLocalAIReloadAfterTurn = useGameStore(
+    (s) => s.setLocalAIReloadAfterTurn,
+  );
   const boardTheme = useGameStore((s) => s.boardTheme);
   const setBoardTheme = useGameStore((s) => s.setBoardTheme);
   const boardShineEnabled = useGameStore((s) => s.boardShineEnabled);
@@ -877,6 +991,15 @@ export default function SettingsPage() {
                       Updating {savingModelId}...
                     </div>
                   )}
+
+                  <div className="mt-3">
+                    <LocalAIRuntimePanel
+                      contextLength={localAIContextLength}
+                      reloadAfterTurn={localAIReloadAfterTurn}
+                      onContextLengthChange={setLocalAIContextLength}
+                      onReloadAfterTurnChange={setLocalAIReloadAfterTurn}
+                    />
+                  </div>
                 </div>
 
                 <AnimatePresence initial={false}>

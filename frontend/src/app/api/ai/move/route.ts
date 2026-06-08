@@ -29,7 +29,10 @@ import {
   isGatewayConfigured,
 } from "@/lib/ai-gateway";
 import { isLocalAIModelId } from "@/lib/local-ai";
-import { resolveLMStudioRuntimeModelId } from "@/lib/lm-studio";
+import {
+  prepareLMStudioModelForTurn,
+  unloadLMStudioModel,
+} from "@/lib/lm-studio";
 import {
   LOCAL_MOVE_SYSTEM_PROMPT,
   MOVE_SYSTEM_PROMPT,
@@ -48,6 +51,9 @@ const MAX_MAX_OUTPUT_TOKENS = 64000;
 const DEFAULT_LM_STUDIO_MAX_OUTPUT_TOKENS = 4096;
 const MIN_LM_STUDIO_MAX_OUTPUT_TOKENS = 512;
 const MAX_LM_STUDIO_MAX_OUTPUT_TOKENS = 8192;
+const DEFAULT_LM_STUDIO_CONTEXT_LENGTH = 4096;
+const MIN_LM_STUDIO_CONTEXT_LENGTH = 512;
+const MAX_LM_STUDIO_CONTEXT_LENGTH = 32768;
 const AUTO_FINALIZE_GRACE_MS = 2500;
 const AUTO_FINALIZE_VALID_CAP = 4;
 const EXTENDED_AUTO_FINALIZE_GRACE_MS = 6000;
@@ -532,6 +538,23 @@ function getLMStudioMaxOutputTokens() {
   );
 }
 
+function getRequestedLMStudioContextLength(value: unknown) {
+  const parsed =
+    typeof value === "number"
+      ? value
+      : Number.parseInt(String(value ?? ""), 10);
+
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_LM_STUDIO_CONTEXT_LENGTH;
+  }
+
+  return clampNumber(
+    Math.round(parsed),
+    MIN_LM_STUDIO_CONTEXT_LENGTH,
+    MAX_LM_STUDIO_CONTEXT_LENGTH,
+  );
+}
+
 function canBuildWordFromRack(word: string, rack: string): boolean {
   const counts = new Map<string, number>();
   for (const letter of rack.toUpperCase()) {
@@ -570,6 +593,8 @@ export async function POST(req: NextRequest) {
     model_id?: string;
     timeout?: number;
     max_steps?: number;
+    lmstudio_context_length?: number;
+    lmstudio_reload_after_turn?: boolean;
   };
 
   const timeoutS = Math.max(15, Math.min(timeout ?? DEFAULT_TIMEOUT_S, 600));
@@ -582,6 +607,13 @@ export async function POST(req: NextRequest) {
   );
   const startTime = Date.now();
   const requestedModelId = model_id || null;
+  const lmStudioContextLength = getRequestedLMStudioContextLength(
+    body.lmstudio_context_length,
+  );
+  const lmStudioReloadAfterTurn =
+    typeof body.lmstudio_reload_after_turn === "boolean"
+      ? body.lmstudio_reload_after_turn
+      : true;
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -618,6 +650,8 @@ export async function POST(req: NextRequest) {
       let accumulatedUsage: ReturnType<typeof normalizeUsage> = null;
       let completedStepCount = 0;
       let completedToolCallCount = 0;
+      let localRuntimeModelIdForUnload: string | null = null;
+      let shouldUnloadLocalRuntimeModel = false;
       const completedStepModels: Array<{
         step: number;
         provider: string;
@@ -784,9 +818,15 @@ export async function POST(req: NextRequest) {
           typeof context.ai_prompt_text === "string" && context.ai_prompt_text.trim().length > 0
             ? context.ai_prompt_text
             : MOVE_SYSTEM_PROMPT;
-        const runtimeModelId = isLocalModel
-          ? await resolveLMStudioRuntimeModelId(resolvedModelId)
-          : resolvedModelId;
+        const localPrepareResult = isLocalModel
+          ? await prepareLMStudioModelForTurn({
+              catalogModelId: resolvedModelId,
+              contextLength: lmStudioContextLength,
+              reloadBeforeTurn: true,
+              signal: abortController.signal,
+            })
+          : null;
+        const runtimeModelId = localPrepareResult?.runtimeModelId ?? resolvedModelId;
         if (!runtimeModelId) {
           emit({
             type: "error",
@@ -795,6 +835,11 @@ export async function POST(req: NextRequest) {
           });
           closeStream();
           return;
+        }
+        if (isLocalModel) {
+          localRuntimeModelIdForUnload =
+            localPrepareResult?.instanceId ?? runtimeModelId;
+          shouldUnloadLocalRuntimeModel = lmStudioReloadAfterTurn;
         }
 
         const model = getModel(
@@ -812,6 +857,20 @@ export async function POST(req: NextRequest) {
             message: `Using loaded LM Studio model ${runtimeModelId}.`,
           });
         }
+        if (isLocalModel) {
+          emit({
+            type: "thinking",
+            status: "local_model_loaded",
+            message: `LM Studio model is loaded with ${lmStudioContextLength} context tokens.`,
+            lmstudio_context_length: lmStudioContextLength,
+            lmstudio_reload_after_turn: lmStudioReloadAfterTurn,
+            lmstudio_loaded_before_prepare:
+              localPrepareResult?.loadedBeforePrepare ?? false,
+            lmstudio_loaded_context_length:
+              localPrepareResult?.loadedContextLength ?? null,
+            lmstudio_load_result: localPrepareResult?.loadResult ?? null,
+          });
+        }
 
         emit({
           type: "thinking",
@@ -822,6 +881,10 @@ export async function POST(req: NextRequest) {
           max_output_tokens: maxOutputTokens,
           requested_max_output_tokens: requestedMaxOutputTokens,
           local_max_output_tokens: localMaxOutputTokens,
+          lmstudio_context_length: isLocalModel ? lmStudioContextLength : null,
+          lmstudio_reload_after_turn: isLocalModel
+            ? lmStudioReloadAfterTurn
+            : null,
           provider_path: providerPath,
         });
         emit({
@@ -1162,6 +1225,15 @@ export async function POST(req: NextRequest) {
           max_output_tokens: maxOutputTokens,
           requested_max_output_tokens: requestedMaxOutputTokens,
           local_max_output_tokens: localMaxOutputTokens,
+          lmstudio_context_length: isLocalModel ? lmStudioContextLength : null,
+          lmstudio_reload_after_turn: isLocalModel
+            ? lmStudioReloadAfterTurn
+            : null,
+          lmstudio_loaded_before_prepare:
+            localPrepareResult?.loadedBeforePrepare ?? null,
+          lmstudio_loaded_context_length:
+            localPrepareResult?.loadedContextLength ?? null,
+          lmstudio_load_result: localPrepareResult?.loadResult ?? null,
           response_model: aiResult?.response?.modelId ?? lastResponseModelId,
           response_id: aiResult?.response?.id,
           response_headers: aiResult?.response?.headers,
@@ -1365,6 +1437,25 @@ export async function POST(req: NextRequest) {
           });
         }
       } finally {
+        if (shouldUnloadLocalRuntimeModel && localRuntimeModelIdForUnload) {
+          try {
+            await unloadLMStudioModel(localRuntimeModelIdForUnload);
+            emit({
+              type: "thinking",
+              status: "local_model_unloaded",
+              message: `LM Studio model ${localRuntimeModelIdForUnload} was unloaded.`,
+            });
+          } catch (error) {
+            emit({
+              type: "thinking",
+              status: "local_model_unload_failed",
+              message:
+                error instanceof Error
+                  ? error.message
+                  : "LM Studio model unload failed.",
+            });
+          }
+        }
         closeStream();
       }
     },

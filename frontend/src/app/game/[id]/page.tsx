@@ -570,6 +570,8 @@ export default function GamePage() {
   const setSelectedPromptId = useGameStore((s) => s.setSelectedPromptId);
   const aiTimeout = useGameStore((s) => s.aiTimeout);
   const aiMaxSteps = useGameStore((s) => s.aiMaxSteps);
+  const localAIContextLength = useGameStore((s) => s.localAIContextLength);
+  const localAIReloadAfterTurn = useGameStore((s) => s.localAIReloadAfterTurn);
   const boardTheme = useGameStore((s) => s.boardTheme);
   const premiumLookEnabled = useGameStore((s) => s.premiumLookEnabled);
   const addAICandidate = useGameStore((s) => s.addAICandidate);
@@ -1038,6 +1040,8 @@ export default function GamePage() {
           model_id: activeModelId,
           timeout: aiTimeout,
           max_steps: aiMaxSteps,
+          lmstudio_context_length: localAIContextLength,
+          lmstudio_reload_after_turn: localAIReloadAfterTurn,
         }),
       });
       const contentType = res.headers.get("content-type") ?? "";
@@ -1157,7 +1161,7 @@ export default function GamePage() {
       aiInFlightRef.current = false;
     }
   }, [
-    token, gameState, gameId, selectedModelId, aiTimeout, aiMaxSteps, creditBalance, aiSlotNumber,
+    token, gameState, gameId, selectedModelId, aiTimeout, aiMaxSteps, localAIContextLength, localAIReloadAfterTurn, creditBalance, aiSlotNumber,
     setCreditBalance, setAIThinking, setLastMoveResult, setGameState, setAIStatusMessage, syncState,
     clearAICandidates, addAICandidate, startCountdown, stopCountdown, showToast,
   ]);

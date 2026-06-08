@@ -59,6 +59,10 @@ interface GameStore {
   setAITimeout: (seconds: number) => void;
   aiMaxSteps: number;
   setAIMaxSteps: (steps: number) => void;
+  localAIContextLength: number;
+  setLocalAIContextLength: (tokens: number) => void;
+  localAIReloadAfterTurn: boolean;
+  setLocalAIReloadAfterTurn: (enabled: boolean) => void;
   boardTheme: BoardTheme;
   setBoardTheme: (theme: BoardTheme) => void;
   boardShineEnabled: boolean;
@@ -155,6 +159,12 @@ export const useGameStore = create<GameStore>()(
       setAITimeout: (aiTimeout) => set({ aiTimeout }),
       aiMaxSteps: 30,
       setAIMaxSteps: (aiMaxSteps) => set({ aiMaxSteps }),
+      localAIContextLength: 4096,
+      setLocalAIContextLength: (localAIContextLength) =>
+        set({ localAIContextLength }),
+      localAIReloadAfterTurn: true,
+      setLocalAIReloadAfterTurn: (localAIReloadAfterTurn) =>
+        set({ localAIReloadAfterTurn }),
       boardTheme: "wood",
       setBoardTheme: (boardTheme) => set({ boardTheme }),
       boardShineEnabled: true,
@@ -216,6 +226,8 @@ export const useGameStore = create<GameStore>()(
         selectedPromptId: state.selectedPromptId,
         aiTimeout: state.aiTimeout,
         aiMaxSteps: state.aiMaxSteps,
+        localAIContextLength: state.localAIContextLength,
+        localAIReloadAfterTurn: state.localAIReloadAfterTurn,
         boardTheme: state.boardTheme,
         boardShineEnabled: state.boardShineEnabled,
         premiumLookEnabled: state.premiumLookEnabled,
