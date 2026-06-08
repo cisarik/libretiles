@@ -90,12 +90,13 @@ Open http://localhost:3000, register, choose a mode, and play.
 | `NEXT_PUBLIC_DEFAULT_MODEL` | `openai/gpt-5.4` | Default AI model |
 | `LM_STUDIO_BASE_URL` | `http://localhost:1234/v1` | OpenAI-compatible LM Studio server for local/offline AI |
 | `LM_STUDIO_API_KEY` | `lm-studio` | Non-empty bearer token sent to LM Studio |
+| `LM_STUDIO_MAX_OUTPUT_TOKENS` | `4096` | Local-only output cap for `lmstudio/*` models |
 
 ### Local offline AI with LM Studio
 
-Start LM Studio's local server, load `qwen3-14b-sk`, then run `poetry run python manage.py seed_models` from `backend/`. Select **Qwen3 14B SK (LM Studio)** in Settings, or set `NEXT_PUBLIC_DEFAULT_MODEL=lmstudio/qwen3-14b-sk` in `frontend/.env.local`.
+Start LM Studio's local server, load a tool-capable chat model, then run `poetry run python manage.py seed_models` from `backend/`. Select **LM Studio Auto (Free)** in Settings, or set `NEXT_PUBLIC_DEFAULT_MODEL=lmstudio/auto` in `frontend/.env.local`.
 
-The `lmstudio/` prefix is Libre Tiles' catalog/provider marker. The frontend sends the part after the prefix (`qwen3-14b-sk`) to LM Studio's OpenAI-compatible `/v1/chat/completions` endpoint. Local LM Studio turns have zero token price and do not require a positive credit balance.
+The `lmstudio/` prefix is Libre Tiles' catalog/provider marker. `lmstudio/auto` uses the first loaded tool-capable LM Studio model; a specific model like `lmstudio/qwen3-14b-sk` sends the part after the prefix to LM Studio's OpenAI-compatible `/v1/chat/completions` endpoint. Local LM Studio turns have zero token price and do not require a positive credit balance.
 
 ### Docker (optional PostgreSQL + Redis)
 

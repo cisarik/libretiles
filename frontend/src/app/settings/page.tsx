@@ -13,7 +13,11 @@ import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import { useGameStore, type BoardTheme } from "@/hooks/useGameStore";
 import { api } from "@/lib/api";
-import { DEFAULT_LOCAL_AI_MODEL_ID, isLocalAIModelId } from "@/lib/local-ai";
+import {
+  DEFAULT_LOCAL_AI_MODEL_ID,
+  LOCAL_AI_AUTO_MODEL_ID,
+  isLocalAIModelId,
+} from "@/lib/local-ai";
 import {
   PREMIUM_CREDIT_PANEL_STYLE,
   PREMIUM_PANEL_STYLE,
@@ -87,7 +91,9 @@ type LocalAIStatus = {
   ok: boolean;
   reachable: boolean;
   base_url: string;
+  api_base_url?: string;
   model_id: string;
+  runtime_model_id?: string | null;
   matching_model_loaded: boolean;
   models: string[];
   error?: string;
@@ -396,10 +402,10 @@ function LocalAIStatusPill({
     );
   }
 
-  if (!status.matching_model_loaded) {
+  if (!status.matching_model_loaded && !status.runtime_model_id) {
     return (
       <span className="rounded-full border border-amber-300/24 bg-amber-400/12 px-3 py-1 text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-amber-100">
-        Server ready
+        No loaded model
       </span>
     );
   }
@@ -432,7 +438,7 @@ function LMStudioPanel({
   const isSelected = selectedModelId === modelId;
   const isSaving = savingModelId === modelId;
   const canSelect = Boolean(localModel) && !savingModelId;
-  const loadedModels = status?.models?.length ? status.models.join(", ") : "none";
+  const runtimeModel = status?.runtime_model_id ?? "none";
 
   return (
     <section
@@ -477,7 +483,7 @@ function LMStudioPanel({
             <div className="min-w-0">
               <div className="text-stone-500">Loaded</div>
               <div className="mt-1 truncate font-mono text-stone-100">
-                {loadedModels}
+                {runtimeModel}
               </div>
             </div>
           </div>
@@ -548,11 +554,14 @@ export default function SettingsPage() {
   const [checkingLocalAIStatus, setCheckingLocalAIStatus] = useState(false);
   const rivalSectionRef = useRef<HTMLElement | null>(null);
 
-  const localModel =
-    models.find((model) => isLocalAIModelId(model.model_id)) ?? null;
+  const preferredLocalModel =
+    models.find((model) => model.model_id === LOCAL_AI_AUTO_MODEL_ID) ??
+    models.find((model) => isLocalAIModelId(model.model_id)) ??
+    null;
 
   const refreshLocalAIStatus = useCallback(async (modelId?: string) => {
-    const targetModelId = modelId ?? localModel?.model_id ?? DEFAULT_LOCAL_AI_MODEL_ID;
+    const targetModelId =
+      modelId ?? preferredLocalModel?.model_id ?? DEFAULT_LOCAL_AI_MODEL_ID;
     setCheckingLocalAIStatus(true);
     try {
       const result = (await fetch(
@@ -566,6 +575,7 @@ export default function SettingsPage() {
         reachable: false,
         base_url: "http://localhost:1234/v1",
         model_id: targetModelId,
+        runtime_model_id: null,
         matching_model_loaded: false,
         models: [],
         error: "LM Studio status check failed.",
@@ -573,7 +583,7 @@ export default function SettingsPage() {
     } finally {
       setCheckingLocalAIStatus(false);
     }
-  }, [localModel?.model_id]);
+  }, [preferredLocalModel?.model_id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -634,8 +644,8 @@ export default function SettingsPage() {
   }, [token, setCreditBalance, setSelectedModelId]);
 
   useEffect(() => {
-    void refreshLocalAIStatus(localModel?.model_id ?? DEFAULT_LOCAL_AI_MODEL_ID);
-  }, [localModel?.model_id, refreshLocalAIStatus]);
+    void refreshLocalAIStatus(preferredLocalModel?.model_id ?? DEFAULT_LOCAL_AI_MODEL_ID);
+  }, [preferredLocalModel?.model_id, refreshLocalAIStatus]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -875,7 +885,7 @@ export default function SettingsPage() {
         <div className="ornate-scrollbar relative flex-1 min-h-0 overflow-y-auto p-4 sm:p-5">
           <div className="flex min-h-0 flex-col gap-4">
             <LMStudioPanel
-              localModel={localModel}
+              localModel={preferredLocalModel}
               selectedModelId={selectedModelId}
               savingModelId={savingModelId}
               status={localAIStatus}

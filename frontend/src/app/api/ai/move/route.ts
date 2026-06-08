@@ -29,7 +29,13 @@ import {
   isGatewayConfigured,
 } from "@/lib/ai-gateway";
 import { isLocalAIModelId } from "@/lib/local-ai";
-import { MOVE_SYSTEM_PROMPT, buildMoveUserPrompt } from "@/lib/prompts";
+import { resolveLMStudioRuntimeModelId } from "@/lib/lm-studio";
+import {
+  LOCAL_MOVE_SYSTEM_PROMPT,
+  MOVE_SYSTEM_PROMPT,
+  buildLocalMoveUserPrompt,
+  buildMoveUserPrompt,
+} from "@/lib/prompts";
 
 const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8000";
 const DEFAULT_TIMEOUT_S = 30;
@@ -39,10 +45,168 @@ const MAX_STEPS = 100;
 const DEFAULT_MAX_OUTPUT_TOKENS = 10000;
 const MIN_MAX_OUTPUT_TOKENS = 2000;
 const MAX_MAX_OUTPUT_TOKENS = 64000;
+const DEFAULT_LM_STUDIO_MAX_OUTPUT_TOKENS = 4096;
+const MIN_LM_STUDIO_MAX_OUTPUT_TOKENS = 512;
+const MAX_LM_STUDIO_MAX_OUTPUT_TOKENS = 8192;
 const AUTO_FINALIZE_GRACE_MS = 2500;
 const AUTO_FINALIZE_VALID_CAP = 4;
 const EXTENDED_AUTO_FINALIZE_GRACE_MS = 6000;
 const EXTENDED_AUTO_FINALIZE_VALID_CAP = 7;
+const LOCAL_OPENING_FALLBACK_WORDS = [
+  "FILMS",
+  "MAILS",
+  "SLIM",
+  "FAIL",
+  "FILM",
+  "FILS",
+  "ABLE",
+  "BAIL",
+  "BAILS",
+  "AILS",
+  "AIMS",
+  "ALBS",
+  "ALMS",
+  "AMIS",
+  "BIAS",
+  "BALM",
+  "BALMS",
+  "BAMS",
+  "LAMS",
+  "LIBS",
+  "MILS",
+  "SIMA",
+  "AIS",
+  "ALS",
+  "AMI",
+  "BAM",
+  "BAS",
+  "BIS",
+  "FAS",
+  "IFS",
+  "ISM",
+  "LAM",
+  "LIB",
+  "LIS",
+  "MIL",
+  "MIS",
+  "SIB",
+  "SIM",
+  "AA",
+  "AB",
+  "AD",
+  "AE",
+  "AG",
+  "AH",
+  "AI",
+  "AL",
+  "AM",
+  "AN",
+  "AR",
+  "AS",
+  "AW",
+  "AX",
+  "AY",
+  "BA",
+  "BE",
+  "BI",
+  "BO",
+  "BY",
+  "DA",
+  "DE",
+  "DO",
+  "ED",
+  "EF",
+  "EH",
+  "EL",
+  "EM",
+  "EN",
+  "ER",
+  "ES",
+  "ET",
+  "EW",
+  "EX",
+  "FA",
+  "FE",
+  "FY",
+  "GI",
+  "GO",
+  "GU",
+  "HA",
+  "HE",
+  "HI",
+  "HM",
+  "HO",
+  "ID",
+  "IF",
+  "IN",
+  "IO",
+  "IS",
+  "IT",
+  "JO",
+  "KA",
+  "KI",
+  "KO",
+  "KY",
+  "LA",
+  "LI",
+  "LO",
+  "MA",
+  "ME",
+  "MI",
+  "MM",
+  "MO",
+  "MU",
+  "MY",
+  "NA",
+  "NE",
+  "NO",
+  "NU",
+  "OD",
+  "OE",
+  "OF",
+  "OH",
+  "OI",
+  "OM",
+  "ON",
+  "OO",
+  "OP",
+  "OR",
+  "OS",
+  "OU",
+  "OW",
+  "OX",
+  "OY",
+  "PA",
+  "PE",
+  "PI",
+  "PO",
+  "QI",
+  "RE",
+  "SH",
+  "SI",
+  "SO",
+  "ST",
+  "TA",
+  "TE",
+  "TI",
+  "TO",
+  "UG",
+  "UH",
+  "UM",
+  "UN",
+  "UP",
+  "UR",
+  "US",
+  "UT",
+  "WE",
+  "WO",
+  "XI",
+  "XU",
+  "YA",
+  "YE",
+  "YO",
+  "ZA",
+];
 
 function summarizeBackendBody(body: string) {
   return body.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 220);
@@ -252,6 +416,152 @@ function clampNumber(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function normalizePlacementData(value: unknown): PlacementData | null {
+  if (!isRecord(value)) return null;
+  const row = typeof value.row === "number" ? value.row : null;
+  const col = typeof value.col === "number" ? value.col : null;
+  const letter = typeof value.letter === "string" ? value.letter.trim().toUpperCase() : null;
+  const blankAs =
+    typeof value.blank_as === "string"
+      ? value.blank_as.trim().toUpperCase()
+      : typeof value.blankAs === "string"
+        ? value.blankAs.trim().toUpperCase()
+        : null;
+
+  if (row === null || col === null || !letter || letter.length !== 1) {
+    return null;
+  }
+
+  return {
+    row,
+    col,
+    letter,
+    ...(blankAs && blankAs.length === 1 ? { blank_as: blankAs } : {}),
+  };
+}
+
+function normalizePlacementArray(value: unknown): PlacementData[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => normalizePlacementData(item))
+    .filter((item): item is PlacementData => item !== null);
+}
+
+function extractLocalPlacementArray(parsed: unknown): PlacementData[] {
+  if (!isRecord(parsed)) return [];
+
+  const directPlacements = normalizePlacementArray(parsed.placements);
+  if (directPlacements.length > 0) return directPlacements;
+
+  const tilePlacements = normalizePlacementArray(parsed.tiles);
+  if (tilePlacements.length > 0) return tilePlacements;
+
+  if (isRecord(parsed.move)) {
+    const movePlacements = normalizePlacementArray(parsed.move.placements);
+    if (movePlacements.length > 0) return movePlacements;
+  }
+
+  for (const value of Object.values(parsed)) {
+    const placements = normalizePlacementArray(value);
+    if (placements.length > 0) return placements;
+  }
+
+  return [];
+}
+
+function extractJsonObject(text: string, requireAction: boolean): unknown | null {
+  for (let start = text.indexOf("{"); start >= 0; start = text.indexOf("{", start + 1)) {
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+
+    for (let index = start; index < text.length; index += 1) {
+      const char = text[index];
+
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (char === "\\") {
+          escaped = true;
+        } else if (char === "\"") {
+          inString = false;
+        }
+        continue;
+      }
+
+      if (char === "\"") {
+        inString = true;
+      } else if (char === "{") {
+        depth += 1;
+      } else if (char === "}") {
+        depth -= 1;
+        if (depth === 0) {
+          const candidate = text.slice(start, index + 1);
+          if (requireAction && !candidate.includes("\"action\"")) break;
+          try {
+            return JSON.parse(candidate);
+          } catch {
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
+function getLMStudioMaxOutputTokens() {
+  const configured = Number.parseInt(
+    process.env.LM_STUDIO_MAX_OUTPUT_TOKENS ?? "",
+    10,
+  );
+
+  if (!Number.isFinite(configured)) {
+    return DEFAULT_LM_STUDIO_MAX_OUTPUT_TOKENS;
+  }
+
+  return clampNumber(
+    configured,
+    MIN_LM_STUDIO_MAX_OUTPUT_TOKENS,
+    MAX_LM_STUDIO_MAX_OUTPUT_TOKENS,
+  );
+}
+
+function canBuildWordFromRack(word: string, rack: string): boolean {
+  const counts = new Map<string, number>();
+  for (const letter of rack.toUpperCase()) {
+    counts.set(letter, (counts.get(letter) ?? 0) + 1);
+  }
+
+  for (const letter of word.toUpperCase()) {
+    const available = counts.get(letter) ?? 0;
+    const blanks = counts.get("?") ?? 0;
+    if (available > 0) {
+      counts.set(letter, available - 1);
+    } else if (blanks > 0) {
+      counts.set("?", blanks - 1);
+    } else {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function buildOpeningPlacements(word: string): PlacementData[] {
+  const startCol = 7 - Math.floor(word.length / 2);
+  return word.split("").map((letter, index) => ({
+    row: 7,
+    col: startCol + index,
+    letter,
+  }));
+}
+
 export async function POST(req: NextRequest) {
   const body = await req.json();
   const { game_id, token, model_id, timeout } = body as {
@@ -427,13 +737,24 @@ export async function POST(req: NextRequest) {
           typeof context.ai_move_max_output_tokens === "number"
             ? context.ai_move_max_output_tokens
             : Number.parseInt(String(context.ai_move_max_output_tokens ?? ""), 10);
-        const maxOutputTokens = Number.isFinite(backendMaxOutputTokens)
+        const requestedMaxOutputTokens = Number.isFinite(backendMaxOutputTokens)
           ? clampNumber(
               backendMaxOutputTokens,
               MIN_MAX_OUTPUT_TOKENS,
               MAX_MAX_OUTPUT_TOKENS,
             )
           : DEFAULT_MAX_OUTPUT_TOKENS;
+        const resolvedModelId =
+          requestedModelId ||
+          sessionModelId ||
+          process.env.NEXT_PUBLIC_DEFAULT_MODEL ||
+          "openai/gpt-5.4";
+        const isLocalModel = isLocalAIModelId(resolvedModelId);
+        const localMaxOutputTokens = isLocalModel ? getLMStudioMaxOutputTokens() : null;
+        const maxOutputTokens =
+          localMaxOutputTokens !== null
+            ? Math.min(requestedMaxOutputTokens, localMaxOutputTokens)
+            : requestedMaxOutputTokens;
         const useExtendedSearchBudget = timeoutS >= 90 || maxSteps >= 45;
         autoFinalizeGraceMs = useExtendedSearchBudget
           ? EXTENDED_AUTO_FINALIZE_GRACE_MS
@@ -441,12 +762,6 @@ export async function POST(req: NextRequest) {
         autoFinalizeValidCap = useExtendedSearchBudget
           ? EXTENDED_AUTO_FINALIZE_VALID_CAP
           : AUTO_FINALIZE_VALID_CAP;
-        const resolvedModelId =
-          requestedModelId ||
-          sessionModelId ||
-          process.env.NEXT_PUBLIC_DEFAULT_MODEL ||
-          "openai/gpt-5.4";
-        const isLocalModel = isLocalAIModelId(resolvedModelId);
         const profile = await backendGet("/api/auth/me/", token).catch(() => null);
         const availableCredits =
           typeof profile?.credit_balance === "string"
@@ -469,23 +784,91 @@ export async function POST(req: NextRequest) {
           typeof context.ai_prompt_text === "string" && context.ai_prompt_text.trim().length > 0
             ? context.ai_prompt_text
             : MOVE_SYSTEM_PROMPT;
-        const model = getModel(resolvedModelId);
+        const runtimeModelId = isLocalModel
+          ? await resolveLMStudioRuntimeModelId(resolvedModelId)
+          : resolvedModelId;
+        if (!runtimeModelId) {
+          emit({
+            type: "error",
+            error:
+              "LM Studio is reachable, but no loaded tool-capable chat model is available. Load a model in LM Studio and try again.",
+          });
+          closeStream();
+          return;
+        }
+
+        const model = getModel(
+          isLocalModel && runtimeModelId !== resolvedModelId
+            ? `lmstudio/${runtimeModelId}`
+            : resolvedModelId,
+        );
         let providerPath = getProviderPath(resolvedModelId);
         let gatewayFallbackUsed = false;
+
+        if (isLocalModel && runtimeModelId !== resolvedModelId) {
+          emit({
+            type: "thinking",
+            status: "local_model_resolved",
+            message: `Using loaded LM Studio model ${runtimeModelId}.`,
+          });
+        }
 
         emit({
           type: "thinking",
           model: resolvedModelId,
+          runtime_model: runtimeModelId,
           timeout: timeoutS,
           max_steps: maxSteps,
           max_output_tokens: maxOutputTokens,
+          requested_max_output_tokens: requestedMaxOutputTokens,
+          local_max_output_tokens: localMaxOutputTokens,
           provider_path: providerPath,
         });
         emit({
           type: "thinking",
           status: "searching",
-          message: "Exploring legal words and validating the board...",
+          message: isLocalModel
+            ? "Using compact local prompt and server-side final validation..."
+            : "Exploring legal words and validating the board...",
         });
+
+        const runLocalGeneration = (activeModel: ReturnType<typeof getModel>) =>
+          Promise.race([
+            generateText({
+              model: activeModel,
+              maxOutputTokens,
+              temperature: 0.1,
+              system: LOCAL_MOVE_SYSTEM_PROMPT,
+              prompt: buildLocalMoveUserPrompt(context),
+              providerOptions: {
+                openai: {
+                  reasoningEffort: "none",
+                },
+              },
+              abortSignal: abortController.signal,
+              stopWhen: stepCountIs(1),
+              onStepFinish: (step) => {
+                completedStepCount += 1;
+                completedToolCallCount += step.toolCalls.length;
+                accumulatedUsage = mergeUsage(
+                  accumulatedUsage,
+                  normalizeUsage(step.usage as UsageLike | undefined),
+                );
+                completedStepModels.push({
+                  step: step.stepNumber,
+                  provider: step.model.provider,
+                  model_id: step.model.modelId,
+                  response_model: step.response.modelId,
+                });
+                lastResponseModelId = step.response.modelId;
+              },
+            }),
+            new Promise<never>((_, reject) => {
+              abortController.signal.addEventListener("abort", () => {
+                reject(new DOMException("Timeout", "AbortError"));
+              });
+            }),
+          ]);
 
         const runGeneration = (activeModel: ReturnType<typeof getModel>) =>
           Promise.race([
@@ -605,7 +988,9 @@ export async function POST(req: NextRequest) {
         let timedOut = false;
 
         try {
-          aiResult = await runGeneration(model);
+          aiResult = await (isLocalModel
+            ? runLocalGeneration(model)
+            : runGeneration(model));
         } catch (err) {
           if (err instanceof DOMException && err.name === "AbortError") {
             timedOut = true;
@@ -674,33 +1059,28 @@ export async function POST(req: NextRequest) {
           }
         } else if (aiResult) {
           // Parse AI response text
-          try {
-            const jsonMatch = aiResult.text.match(
-              /\{[\s\S]*?"action"[\s\S]*?\}/,
-            );
-            if (jsonMatch) {
-              const parsed = JSON.parse(jsonMatch[0]);
-              finalAction = parsed.action || "place";
-
-              if (
-                parsed.placements &&
-                Array.isArray(parsed.placements)
-              ) {
-                finalPlacements = parsed.placements;
-              }
-
-              if (
-                finalAction === "exchange" &&
-                Array.isArray(parsed.exchange_letters)
-              ) {
-                exchangeLetters = parsed.exchange_letters.filter(
-                  (letter: unknown): letter is string =>
-                    typeof letter === "string" && letter.length === 1,
-                );
-              }
+          const parsed =
+            extractJsonObject(aiResult.text, true) ??
+            (isLocalModel ? extractJsonObject(aiResult.text, false) : null);
+          if (isRecord(parsed)) {
+            if (typeof parsed.action === "string") {
+              finalAction = parsed.action;
             }
-          } catch {
-            // JSON parse failed
+
+            const parsedPlacements = extractLocalPlacementArray(parsed);
+            if (parsedPlacements.length > 0) {
+              finalPlacements = parsedPlacements;
+            }
+
+            if (
+              finalAction === "exchange" &&
+              Array.isArray(parsed.exchange_letters)
+            ) {
+              exchangeLetters = parsed.exchange_letters.filter(
+                (letter: unknown): letter is string =>
+                  typeof letter === "string" && letter.length === 1,
+              );
+            }
           }
 
           // Fallback: last validateMove tool call
@@ -719,6 +1099,34 @@ export async function POST(req: NextRequest) {
                 }
               }
               if (finalPlacements.length > 0) break;
+            }
+          }
+
+          if (
+            isLocalModel &&
+            finalPlacements.length === 0 &&
+            context.is_first_move
+          ) {
+            const rack = String(context.ai_state?.ai_rack ?? "");
+            for (const word of LOCAL_OPENING_FALLBACK_WORDS) {
+              if (!canBuildWordFromRack(word, rack)) continue;
+              const placements = buildOpeningPlacements(word);
+              const result = await backendPost(
+                `/api/game/${game_id}/validate-move/`,
+                { placements },
+                token,
+              );
+              trackCandidate(result, placements);
+              if (result.valid === true) {
+                finalAction = "place";
+                finalPlacements = placements;
+                emit({
+                  type: "thinking",
+                  status: "local_opening_fallback",
+                  message: `Local fallback found ${word}.`,
+                });
+                break;
+              }
             }
           }
 
@@ -748,9 +1156,12 @@ export async function POST(req: NextRequest) {
           requested_model: requestedModelId,
           session_model: sessionModelId,
           model: resolvedModelId,
+          runtime_model: runtimeModelId,
           provider_path: providerPath,
           gateway_fallback_used: gatewayFallbackUsed,
           max_output_tokens: maxOutputTokens,
+          requested_max_output_tokens: requestedMaxOutputTokens,
+          local_max_output_tokens: localMaxOutputTokens,
           response_model: aiResult?.response?.modelId ?? lastResponseModelId,
           response_id: aiResult?.response?.id,
           response_headers: aiResult?.response?.headers,

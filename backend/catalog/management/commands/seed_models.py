@@ -15,6 +15,23 @@ from catalog.models import AIModel
 
 DEFAULT_MODELS = [
     {
+        "provider": "lmstudio",
+        "model_id": "lmstudio/auto",
+        "display_name": "LM Studio Auto (Free)",
+        "description": (
+            "Local offline opponent that uses the first loaded tool-capable "
+            "LM Studio chat model. Charges no credits."
+        ),
+        "quality_tier": "standard",
+        "cost_per_game": "0.00",
+        "gateway_managed": False,
+        "gateway_available": True,
+        "context_window": 32768,
+        "tags": ["tool-use"],
+        "pricing": {},
+        "sort_order": 1,
+    },
+    {
         "provider": "openai",
         "model_id": "openai/gpt-5.4",
         "display_name": "GPT-5.4",
@@ -89,7 +106,7 @@ DEFAULT_MODELS = [
         "context_window": 32768,
         "tags": ["tool-use"],
         "pricing": {},
-        "sort_order": 5,
+        "sort_order": 6,
     },
 ]
 

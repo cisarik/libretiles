@@ -3,23 +3,13 @@ import {
   DEFAULT_LOCAL_AI_MODEL_ID,
   stripLocalAIModelPrefix,
 } from "@/lib/local-ai";
-
-const LM_STUDIO_BASE_URL =
-  process.env.LM_STUDIO_BASE_URL || "http://localhost:1234/v1";
-
-function trimTrailingSlash(value: string): string {
-  return value.replace(/\/+$/, "");
-}
-
-function modelMatches(loadedModelId: string, requestedModelId: string): boolean {
-  const loaded = loadedModelId.toLowerCase();
-  const requested = requestedModelId.toLowerCase();
-  return (
-    loaded === requested ||
-    loaded.endsWith(`/${requested}`) ||
-    loaded.includes(requested)
-  );
-}
+import {
+  fetchLMStudioModelCatalog,
+  getLMStudioBaseUrl,
+  getLMStudioApiV0BaseUrl,
+  modelMatches,
+  selectLoadedLMStudioModel,
+} from "@/lib/lm-studio";
 
 export async function GET(req: NextRequest) {
   const requestedModelId = stripLocalAIModelPrefix(
@@ -29,41 +19,44 @@ export async function GET(req: NextRequest) {
   const timeoutId = setTimeout(() => controller.abort(), 2500);
 
   try {
-    const res = await fetch(`${trimTrailingSlash(LM_STUDIO_BASE_URL)}/models`, {
-      cache: "no-store",
-      signal: controller.signal,
-    });
-    const payload = await res.json().catch(() => null);
-    const rawModels = Array.isArray(payload?.data) ? payload.data : [];
-    const modelIds: string[] = rawModels
-      .map((model: unknown) =>
-        typeof model === "object" &&
-        model !== null &&
-        "id" in model &&
-        typeof model.id === "string"
-          ? model.id
-          : null,
-      )
-      .filter((modelId: string | null): modelId is string => modelId !== null);
+    const models = await fetchLMStudioModelCatalog(controller.signal);
+    const loadedModel = selectLoadedLMStudioModel(
+      models,
+      req.nextUrl.searchParams.get("model") || DEFAULT_LOCAL_AI_MODEL_ID,
+    );
+    const loadedModelIds = models
+      .filter((model) => model.state === "loaded")
+      .map((model) => model.id);
 
     return NextResponse.json({
-      ok: res.ok,
-      reachable: res.ok,
-      base_url: LM_STUDIO_BASE_URL,
+      ok: true,
+      reachable: true,
+      base_url: getLMStudioBaseUrl(),
+      api_base_url: getLMStudioApiV0BaseUrl(),
       model_id: requestedModelId,
-      matching_model_loaded: modelIds.some((modelId) =>
+      runtime_model_id: loadedModel?.id ?? null,
+      matching_model_loaded: loadedModelIds.some((modelId) =>
         modelMatches(modelId, requestedModelId),
       ),
-      models: modelIds.slice(0, 12),
+      models: loadedModelIds.slice(0, 12),
+      available_models: models.map((model) => ({
+        id: model.id,
+        state: model.state,
+        type: model.type,
+        capabilities: model.capabilities,
+      })),
     });
   } catch (error) {
     return NextResponse.json({
       ok: false,
       reachable: false,
-      base_url: LM_STUDIO_BASE_URL,
+      base_url: getLMStudioBaseUrl(),
+      api_base_url: getLMStudioApiV0BaseUrl(),
       model_id: requestedModelId,
+      runtime_model_id: null,
       matching_model_loaded: false,
       models: [],
+      available_models: [],
       error: error instanceof Error ? error.message : "LM Studio is unreachable.",
     });
   } finally {
