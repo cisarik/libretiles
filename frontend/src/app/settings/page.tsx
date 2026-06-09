@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -102,10 +103,21 @@ type LocalAIStatus = {
   api_base_url?: string;
   model_id: string;
   runtime_model_id?: string | null;
+  loaded_context_length?: number | null;
   matching_model_loaded: boolean;
   models: string[];
+  available_models: LocalAIAvailableModel[];
   error?: string;
 } | null;
+
+type LocalAIAvailableModel = {
+  id: string;
+  state?: string;
+  type?: string;
+  capabilities?: string[];
+  max_context_length?: number | null;
+  loaded_context_length?: number | null;
+};
 
 function formatContextWindow(value?: number | null): string {
   if (!value) return "n/a";
@@ -153,28 +165,11 @@ function clampContextLength(value: number): number {
   );
 }
 
-function getPreferredLocalModel(models: AIModel[]): AIModel | null {
-  return (
-    models.find((model) => model.model_id === LOCAL_AI_AUTO_MODEL_ID) ??
-    models.find((model) => isLocalAIModelId(model.model_id)) ??
-    null
-  );
-}
-
-function normalizeLocalModelSelection(modelId: string, models: AIModel[]): string {
-  const preferredLocalModel = getPreferredLocalModel(models);
-  if (
-    preferredLocalModel &&
-    isLocalAIModelId(modelId) &&
-    modelId !== preferredLocalModel.model_id
-  ) {
-    return preferredLocalModel.model_id;
-  }
-
-  return modelId;
-}
-
-function getLocalAIStatusBadge(status: LocalAIStatus, checking: boolean) {
+function getLocalAIStatusBadge(
+  status: LocalAIStatus,
+  checking: boolean,
+  modelId: string,
+) {
   if (checking) {
     return {
       label: "Checking",
@@ -189,7 +184,19 @@ function getLocalAIStatusBadge(status: LocalAIStatus, checking: boolean) {
     };
   }
 
-  if (!status.matching_model_loaded && !status.runtime_model_id) {
+  const runtimeModelId = stripLocalModelPrefix(modelId);
+  if (
+    status.matching_model_loaded &&
+    status.runtime_model_id &&
+    modelIdsMatch(status.runtime_model_id, runtimeModelId)
+  ) {
+    return {
+      label: "Ready",
+      className: "border-emerald-300/28 bg-emerald-300/16 text-emerald-50",
+    };
+  }
+
+  if (!status.models.some((loadedModelId) => modelIdsMatch(loadedModelId, runtimeModelId))) {
     return {
       label: "Auto load",
       className: "border-amber-300/24 bg-amber-400/12 text-amber-100",
@@ -200,6 +207,87 @@ function getLocalAIStatusBadge(status: LocalAIStatus, checking: boolean) {
     label: "Ready",
     className: "border-emerald-300/28 bg-emerald-300/16 text-emerald-50",
   };
+}
+
+function stripLocalModelPrefix(modelId: string): string {
+  return modelId.startsWith("lmstudio/") ? modelId.slice("lmstudio/".length) : modelId;
+}
+
+function modelIdsMatch(left: string, right: string): boolean {
+  const normalizedLeft = left.toLowerCase();
+  const normalizedRight = right.toLowerCase();
+  return (
+    normalizedLeft === normalizedRight ||
+    normalizedLeft.endsWith(`/${normalizedRight}`) ||
+    normalizedRight.endsWith(`/${normalizedLeft}`)
+  );
+}
+
+function isUsableLocalRuntimeModel(model: LocalAIAvailableModel): boolean {
+  const type = model.type?.toLowerCase();
+  if (type && type !== "llm" && type !== "vlm") return false;
+
+  const capabilities = model.capabilities ?? [];
+  if (capabilities.length === 0) return true;
+
+  return capabilities.some((capability) => {
+    const normalized = capability.toLowerCase().replaceAll("-", "_");
+    return normalized === "tool_use" || normalized === "tools";
+  });
+}
+
+function formatLocalRuntimeDisplayName(runtimeModelId: string): string {
+  const tail = runtimeModelId.split("/").at(-1) ?? runtimeModelId;
+  return tail
+    .replaceAll("_", "-")
+    .split("-")
+    .filter(Boolean)
+    .map((part) => {
+      if (part.length <= 3 || /\d/.test(part)) return part.toUpperCase();
+      return `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`;
+    })
+    .join(" ");
+}
+
+function buildLocalRuntimeModels(status: LocalAIStatus): AIModel[] {
+  if (!status?.reachable) return [];
+
+  const seen = new Set<string>();
+  return status.available_models
+    .filter(isUsableLocalRuntimeModel)
+    .filter((runtimeModel) => {
+      const normalizedId = runtimeModel.id.toLowerCase();
+      if (seen.has(normalizedId)) return false;
+      seen.add(normalizedId);
+      return true;
+    })
+    .map((runtimeModel, index) => {
+      const modelId = `lmstudio/${runtimeModel.id}`;
+      const contextWindow =
+        runtimeModel.max_context_length ??
+        runtimeModel.loaded_context_length ??
+        status.loaded_context_length ??
+        32768;
+      return {
+        id: -100000 - index,
+        provider: "lmstudio",
+        model_id: modelId,
+        display_name: formatLocalRuntimeDisplayName(runtimeModel.id),
+        description:
+          "Local offline opponent loaded from LM Studio before its AI turn. Charges no credits.",
+        quality_tier: "standard",
+        cost_per_game: "0.00",
+        pricing: {},
+        context_window: contextWindow,
+        max_tokens: null,
+        input_cost_per_million: "0",
+        output_cost_per_million: "0",
+        cache_read_cost_per_million: "0",
+        cache_write_cost_per_million: "0",
+        combined_cost_per_million: "0",
+        is_flagship: false,
+      };
+    });
 }
 
 function handleSelectKeyDown(
@@ -576,11 +664,8 @@ export default function SettingsPage() {
   const [checkingLocalAIStatus, setCheckingLocalAIStatus] = useState(false);
   const rivalSectionRef = useRef<HTMLElement | null>(null);
 
-  const preferredLocalModel = getPreferredLocalModel(models);
-
   const refreshLocalAIStatus = useCallback(async (modelId?: string) => {
-    const targetModelId =
-      modelId ?? preferredLocalModel?.model_id ?? LOCAL_AI_AUTO_MODEL_ID;
+    const targetModelId = modelId ?? LOCAL_AI_AUTO_MODEL_ID;
     setCheckingLocalAIStatus(true);
     try {
       const result = (await fetch(
@@ -595,14 +680,16 @@ export default function SettingsPage() {
         base_url: "http://localhost:1234/v1",
         model_id: targetModelId,
         runtime_model_id: null,
+        loaded_context_length: null,
         matching_model_loaded: false,
         models: [],
+        available_models: [],
         error: "LM Studio status check failed.",
       });
     } finally {
       setCheckingLocalAIStatus(false);
     }
-  }, [preferredLocalModel?.model_id]);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -626,24 +713,19 @@ export default function SettingsPage() {
         setModels(nextModels);
         setAccountSyncAvailable(profileResult.ok);
 
-        let nextSelectedModelId = normalizeLocalModelSelection(
-          localSelectedModelId,
-          nextModels,
-        );
+        let nextSelectedModelId = localSelectedModelId;
 
         if (profileResult.profile) {
           setCreditBalance(profileResult.profile.credit_balance);
           if (
             profileResult.profile.preferred_ai_model_id &&
-            nextModels.some(
-              (model) =>
-                model.model_id === profileResult.profile.preferred_ai_model_id,
-            )
+            (isLocalAIModelId(profileResult.profile.preferred_ai_model_id) ||
+              nextModels.some(
+                (model) =>
+                  model.model_id === profileResult.profile.preferred_ai_model_id,
+              ))
           ) {
-            nextSelectedModelId = normalizeLocalModelSelection(
-              profileResult.profile.preferred_ai_model_id,
-              nextModels,
-            );
+            nextSelectedModelId = profileResult.profile.preferred_ai_model_id;
           }
         } else if (token) {
           setNotice({
@@ -675,8 +757,10 @@ export default function SettingsPage() {
   }, [token, setCreditBalance, setSelectedModelId]);
 
   useEffect(() => {
-    void refreshLocalAIStatus(preferredLocalModel?.model_id ?? LOCAL_AI_AUTO_MODEL_ID);
-  }, [preferredLocalModel?.model_id, refreshLocalAIStatus]);
+    void refreshLocalAIStatus(
+      isLocalAIModelId(selectedModelId) ? selectedModelId : LOCAL_AI_AUTO_MODEL_ID,
+    );
+  }, [selectedModelId, refreshLocalAIStatus]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -693,17 +777,47 @@ export default function SettingsPage() {
     return () => window.cancelAnimationFrame(frame);
   }, []);
 
-  const selectableModels = models.filter((model) => {
+  const localRuntimeModels = useMemo(
+    () => buildLocalRuntimeModels(localAIStatus),
+    [localAIStatus],
+  );
+  const localRuntimeModelIds = useMemo(
+    () => localRuntimeModels.map((model) => model.model_id),
+    [localRuntimeModels],
+  );
+  const localRuntimeModelIdSet = useMemo(
+    () => new Set(localRuntimeModelIds),
+    [localRuntimeModelIds],
+  );
+
+  useEffect(() => {
+    if (localRuntimeModelIds.length === 0) return;
+    if (
+      selectedModelId === LOCAL_AI_AUTO_MODEL_ID ||
+      (isLocalAIModelId(selectedModelId) &&
+        !localRuntimeModelIdSet.has(selectedModelId))
+    ) {
+      setSelectedModelId(localRuntimeModelIds[0]);
+    }
+  }, [
+    localRuntimeModelIdSet,
+    localRuntimeModelIds,
+    selectedModelId,
+    setSelectedModelId,
+  ]);
+
+  const catalogModels = models.filter((model) => {
     if (!isLocalAIModelId(model.model_id)) return true;
-    if (!preferredLocalModel) return true;
-    return model.model_id === preferredLocalModel.model_id;
+    return localRuntimeModels.length === 0 && model.model_id !== LOCAL_AI_AUTO_MODEL_ID;
   });
+  const selectableModels = [...localRuntimeModels, ...catalogModels];
   const selectedModel =
     selectableModels.find((model) => model.model_id === selectedModelId) ??
-    (isLocalAIModelId(selectedModelId) ? preferredLocalModel : null) ??
     selectableModels[0] ??
     null;
-  const selectedModelIsLocal = isLocalAIModelId(selectedModel?.model_id);
+  const selectedModelIsLocal = isLocalAIModelId(
+    selectedModel?.model_id ?? selectedModelId,
+  );
   const displayedModels = [...selectableModels].sort((left, right) => {
     const localDiff =
       Number(isLocalAIModelId(right.model_id)) -
@@ -752,7 +866,7 @@ export default function SettingsPage() {
     if (modelId === selectedModelId || savingModelId) return;
 
     const previousModelId = selectedModelId;
-    const chosenModel = models.find((model) => model.model_id === modelId);
+    const chosenModel = selectableModels.find((model) => model.model_id === modelId);
 
     setNotice(null);
     setSelectedModelId(modelId);
@@ -992,14 +1106,16 @@ export default function SettingsPage() {
                     </div>
                   )}
 
-                  <div className="mt-3">
-                    <LocalAIRuntimePanel
-                      contextLength={localAIContextLength}
-                      reloadAfterTurn={localAIReloadAfterTurn}
-                      onContextLengthChange={setLocalAIContextLength}
-                      onReloadAfterTurnChange={setLocalAIReloadAfterTurn}
-                    />
-                  </div>
+                  {selectedModelIsLocal ? (
+                    <div className="mt-3">
+                      <LocalAIRuntimePanel
+                        contextLength={localAIContextLength}
+                        reloadAfterTurn={localAIReloadAfterTurn}
+                        onContextLengthChange={setLocalAIContextLength}
+                        onReloadAfterTurnChange={setLocalAIReloadAfterTurn}
+                      />
+                    </div>
+                  ) : null}
                 </div>
 
                 <AnimatePresence initial={false}>
@@ -1040,7 +1156,7 @@ export default function SettingsPage() {
                               ))}
                             </div>
                           </div>
-                        ) : models.length > 0 ? (
+                        ) : selectableModels.length > 0 ? (
                           <div
                             className="relative overflow-hidden rounded-[1.85rem] border border-white/8 shadow-[0_18px_45px_rgba(0,0,0,0.24)]"
                             style={PREMIUM_PANEL_STYLE}
@@ -1070,6 +1186,7 @@ export default function SettingsPage() {
                                     const localStatusBadge = getLocalAIStatusBadge(
                                       localAIStatus,
                                       checkingLocalAIStatus,
+                                      model.model_id,
                                     );
                                     const selectedCellStyle = isLocal
                                       ? SELECTED_LOCAL_ROW_CELL_STYLE

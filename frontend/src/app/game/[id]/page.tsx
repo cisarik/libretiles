@@ -173,7 +173,7 @@ type Toast = {
 };
 
 type AIBlockerModal = {
-  kind: "user_credit" | "provider_funds";
+  kind: "user_credit" | "provider_funds" | "provider_auth";
   title: string;
   message: string;
   creditBalance?: string | null;
@@ -226,6 +226,21 @@ function normalizeAIBlocker(
       title: "AI service is temporarily unavailable",
       message:
         "Your own balance is fine. The shared AI provider budget behind this model is currently exhausted. Switch models or try again later.",
+      creditBalance,
+    };
+  }
+
+  if (
+    code === "provider_auth_failed" ||
+    normalized.includes("authentication failed") ||
+    normalized.includes("vercel credential") ||
+    normalized.includes("ai gateway")
+  ) {
+    return {
+      kind: "provider_auth",
+      title: "Cloud rival is misconfigured",
+      message:
+        "The current rival is a cloud model using AI Gateway, and that credential is invalid. Switch the rival to a local LM Studio model for offline play, or fix AI_GATEWAY_API_KEY.",
       creditBalance,
     };
   }

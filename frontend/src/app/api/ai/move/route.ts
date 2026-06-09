@@ -310,7 +310,10 @@ type UsageLike = {
 };
 
 type NormalizedRouteError = {
-  code: "insufficient_user_credit" | "insufficient_provider_funds";
+  code:
+    | "insufficient_user_credit"
+    | "insufficient_provider_funds"
+    | "provider_auth_failed";
   message: string;
 };
 
@@ -331,6 +334,20 @@ function normalizeRouteError(error: unknown): NormalizedRouteError | null {
       code: "insufficient_provider_funds",
       message:
         "The shared AI provider budget is temporarily exhausted. Your personal balance is untouched. Switch models or try again later.",
+    };
+  }
+
+  if (
+    normalized.includes("authentication failed") ||
+    normalized.includes("vercel credential") ||
+    normalized.includes("ai gateway") && normalized.includes("credential") ||
+    normalized.includes("unauthorized") ||
+    normalized.includes("invalid api key")
+  ) {
+    return {
+      code: "provider_auth_failed",
+      message:
+        "This rival is still using the cloud AI Gateway, and its credential is invalid. Switch to a local LM Studio model for offline play or fix the AI Gateway key.",
     };
   }
 

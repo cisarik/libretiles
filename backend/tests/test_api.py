@@ -381,6 +381,24 @@ class GameAPITest(TestCase):
         assert resp.status_code == 201
         assert resp.json()["ai_model_id"] == self.ai_model.model_id
 
+    def test_create_game_with_dynamic_lmstudio_model_id(self) -> None:
+        model_id = "lmstudio/google/gemma-4-12b-qat"
+
+        resp = self.client.post("/api/game/create/", {
+            "game_mode": "vs_ai",
+            "ai_model_model_id": model_id,
+        })
+
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["ai_model_id"] == model_id
+        assert data["ai_model_display_name"] == "Gemma 4 12B QAT (LM Studio)"
+
+        created_model = AIModel.objects.get(model_id=model_id)
+        assert created_model.provider == "lmstudio"
+        assert created_model.gateway_available is True
+        assert created_model.tags == ["tool-use"]
+
     def test_create_game_with_prompt_returns_prompt_metadata(self) -> None:
         prompt = AIPrompt.objects.create(
             name="Tempo Search",
@@ -760,6 +778,28 @@ class GameAPITest(TestCase):
         state = self.client.get(f"/api/game/{game_id}/")
         assert state.status_code == 200
         assert state.json()["ai_model_id"] == alternative_model.model_id
+
+    def test_can_switch_game_ai_model_to_dynamic_lmstudio_model(self) -> None:
+        local_model_id = "lmstudio/qwen/qwen3-14b-sk"
+        create_resp = self.client.post("/api/game/create/", {
+            "game_mode": "vs_ai",
+            "ai_model_model_id": self.ai_model.model_id,
+        })
+        game_id = create_resp.json()["game_id"]
+
+        resp = self.client.patch(
+            f"/api/game/{game_id}/ai-model/",
+            {"ai_model_model_id": local_model_id},
+            format="json",
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["ai_model_id"] == local_model_id
+        assert AIModel.objects.filter(model_id=local_model_id).exists()
+
+        state = self.client.get(f"/api/game/{game_id}/")
+        assert state.status_code == 200
+        assert state.json()["ai_model_id"] == local_model_id
 
     def test_can_switch_game_ai_prompt_during_game(self) -> None:
         prompt = AIPrompt.objects.create(

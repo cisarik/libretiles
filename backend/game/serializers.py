@@ -1,6 +1,10 @@
 from rest_framework import serializers
 
-from catalog.selection import get_selectable_models, get_selectable_prompts
+from catalog.selection import (
+    get_selectable_models,
+    get_selectable_prompts,
+    is_selectable_model,
+)
 
 
 class CreateGameSerializer(serializers.Serializer):
@@ -16,7 +20,6 @@ class CreateGameSerializer(serializers.Serializer):
 
         selectable_models = get_selectable_models()
         selectable_db_ids = {model.id for model in selectable_models}
-        selectable_model_ids = {model.model_id for model in selectable_models}
         selectable_prompt_ids = {prompt.id for prompt in get_selectable_prompts()}
 
         ai_model_id = attrs.get("ai_model_id")
@@ -24,7 +27,7 @@ class CreateGameSerializer(serializers.Serializer):
             raise serializers.ValidationError({"ai_model_id": "Unknown or unavailable AI model."})
 
         ai_model_model_id = attrs.get("ai_model_model_id")
-        if ai_model_model_id and ai_model_model_id not in selectable_model_ids:
+        if ai_model_model_id and not is_selectable_model(ai_model_model_id):
             raise serializers.ValidationError(
                 {"ai_model_model_id": "Unknown or unavailable AI model."}
             )
@@ -88,8 +91,7 @@ class UpdateGameAIModelSerializer(serializers.Serializer):
     ai_model_model_id = serializers.CharField(required=True, allow_blank=False, max_length=200)
 
     def validate_ai_model_model_id(self, value: str) -> str:
-        selectable_model_ids = {model.model_id for model in get_selectable_models()}
-        if value not in selectable_model_ids:
+        if not is_selectable_model(value):
             raise serializers.ValidationError("Unknown or unavailable AI model.")
         return value
 

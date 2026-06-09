@@ -8,6 +8,7 @@ PINNED_MODEL_ID = "openai/gpt-5.4"
 DEFAULT_SELECTABLE_MODEL_LIMIT = 20
 LOCAL_MODEL_PROVIDER = "lmstudio"
 LOCAL_MODEL_PREFIX = f"{LOCAL_MODEL_PROVIDER}/"
+LOCAL_AUTO_MODEL_ID = f"{LOCAL_MODEL_PREFIX}auto"
 _ZERO = Decimal("0")
 _MILLION = Decimal("1000000")
 
@@ -65,6 +66,8 @@ def get_selectable_models(
 
 
 def is_selectable_model(model_id: str) -> bool:
+    if is_local_model_id(model_id):
+        return True
     return any(model.model_id == model_id for model in get_selectable_models())
 
 
@@ -82,10 +85,61 @@ def is_tool_capable_model(model: AIModel) -> bool:
 
 
 def is_local_model(model: AIModel) -> bool:
+    return is_local_model_id(model.model_id) or model.provider == LOCAL_MODEL_PROVIDER
+
+
+def is_local_model_id(model_id: str | None) -> bool:
+    if not model_id:
+        return False
     return bool(
-        model.provider == LOCAL_MODEL_PROVIDER
-        or model.model_id.startswith(LOCAL_MODEL_PREFIX)
+        model_id.startswith(LOCAL_MODEL_PREFIX)
+        and len(model_id) > len(LOCAL_MODEL_PREFIX)
     )
+
+
+def ensure_local_ai_model(model_id: str) -> AIModel:
+    runtime_id = model_id.removeprefix(LOCAL_MODEL_PREFIX)
+    display_name = (
+        "LM Studio Auto"
+        if model_id == LOCAL_AUTO_MODEL_ID
+        else f"{_humanize_local_model_id(runtime_id)} (LM Studio)"
+    )
+    description = (
+        "Local offline opponent loaded by LM Studio for each AI turn. "
+        "Charges no credits."
+    )
+    model, _created = AIModel.objects.get_or_create(
+        model_id=model_id,
+        defaults={
+            "provider": LOCAL_MODEL_PROVIDER,
+            "display_name": display_name,
+            "description": description,
+            "quality_tier": "standard",
+            "cost_per_game": "0.00",
+            "gateway_managed": False,
+            "gateway_available": True,
+            "model_type": "language",
+            "context_window": 32768,
+            "tags": ["tool-use"],
+            "pricing": {},
+            "sort_order": 1,
+        },
+    )
+    return model
+
+
+def _humanize_local_model_id(model_id: str) -> str:
+    tail = model_id.split("/")[-1]
+    parts = [part for part in tail.replace("_", "-").split("-") if part]
+    normalized: list[str] = []
+    for part in parts:
+        if part.isdigit() or any(char.isdigit() for char in part):
+            normalized.append(part.upper())
+        elif len(part) <= 3:
+            normalized.append(part.upper())
+        else:
+            normalized.append(part[:1].upper() + part[1:])
+    return " ".join(normalized) or model_id
 
 
 def _selectable_model_sort_key(model: AIModel) -> tuple[Decimal, Decimal, Decimal, str]:
