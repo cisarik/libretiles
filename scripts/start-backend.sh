@@ -22,8 +22,8 @@ echo "Running migrations..."
 poetry run python manage.py migrate --run-syncdb
 
 # Seed AI models (skip if already exist)
-echo "Seeding AI models..."
-poetry run python manage.py seed_models
+# echo "Seeding AI models..."
+# poetry run python manage.py seed_models
 
 echo ""
 echo "Starting Django on http://localhost:8000"
