@@ -1,143 +1,72 @@
 """
-Seed default AI models into the catalog.
+Seed the curated OpenRouter free-rival catalog.
 
 Usage:
-    python manage.py seed_models          # insert only (skip existing)
-    python manage.py seed_models --reset  # delete all models, then re-insert
-
-Models are configured for Vercel AI Gateway naming convention (provider/model).
-Admins can further customize models via Django Admin (/admin/catalog/aimodel/).
+    python manage.py seed_models
 """
 
 from django.core.management.base import BaseCommand
 
 from catalog.models import AIModel
+from catalog.selection import DEFAULT_FREE_MODEL_ID, FREE_RIVAL_IDS, SHORTLIST_SORT_ORDER
 
-DEFAULT_MODELS = [
+CURATED_MODELS = [
     {
-        "provider": "lmstudio",
-        "model_id": "lmstudio/auto",
-        "display_name": "LM Studio Auto (Free)",
-        "description": (
-            "Local offline opponent that uses the first loaded tool-capable "
-            "LM Studio chat model. Charges no credits."
-        ),
-        "quality_tier": "standard",
-        "cost_per_game": "0.00",
-        "gateway_managed": False,
-        "gateway_available": True,
-        "context_window": 32768,
-        "tags": ["tool-use"],
-        "pricing": {},
-        "sort_order": 1,
+        "model_id": "google/gemma-4-31b-it:free",
+        "display_name": "Gemma 4 31B IT",
+        "description": "Default free OpenRouter rival for Libre Tiles.",
     },
     {
-        "provider": "openai",
-        "model_id": "openai/gpt-5.4",
-        "display_name": "GPT-5.4",
-        "description": "Current flagship default for strongest general play.",
-        "quality_tier": "elite",
-        "cost_per_game": "3.50",
-        "tags": ["tool-use"],
-        "sort_order": 10,
+        "model_id": "nvidia/nemotron-3-super-120b-a12b:free",
+        "display_name": "Nemotron 3 Super 120B",
+        "description": "NVIDIA free OpenRouter rival with tool calling.",
     },
     {
-        "provider": "openai",
-        "model_id": "openai/gpt-5.4-mini",
-        "display_name": "GPT-5.4 Mini",
-        "description": "Cheaper GPT-5.4 family option with strong move quality.",
-        "quality_tier": "standard",
-        "cost_per_game": "1.50",
-        "tags": ["tool-use"],
-        "sort_order": 20,
+        "model_id": "z-ai/glm-5.2:free",
+        "display_name": "GLM 5.2",
+        "description": "Z.AI free OpenRouter rival with tool calling.",
     },
     {
-        "provider": "openai",
-        "model_id": "openai/gpt-5.4-pro",
-        "display_name": "GPT-5.4 Pro",
-        "description": "Premium tier for maximum strength at a much higher token price.",
-        "quality_tier": "elite",
-        "cost_per_game": "20.00",
-        "tags": ["tool-use"],
-        "sort_order": 30,
-    },
-    {
-        "provider": "anthropic",
-        "model_id": "anthropic/claude-opus-4.1",
-        "display_name": "Claude Opus 4.1",
-        "description": "Very expensive strategic model for long-form reasoning.",
-        "quality_tier": "premium",
-        "cost_per_game": "8.00",
-        "tags": ["tool-use"],
-        "sort_order": 40,
-    },
-    {
-        "provider": "google",
-        "model_id": "google/gemini-2.5-flash",
-        "display_name": "Gemini 2.5 Flash",
-        "description": "Fast Google model. Good value for money.",
-        "quality_tier": "standard",
-        "cost_per_game": "2.00",
-        "tags": ["tool-use"],
-        "sort_order": 50,
-    },
-    {
-        "provider": "anthropic",
-        "model_id": "anthropic/claude-sonnet-4.6",
-        "display_name": "Claude Sonnet 4.6",
-        "description": "Anthropic's balanced model. Thoughtful, creative play.",
-        "quality_tier": "premium",
-        "cost_per_game": "5.00",
-        "tags": ["tool-use"],
-        "sort_order": 60,
-    },
-    {
-        "provider": "lmstudio",
-        "model_id": "lmstudio/qwen3-14b-sk",
-        "display_name": "Qwen3 14B SK (LM Studio)",
-        "description": (
-            "Local offline opponent served by LM Studio at http://localhost:1234/v1. "
-            "Uses the loaded qwen3-14b-sk model and charges no credits."
-        ),
-        "quality_tier": "standard",
-        "cost_per_game": "0.00",
-        "gateway_managed": False,
-        "gateway_available": True,
-        "context_window": 32768,
-        "tags": ["tool-use"],
-        "pricing": {},
-        "sort_order": 6,
+        "model_id": "google/gemma-4-26b-a4b-it:free",
+        "display_name": "Gemma 4 26B A4B IT",
+        "description": "Smaller Gemma 4 free OpenRouter rival.",
     },
 ]
 
 
 class Command(BaseCommand):
-    help = "Seed default AI models into the catalog"
+    help = "Idempotently seed the four curated OpenRouter free rivals"
 
-    def add_arguments(self, parser):  # type: ignore[no-untyped-def]
-        parser.add_argument(
-            "--reset",
-            action="store_true",
-            help="Delete all existing models before seeding",
-        )
-
-    def handle(self, *args, **options):  # type: ignore[no-untyped-def]
-        if options["reset"]:
-            deleted, _ = AIModel.objects.all().delete()
-            self.stdout.write(f"Deleted {deleted} existing model(s).")
-
+    def handle(self, *args: object, **options: object) -> None:
         created = 0
-        skipped = 0
-        for data in DEFAULT_MODELS:
-            _, was_created = AIModel.objects.get_or_create(
-                model_id=data["model_id"],
-                defaults=data,
+        updated = 0
+        for data in CURATED_MODELS:
+            model_id = data["model_id"]
+            defaults = {
+                "provider": "openrouter",
+                "display_name": data["display_name"],
+                "description": data["description"],
+                "quality_tier": "standard",
+                "cost_per_game": 0,
+                "openrouter_managed": True,
+                "openrouter_available": True,
+                "model_type": "language",
+                "tags": ["tools"],
+                "pricing": {"input": "0", "output": "0"},
+                "is_active": True,
+                "sort_order": SHORTLIST_SORT_ORDER[model_id],
+            }
+            _, was_created = AIModel.objects.update_or_create(
+                model_id=model_id,
+                defaults=defaults,
             )
             if was_created:
                 created += 1
             else:
-                skipped += 1
+                updated += 1
 
+        assert {item["model_id"] for item in CURATED_MODELS} == set(FREE_RIVAL_IDS)
+        assert CURATED_MODELS[0]["model_id"] == DEFAULT_FREE_MODEL_ID
         self.stdout.write(
-            self.style.SUCCESS(f"Done: {created} created, {skipped} skipped (already exist).")
+            self.style.SUCCESS(f"Done: {created} created, {updated} updated.")
         )

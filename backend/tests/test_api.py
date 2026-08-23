@@ -2,15 +2,18 @@
 
 from decimal import Decimal
 from io import StringIO
+from typing import Any
 from unittest.mock import patch
 
-from django.core.management import call_command
+from django.core.management import call_command, load_command_class
 from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
 from accounts.models import User
-from catalog.gateway_sync import GatewayModelRecord
+from billing.models import Transaction
 from catalog.models import AIModel, AIPrompt
+from catalog.selection import DEFAULT_FREE_MODEL_ID, FREE_RIVAL_IDS
+from game.models import GameSession
 
 
 class AuthAPITest(TestCase):
@@ -89,156 +92,165 @@ class AuthAPITest(TestCase):
         assert resp.json()["error"] == "Current password is incorrect."
 
 
+def _make_rival(*, model_id: str = DEFAULT_FREE_MODEL_ID, **overrides: Any) -> AIModel:
+    index = list(FREE_RIVAL_IDS).index(model_id) if model_id in FREE_RIVAL_IDS else 0
+    defaults: dict[str, Any] = {
+        "provider": "openrouter",
+        "model_id": model_id,
+        "display_name": f"Rival {index + 1}",
+        "openrouter_available": True,
+        "openrouter_managed": True,
+        "is_active": True,
+        "model_type": "language",
+        "tags": ["tools"],
+        "pricing": {"input": "0", "output": "0"},
+        "cost_per_game": 0,
+        "sort_order": (index + 1) * 10,
+    }
+    defaults.update(overrides)
+    return AIModel.objects.create(**defaults)
+
+
+def _seed_shortlist() -> list[AIModel]:
+    return [_make_rival(model_id=model_id) for model_id in FREE_RIVAL_IDS]
+
+
 class CatalogAPITest(TestCase):
-    def test_list_models_returns_top_twenty_sorted_with_pinned_gpt_5_4(self) -> None:
-        for index in range(20):
-            input_price = Decimal("0.000020") - (Decimal(index) * Decimal("0.000001"))
-            output_price = Decimal("0.000040") - (Decimal(index) * Decimal("0.000001"))
-            AIModel.objects.create(
-                provider="openai",
-                model_id=f"openai/gpt-5-expensive-{index}",
-                display_name=f"GPT-5 Expensive {index}",
-                gateway_available=True,
-                model_type="language",
-                tags=["tool-use"],
-                pricing={
-                    "input": str(input_price),
-                    "output": str(output_price),
-                },
-            )
-
-        AIModel.objects.create(
-            provider="openai",
-            model_id="openai/gpt-5.4",
-            display_name="GPT-5.4",
-            gateway_available=True,
-            model_type="language",
-            tags=["tool-use"],
-            pricing={"input": "0.0000025", "output": "0.000015"},
-        )
-
-        resp = self.client.get("/api/catalog/models/")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert len(data) == 20
-        assert any(item["model_id"] == "openai/gpt-5.4" for item in data)
-        assert not any(item["model_id"] == "openai/gpt-5-expensive-19" for item in data)
-        combined_costs = [Decimal(item["combined_cost_per_million"]) for item in data]
-        assert combined_costs == sorted(combined_costs, reverse=True)
-        assert data[0]["combined_cost_per_million"]
-
-    def test_list_models_keeps_local_lmstudio_model_selectable_after_gateway_sync(self) -> None:
-        for index in range(22):
-            AIModel.objects.create(
-                provider="openai",
-                model_id=f"openai/gpt-5-expensive-{index}",
-                display_name=f"GPT-5 Expensive {index}",
-                gateway_available=True,
-                model_type="language",
-                tags=["tool-use"],
-                pricing={
-                    "input": "0.000020",
-                    "output": "0.000040",
-                },
-            )
-
-        AIModel.objects.create(
-            provider="lmstudio",
-            model_id="lmstudio/qwen3-14b-sk",
-            display_name="Qwen3 14B SK (LM Studio)",
-            gateway_available=False,
-            is_active=True,
-            model_type="language",
-            tags=["tool-use"],
-        )
-
-        resp = self.client.get("/api/catalog/models/")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert len(data) == 20
-        assert any(item["model_id"] == "lmstudio/qwen3-14b-sk" for item in data)
-
-    def test_list_models_falls_back_to_active_models_before_first_sync(self) -> None:
+    def test_list_models_returns_shortlist_in_free_rival_order_with_zero_costs(self) -> None:
+        _seed_shortlist()
         AIModel.objects.create(
             provider="openai",
             model_id="openai/gpt-5-mini",
             display_name="GPT-5 Mini",
-            gateway_available=False,
+            openrouter_available=True,
             is_active=True,
-        )
-        resp = self.client.get("/api/catalog/models/")
-        assert resp.status_code == 200
-        assert len(resp.json()) == 1
-        assert resp.json()[0]["model_id"] == "openai/gpt-5-mini"
-
-    def test_list_models_prefers_tool_capable_gateway_models(self) -> None:
-        AIModel.objects.create(
-            provider="anthropic",
-            model_id="anthropic/claude-3-opus",
-            display_name="Claude 3 Opus",
-            gateway_available=True,
             model_type="language",
-            tags=[],
-            pricing={"input": "0.00003", "output": "0.00006"},
+            tags=["tools"],
+            pricing={"input": "0.000001", "output": "0.000002"},
         )
         AIModel.objects.create(
-            provider="openai",
-            model_id="openai/gpt-5.4",
-            display_name="GPT-5.4",
-            gateway_available=True,
+            provider="openrouter",
+            model_id="meta-llama/llama-3.3-70b-instruct:free",
+            display_name="Inactive extra free",
+            openrouter_available=True,
+            is_active=False,
             model_type="language",
-            tags=["tool-use"],
-            pricing={"input": "0.0000025", "output": "0.000015"},
+            tags=["tools"],
+            pricing={"input": "0", "output": "0"},
+            cost_per_game=0,
         )
 
         resp = self.client.get("/api/catalog/models/")
         assert resp.status_code == 200
         data = resp.json()
-        assert [item["model_id"] for item in data] == ["openai/gpt-5.4"]
+        assert [item["model_id"] for item in data] == list(FREE_RIVAL_IDS)
+        assert len(data) <= 4
+        for item in data:
+            assert item["provider"] == "openrouter"
+            assert Decimal(item["cost_per_game"]) == Decimal("0")
+            assert Decimal(item["input_cost_per_million"]) == Decimal("0.00")
+            assert Decimal(item["output_cost_per_million"]) == Decimal("0.00")
+            assert Decimal(item["combined_cost_per_million"]) == Decimal("0.00")
+            assert item["is_flagship"] is (item["model_id"] == DEFAULT_FREE_MODEL_ID)
+        assert sum(1 for item in data if item["is_flagship"]) == 1
 
-    def test_list_models_excludes_inactive_gateway_models_except_pinned_gpt_5_4(self) -> None:
+    def test_list_models_excludes_paid_malformed_non_tool_lm_novita_xai_openai_and_inactive_extra_free(
+        self,
+    ) -> None:
+        _seed_shortlist()
         AIModel.objects.create(
             provider="openai",
-            model_id="openai/gpt-5.2",
-            display_name="GPT-5.2",
-            gateway_available=True,
+            model_id="openai/gpt-5-mini",
+            display_name="OpenAI paid",
+            openrouter_available=True,
             is_active=True,
             model_type="language",
-            tags=["tool-use"],
-            pricing={"input": "0.00000175", "output": "0.000014"},
+            tags=["tools"],
+            pricing={"input": "0.000001", "output": "0.000002"},
         )
         AIModel.objects.create(
-            provider="anthropic",
-            model_id="anthropic/claude-opus-4.1",
-            display_name="Claude Opus 4.1",
-            gateway_available=True,
-            is_active=False,
+            provider="openrouter",
+            model_id="not-a-valid-id",
+            display_name="Malformed",
+            openrouter_available=True,
+            is_active=True,
             model_type="language",
-            tags=["tool-use"],
-            pricing={"input": "0.000015", "output": "0.000075"},
+            tags=["tools"],
+            pricing={"input": "0", "output": "0"},
         )
         AIModel.objects.create(
-            provider="openai",
-            model_id="openai/gpt-5.4",
-            display_name="GPT-5.4",
-            gateway_available=True,
+            provider="openrouter",
+            model_id="google/gemma-2-9b-it:free",
+            display_name="Free no tools",
+            openrouter_available=True,
+            is_active=True,
+            model_type="language",
+            tags=["temperature"],
+            pricing={"input": "0", "output": "0"},
+            cost_per_game=0,
+        )
+        AIModel.objects.create(
+            provider="lmstudio",
+            model_id="lmstudio/qwen3-14b-sk",
+            display_name="LM Studio",
+            openrouter_available=True,
+            is_active=True,
+            model_type="language",
+            tags=["tools"],
+        )
+        AIModel.objects.create(
+            provider="novita",
+            model_id="novita/qwen3-32b",
+            display_name="Novita",
+            openrouter_available=True,
+            is_active=True,
+            model_type="language",
+            tags=["tools"],
+        )
+        AIModel.objects.create(
+            provider="x-ai",
+            model_id="x-ai/grok-4",
+            display_name="xAI",
+            openrouter_available=True,
+            is_active=True,
+            model_type="language",
+            tags=["tools"],
+        )
+        AIModel.objects.create(
+            provider="openrouter",
+            model_id="meta-llama/llama-3.3-70b-instruct:free",
+            display_name="Inactive extra free",
+            openrouter_available=True,
             is_active=False,
             model_type="language",
-            tags=["tool-use"],
-            pricing={"input": "0.0000025", "output": "0.000015"},
+            tags=["tools"],
+            pricing={"input": "0", "output": "0"},
+            cost_per_game=0,
         )
 
         resp = self.client.get("/api/catalog/models/")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert [item["model_id"] for item in data] == [
-            "openai/gpt-5.4",
-            "openai/gpt-5.2",
-        ]
+        assert [item["model_id"] for item in resp.json()] == list(FREE_RIVAL_IDS)
+
+    def test_legacy_openai_row_survives_and_is_not_selectable(self) -> None:
+        _make_rival()
+        legacy = AIModel.objects.create(
+            provider="openai",
+            model_id="openai/gpt-5-mini",
+            display_name="GPT-5 Mini",
+            openrouter_available=False,
+            openrouter_managed=False,
+            is_active=False,
+            model_type="language",
+            tags=["tools"],
+        )
+        resp = self.client.get("/api/catalog/models/")
+        ids = [item["model_id"] for item in resp.json()]
+        assert legacy.model_id not in ids
+        assert AIModel.objects.filter(model_id="openai/gpt-5-mini").exists()
 
     def test_list_prompts_returns_active_catalog(self) -> None:
         visible = AIPrompt.objects.create(
-            name="Bench",
+            name="Benchmark",
             prompt="Try short hooks first.",
             fitness=1.5,
             sort_order=5,
@@ -257,90 +269,128 @@ class CatalogAPITest(TestCase):
         data = resp.json()
         names = [item["name"] for item in data]
 
-        assert "Initial" in names
-        assert "Bench" in names
+        assert "Grandmaster" in names
+        assert "Benchmark" in names
         assert "Hidden" not in names
 
         visible_item = next(item for item in data if item["id"] == visible.id)
         assert visible_item["fitness"] == 1.5
 
-    def test_sync_gateway_models_command(self) -> None:
-        manual = AIModel.objects.create(
+    def test_seed_models_is_idempotent_and_has_no_reset_flag(self) -> None:
+        leftover = AIModel.objects.create(
             provider="openai",
             model_id="openai/gpt-5-mini",
-            display_name="Custom GPT-5 Mini",
-            description="Manual label",
-            is_active=True,
-            gateway_managed=False,
+            display_name="Legacy leftover",
         )
-        AIModel.objects.create(
-            provider="openai",
-            model_id="openai/retired-model",
-            display_name="Retired",
-            gateway_managed=True,
-            gateway_available=True,
-            is_active=True,
+        stdout = StringIO()
+        call_command("seed_models", stdout=stdout)
+        call_command("seed_models", stdout=stdout)
+        ids = list(
+            AIModel.objects.filter(model_id__in=FREE_RIVAL_IDS)
+            .order_by("sort_order")
+            .values_list("model_id", flat=True)
         )
-        local = AIModel.objects.create(
-            provider="lmstudio",
-            model_id="lmstudio/qwen3-14b-sk",
-            display_name="Qwen3 14B SK (LM Studio)",
-            gateway_managed=False,
-            gateway_available=True,
-            is_active=True,
-        )
+        assert ids == list(FREE_RIVAL_IDS)
+        assert AIModel.objects.filter(model_id=leftover.model_id).exists()
+        command = load_command_class("catalog", "seed_models")
+        parser = command.create_parser("manage.py", "seed_models")
+        assert "--reset" not in parser.format_help()
 
-        models = [
-            GatewayModelRecord(
-                model_id="openai/gpt-5-mini",
-                provider="openai",
-                display_name="GPT-5 Mini",
-                description="Latest synced description",
-                model_type="language",
-                context_window=200000,
-                max_tokens=10000,
-                tags=["reasoning", "tool-use"],
-                pricing={"input": "0.000001", "output": "0.000002"},
-                released_at=None,
-            ),
-            GatewayModelRecord(
-                model_id="anthropic/claude-sonnet-4.6",
-                provider="anthropic",
-                display_name="Claude Sonnet 4.6",
-                description="Balanced model",
-                model_type="language",
-                context_window=200000,
-                max_tokens=8000,
-                tags=["tool-use"],
-                pricing={"input": "0.000003", "output": "0.000015"},
-                released_at=None,
-            ),
-        ]
+    def test_sync_openrouter_models_command_persists_only_eligible_rows(self) -> None:
+        retired = AIModel.objects.create(
+            provider="openrouter",
+            model_id="old-openrouter/retired:free",
+            display_name="Retired",
+            openrouter_managed=True,
+            openrouter_available=True,
+            is_active=True,
+        )
+        payload = {
+            "data": [
+                {
+                    "id": "openai/gpt-5-mini",
+                    "name": "GPT-5 Mini",
+                    "description": "Paid",
+                    "pricing": {"prompt": "0.000001", "completion": "0.000002"},
+                    "supported_parameters": ["tools"],
+                    "architecture": {"output_modalities": ["text"]},
+                    "context_length": 128000,
+                },
+                {
+                    "id": "meta-llama/llama-3.3-70b-instruct:free",
+                    "name": "Llama 3.3 70B Instruct",
+                    "description": "Eligible extra",
+                    "pricing": {"prompt": "0", "completion": "0"},
+                    "supported_parameters": ["tools", "temperature"],
+                    "architecture": {"output_modalities": ["text"]},
+                    "context_length": 128000,
+                },
+                {
+                    "id": "google/gemma-2-9b-it:free",
+                    "name": "Gemma 2 9B",
+                    "description": "Free without tools",
+                    "pricing": {"prompt": "0", "completion": "0"},
+                    "supported_parameters": ["temperature"],
+                    "architecture": {"output_modalities": ["text"]},
+                    "context_length": 8192,
+                },
+                {
+                    "id": DEFAULT_FREE_MODEL_ID,
+                    "name": "Gemma 4 31B IT",
+                    "description": "Shortlist",
+                    "pricing": {"prompt": "0", "completion": "0"},
+                    "supported_parameters": ["tools"],
+                    "architecture": {"output_modalities": ["text"]},
+                    "context_length": 131072,
+                },
+                {
+                    "id": "openrouter/free",
+                    "name": "OpenRouter Free",
+                    "pricing": {"prompt": "0", "completion": "0"},
+                    "supported_parameters": ["tools"],
+                    "architecture": {"output_modalities": ["text"]},
+                },
+            ]
+        }
+
+        class DummyResponse:
+            def raise_for_status(self) -> None:
+                return None
+
+            def json(self) -> dict[str, Any]:
+                return payload
+
+        class DummyClient:
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
+                return None
+
+            def __enter__(self) -> Any:
+                return self
+
+            def __exit__(self, *args: Any) -> bool:
+                return False
+
+            def get(self, url: str) -> DummyResponse:
+                return DummyResponse()
 
         stdout = StringIO()
-        with patch("catalog.management.commands.sync_gateway_models.fetch_gateway_models") as fetch:
-            fetch.return_value = models
-            call_command("sync_gateway_models", stdout=stdout)
+        with patch("catalog.openrouter_sync.httpx.Client", DummyClient):
+            call_command("sync_openrouter_models", stdout=stdout)
 
-        manual.refresh_from_db()
-        assert manual.display_name == "Custom GPT-5 Mini"
-        assert manual.description == "Manual label"
-        assert manual.gateway_available is True
-        assert manual.context_window == 200000
-        assert manual.pricing == {"input": "0.000001", "output": "0.000002"}
-
-        created = AIModel.objects.get(model_id="anthropic/claude-sonnet-4.6")
-        assert created.gateway_managed is True
-        assert created.is_active is False
-        assert created.gateway_available is True
-
-        retired = AIModel.objects.get(model_id="openai/retired-model")
-        assert retired.gateway_available is False
+        assert not AIModel.objects.filter(model_id="openai/gpt-5-mini").exists()
+        assert not AIModel.objects.filter(model_id="google/gemma-2-9b-it:free").exists()
+        extra = AIModel.objects.get(model_id="meta-llama/llama-3.3-70b-instruct:free")
+        assert extra.openrouter_managed is True
+        assert extra.openrouter_available is True
+        assert extra.is_active is False
+        default = AIModel.objects.get(model_id=DEFAULT_FREE_MODEL_ID)
+        assert default.is_active is True
+        assert default.openrouter_managed is True
+        assert default.sort_order == 10
+        retired.refresh_from_db()
+        assert retired.openrouter_available is False
         assert retired.is_active is False
-
-        local.refresh_from_db()
-        assert local.gateway_available is True
-        assert local.is_active is True
+        assert AIModel.objects.filter(pk=retired.pk).exists()
 
 
 class GameAPITest(TestCase):
@@ -351,14 +401,7 @@ class GameAPITest(TestCase):
         self.client.force_authenticate(user=self.user)
         self.client2 = APIClient()
         self.client2.force_authenticate(user=self.user2)
-        self.ai_model = AIModel.objects.create(
-            provider="openai",
-            model_id="openai/gpt-5-mini",
-            display_name="GPT-5 Mini",
-            cost_per_game=1,
-            tags=["tool-use"],
-            pricing={"input": "0.000001", "output": "0.000002"},
-        )
+        self.ai_model = _make_rival(display_name="Gemma 4 31B IT")
 
     def test_create_game(self) -> None:
         resp = self.client.post("/api/game/create/", {
@@ -381,7 +424,7 @@ class GameAPITest(TestCase):
         assert resp.status_code == 201
         assert resp.json()["ai_model_id"] == self.ai_model.model_id
 
-    def test_create_game_with_dynamic_lmstudio_model_id(self) -> None:
+    def test_create_game_rejects_dynamic_lmstudio_model_id(self) -> None:
         model_id = "lmstudio/google/gemma-4-12b-qat"
 
         resp = self.client.post("/api/game/create/", {
@@ -389,15 +432,95 @@ class GameAPITest(TestCase):
             "ai_model_model_id": model_id,
         })
 
-        assert resp.status_code == 201
-        data = resp.json()
-        assert data["ai_model_id"] == model_id
-        assert data["ai_model_display_name"] == "Gemma 4 12B QAT (LM Studio)"
+        assert resp.status_code == 400
+        assert not AIModel.objects.filter(model_id=model_id).exists()
 
-        created_model = AIModel.objects.get(model_id=model_id)
-        assert created_model.provider == "lmstudio"
-        assert created_model.gateway_available is True
-        assert created_model.tags == ["tool-use"]
+    def test_ineligible_ids_are_rejected_for_preference_create_and_switch(self) -> None:
+        ineligible_ids = [
+            "openai/gpt-5-mini",
+            "not-a-valid-id",
+            "google/gemma-2-9b-it:free",
+            "lmstudio/qwen3-14b-sk",
+            "novita/qwen3-32b",
+            "x-ai/grok-4",
+            "meta-llama/llama-3.3-70b-instruct:free",
+        ]
+        AIModel.objects.create(
+            provider="openrouter",
+            model_id="meta-llama/llama-3.3-70b-instruct:free",
+            display_name="Inactive extra free",
+            openrouter_available=True,
+            is_active=False,
+            model_type="language",
+            tags=["tools"],
+            pricing={"input": "0", "output": "0"},
+            cost_per_game=0,
+        )
+        create_resp = self.client.post("/api/game/create/", {
+            "game_mode": "vs_ai",
+            "ai_model_model_id": DEFAULT_FREE_MODEL_ID,
+        })
+        game_id = create_resp.json()["game_id"]
+
+        for model_id in ineligible_ids:
+            preference = self.client.patch(
+                "/api/auth/me/",
+                {"preferred_ai_model_id": model_id},
+                format="json",
+            )
+            assert preference.status_code == 400, model_id
+            created = self.client.post("/api/game/create/", {
+                "game_mode": "vs_ai",
+                "ai_model_model_id": model_id,
+            })
+            assert created.status_code == 400, model_id
+            switched = self.client.patch(
+                f"/api/game/{game_id}/ai-model/",
+                {"ai_model_model_id": model_id},
+                format="json",
+            )
+            assert switched.status_code == 400, model_id
+
+    def test_dormant_billing_zeroes_non_shortlist_model(self) -> None:
+        legacy = AIModel.objects.create(
+            provider="openai",
+            model_id="openai/gpt-5-mini",
+            display_name="GPT-5 Mini",
+            tags=["tools"],
+            pricing={"input": "0.000001", "output": "0.000002"},
+            cost_per_game=1,
+        )
+        create_resp = self.client.post("/api/game/create/", {
+            "game_mode": "vs_ai",
+            "ai_model_model_id": self.ai_model.model_id,
+        })
+        game_id = create_resp.json()["game_id"]
+        session = GameSession.objects.get(public_id=game_id)
+        session.ai_model = legacy
+        session.save(update_fields=["ai_model"])
+        starting_cost = session.total_cost_usd
+        starting_tx = Transaction.objects.count()
+
+        resp = self.client.post(
+            "/api/billing/charge-ai-turn/",
+            {
+                "game_id": game_id,
+                "ai_metadata": {
+                    "usage": {
+                        "inputTokens": 1000,
+                        "outputTokens": 200,
+                        "totalTokens": 1200,
+                    }
+                },
+            },
+            format="json",
+        )
+        assert resp.status_code == 200
+        assert resp.json()["charge_source"] == "dormant"
+        assert resp.json()["charged_credits"] == "0.000000"
+        session.refresh_from_db()
+        assert session.total_cost_usd == starting_cost
+        assert Transaction.objects.count() == starting_tx
 
     def test_create_game_with_prompt_returns_prompt_metadata(self) -> None:
         prompt = AIPrompt.objects.create(
@@ -573,13 +696,13 @@ class GameAPITest(TestCase):
         )
 
         assert resp.status_code == 200
-        assert resp.json()["billing"]["charge_source"] == "token_usage"
-        assert resp.json()["billing"]["charged_credits"] == "0.001400"
+        assert resp.json()["billing"]["charge_source"] == "free_rival"
+        assert resp.json()["billing"]["charged_credits"] == "0.000000"
         assert resp.json()["state"]["last_move_billing"]["charged_usd"] == resp.json()["billing"]["charged_usd"]
 
         profile = self.client.get("/api/auth/me/")
         assert profile.status_code == 200
-        assert profile.json()["credit_balance"] == "9.998600"
+        assert profile.json()["credit_balance"] == "10.000000"
 
     def test_charge_ai_turn_endpoint_deducts_credits(self) -> None:
         create_resp = self.client.post("/api/game/create/", {
@@ -587,6 +710,9 @@ class GameAPITest(TestCase):
             "ai_model_model_id": self.ai_model.model_id,
         })
         game_id = create_resp.json()["game_id"]
+        session = GameSession.objects.get(public_id=game_id)
+        starting_cost = session.total_cost_usd
+        starting_tx = Transaction.objects.count()
 
         resp = self.client.post(
             "/api/billing/charge-ai-turn/",
@@ -604,12 +730,15 @@ class GameAPITest(TestCase):
         )
 
         assert resp.status_code == 200
-        assert resp.json()["charge_source"] == "token_usage"
-        assert resp.json()["charged_credits"] == "0.001400"
+        assert resp.json()["charge_source"] == "free_rival"
+        assert resp.json()["charged_credits"] == "0.000000"
+        session.refresh_from_db()
+        assert session.total_cost_usd == starting_cost
+        assert Transaction.objects.count() == starting_tx
 
         profile = self.client.get("/api/auth/me/")
         assert profile.status_code == 200
-        assert profile.json()["credit_balance"] == "9.998600"
+        assert profile.json()["credit_balance"] == "10.000000"
 
     def test_charge_ai_turn_accepts_nested_ai_sdk_usage_shape(self) -> None:
         create_resp = self.client.post("/api/game/create/", {
@@ -643,8 +772,8 @@ class GameAPITest(TestCase):
         )
 
         assert resp.status_code == 200
-        assert resp.json()["charge_source"] == "token_usage"
-        assert resp.json()["charged_credits"] == "0.001600"
+        assert resp.json()["charge_source"] == "free_rival"
+        assert resp.json()["charged_credits"] == "0.000000"
         assert resp.json()["input_tokens"] == 1200
         assert resp.json()["output_tokens"] == 300
         assert resp.json()["total_tokens"] == 1500
@@ -753,12 +882,9 @@ class GameAPITest(TestCase):
         assert item["opponent_label"] == self.ai_model.display_name
 
     def test_can_switch_game_ai_model_during_game(self) -> None:
-        alternative_model = AIModel.objects.create(
-            provider="openai",
-            model_id="openai/gpt-5.4",
-            display_name="GPT-5.4",
-            tags=["tool-use"],
-            pricing={"input": "0.0000025", "output": "0.000015"},
+        alternative_model = _make_rival(
+            model_id=FREE_RIVAL_IDS[1],
+            display_name="Nemotron 3 Super 120B",
         )
         create_resp = self.client.post("/api/game/create/", {
             "game_mode": "vs_ai",
@@ -793,13 +919,8 @@ class GameAPITest(TestCase):
             format="json",
         )
 
-        assert resp.status_code == 200
-        assert resp.json()["ai_model_id"] == local_model_id
-        assert AIModel.objects.filter(model_id=local_model_id).exists()
-
-        state = self.client.get(f"/api/game/{game_id}/")
-        assert state.status_code == 200
-        assert state.json()["ai_model_id"] == local_model_id
+        assert resp.status_code == 400
+        assert not AIModel.objects.filter(model_id=local_model_id).exists()
 
     def test_can_switch_game_ai_prompt_during_game(self) -> None:
         prompt = AIPrompt.objects.create(

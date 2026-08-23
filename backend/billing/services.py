@@ -8,6 +8,7 @@ from django.db import transaction
 
 from billing.models import CreditBalance, Transaction
 from catalog.models import AIModel
+from catalog.selection import FREE_RIVAL_IDS
 from game.models import GameSession
 
 _ZERO = Decimal("0")
@@ -93,17 +94,9 @@ def _calculate_ai_charge(
     usage_summary = _extract_usage_summary(usage)
     if ai_model is None:
         return (_ZERO, usage_summary, "none")
-
-    usd_charge = _usage_charge_usd(ai_model, usage, usage_summary)
-    if usd_charge > _ZERO:
-        return (usd_charge, usage_summary, "token_usage")
-
-    fallback_credits = _as_decimal(ai_model.cost_per_game)
-    if fallback_credits > _ZERO:
-        usd_equivalent = fallback_credits / Decimal(str(settings.CREDITS_PER_USD))
-        return (usd_equivalent, usage_summary, "legacy_cost_per_game")
-
-    return (_ZERO, usage_summary, "none")
+    if ai_model.model_id in FREE_RIVAL_IDS:
+        return (_ZERO, usage_summary, "free_rival")
+    return (_ZERO, usage_summary, "dormant")
 
 
 def _usage_charge_usd(

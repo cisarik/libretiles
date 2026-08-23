@@ -9,7 +9,10 @@ class User(AbstractUser):
         max_length=200,
         blank=True,
         default="",
-        help_text="Gateway model ID the user prefers (e.g. 'openai/gpt-5-mini')",
+        help_text=(
+            "Native OpenRouter id for the preferred free rival, "
+            "e.g. 'google/gemma-4-31b-it:free'"
+        ),
     )
 
     class Meta:

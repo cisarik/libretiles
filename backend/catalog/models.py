@@ -15,7 +15,7 @@ class AIModel(models.Model):
     model_id = models.CharField(
         max_length=200,
         unique=True,
-        help_text="Gateway model identifier, e.g. 'openai/gpt-5-mini'",
+        help_text="Native OpenRouter id, e.g. 'google/gemma-4-31b-it:free'",
     )
     display_name = models.CharField(max_length=200)
     description = models.TextField(blank=True, default="")
@@ -26,13 +26,13 @@ class AIModel(models.Model):
         default=0,
         help_text="Credits charged per game against this model",
     )
-    gateway_managed = models.BooleanField(
+    openrouter_managed = models.BooleanField(
         default=False,
-        help_text="If enabled, sync updates display name and description from Vercel AI Gateway.",
+        help_text="If enabled, sync updates display name and description from OpenRouter.",
     )
-    gateway_available = models.BooleanField(
+    openrouter_available = models.BooleanField(
         default=True,
-        help_text="True when the model exists in the latest Vercel AI Gateway catalog sync.",
+        help_text="True when the model exists in the latest OpenRouter free catalog sync.",
     )
     model_type = models.CharField(max_length=20, blank=True, default="language")
     context_window = models.PositiveIntegerField(null=True, blank=True)

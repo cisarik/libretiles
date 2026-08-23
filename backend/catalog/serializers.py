@@ -3,7 +3,7 @@ from decimal import Decimal
 from rest_framework import serializers
 
 from .selection import (
-    PINNED_MODEL_ID,
+    DEFAULT_FREE_MODEL_ID,
     get_cache_read_cost_per_token,
     get_cache_write_cost_per_token,
     get_combined_cost_per_million,
@@ -62,7 +62,7 @@ class AIModelSerializer(serializers.ModelSerializer):
         return format(get_combined_cost_per_million(obj).quantize(_DISPLAY_PRECISION), "f")
 
     def get_is_flagship(self, obj: AIModel) -> bool:
-        return obj.model_id == PINNED_MODEL_ID
+        return obj.model_id == DEFAULT_FREE_MODEL_ID
 
     def _format_cost(self, value: Decimal) -> str:
         return format((value * _MILLION).quantize(_DISPLAY_PRECISION), "f")

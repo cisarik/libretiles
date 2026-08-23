@@ -1,6 +1,6 @@
 {% extends "admin/base_site.html" %}
 
-{% block extrastyle %}
+{% block extrahead %}
   {{ block.super }}
   <style>
     .sync-grid {
@@ -35,11 +35,6 @@
     .sync-actions .button {
       margin: 0;
     }
-    .sync-checkbox {
-      display: inline-flex;
-      gap: 8px;
-      align-items: center;
-    }
   </style>
 {% endblock %}
 
@@ -48,7 +43,7 @@
     <a href="{% url 'admin:index' %}">Home</a>
     &rsaquo; <a href="{% url 'admin:app_list' app_label=opts.app_label %}">{{ opts.app_config.verbose_name }}</a>
     &rsaquo; <a href="{{ changelist_url }}">AI models</a>
-    &rsaquo; Sync gateway models
+    &rsaquo; Sync OpenRouter models
   </div>
 {% endblock %}
 
@@ -77,24 +72,20 @@
         <div class="sync-stat">{{ stats.active_models }}</div>
       </div>
       <div class="sync-card">
-        <h3>Gateway available</h3>
-        <div class="sync-stat">{{ stats.gateway_available_models }}</div>
+        <h3>OpenRouter available</h3>
+        <div class="sync-stat">{{ stats.openrouter_available_models }}</div>
       </div>
       <div class="sync-card">
-        <h3>Gateway managed</h3>
-        <div class="sync-stat">{{ stats.gateway_managed_models }}</div>
+        <h3>OpenRouter managed</h3>
+        <div class="sync-stat">{{ stats.openrouter_managed_models }}</div>
       </div>
     </div>
 
     <div class="sync-panel">
       <h2>Run sync</h2>
-      <p>Fetch the latest Vercel AI Gateway catalog and update the Django model registry.</p>
+      <p>Fetch the latest OpenRouter free catalog. Code owns shortlist activation.</p>
       <form method="post" action="{{ sync_url }}">
         {% csrf_token %}
-        <label class="sync-checkbox" for="activate-new">
-          <input id="activate-new" type="checkbox" name="activate_new" value="1">
-          Activate newly discovered models immediately
-        </label>
         <div class="sync-actions">
           <button type="submit" class="button default">Sync now</button>
           <a href="{{ changelist_url }}" class="button">Back to models</a>

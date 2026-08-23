@@ -18,12 +18,7 @@ from django.db.models import Count
 from django.utils import timezone
 
 from catalog.models import AIModel, AIPrompt
-from catalog.selection import (
-    ensure_local_ai_model,
-    get_selectable_models,
-    get_selectable_prompts,
-    is_local_model_id,
-)
+from catalog.selection import DEFAULT_FREE_MODEL_ID, get_selectable_models, get_selectable_prompts
 from gamecore.board import BOARD_SIZE, Board
 from gamecore.fastdict import load_dictionary
 from gamecore.game import PlayerState, apply_final_scoring, determine_end_reason
@@ -184,18 +179,20 @@ def _resolve_ai_model(
     ai_model_id: int | None,
     ai_model_model_id: str | None,
 ) -> AIModel | None:
-    if is_local_model_id(ai_model_model_id):
-        return ensure_local_ai_model(ai_model_model_id)
-
     selectable_models = get_selectable_models()
     if ai_model_model_id:
         for model in selectable_models:
             if model.model_id == ai_model_model_id:
                 return model
+        return None
     if ai_model_id is not None:
         for model in selectable_models:
             if model.id == ai_model_id:
                 return model
+        return None
+    for model in selectable_models:
+        if model.model_id == DEFAULT_FREE_MODEL_ID:
+            return model
     return selectable_models[0] if selectable_models else None
 
 

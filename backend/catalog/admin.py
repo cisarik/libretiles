@@ -1,4 +1,5 @@
 from io import StringIO
+from typing import Any
 
 from django.contrib import admin, messages
 from django.core.management import call_command
@@ -18,15 +19,21 @@ class AIModelAdmin(admin.ModelAdmin):
         "provider",
         "model_id",
         "pricing_summary",
-        "gateway_available",
-        "gateway_managed",
+        "openrouter_available",
+        "openrouter_managed",
         "quality_tier",
         "cost_per_game",
         "is_active",
         "sort_order",
         "last_synced_at",
     )
-    list_filter = ("provider", "quality_tier", "is_active", "gateway_available", "gateway_managed")
+    list_filter = (
+        "provider",
+        "quality_tier",
+        "is_active",
+        "openrouter_available",
+        "openrouter_managed",
+    )
     list_editable = ("cost_per_game", "is_active", "sort_order")
     search_fields = ("display_name", "model_id")
     ordering = ("sort_order", "display_name")
@@ -53,24 +60,22 @@ class AIModelAdmin(admin.ModelAdmin):
     def sync_models_view(self, request: HttpRequest) -> HttpResponse:
         if request.method == "POST":
             stdout = StringIO()
-            activate_new = request.POST.get("activate_new") == "1"
+            command_kwargs: dict[str, Any] = {"stdout": stdout}
+            if "activate_new" in request.POST:
+                command_kwargs["activate_new"] = request.POST.get("activate_new") == "1"
             try:
-                call_command(
-                    "sync_gateway_models",
-                    stdout=stdout,
-                    activate_new=activate_new,
-                )
+                call_command("sync_openrouter_models", **command_kwargs)
             except Exception as exc:  # pragma: no cover - defensive admin UX
                 self.message_user(
                     request,
-                    f"Gateway sync failed: {exc}",
+                    f"OpenRouter sync failed: {exc}",
                     level=messages.ERROR,
                 )
             else:
                 sync_output = stdout.getvalue().strip().splitlines()
                 self.message_user(
                     request,
-                    sync_output[-1] if sync_output else "Gateway sync complete.",
+                    sync_output[-1] if sync_output else "OpenRouter sync complete.",
                     level=messages.SUCCESS,
                 )
             return redirect(reverse("admin:catalog_aimodel_changelist"))
@@ -84,18 +89,18 @@ class AIModelAdmin(admin.ModelAdmin):
         context = {
             **self.admin_site.each_context(request),
             "opts": self.model._meta,
-            "title": "Sync AI Gateway models",
-            "subtitle": "Refresh the backend catalog from the latest Vercel AI Gateway model list.",
+            "title": "Sync OpenRouter free catalog",
+            "subtitle": "Refresh the backend catalog from the OpenRouter free model list. Shortlist activation is owned by code.",
             "sync_url": reverse("admin:catalog_aimodel_sync"),
             "changelist_url": reverse("admin:catalog_aimodel_changelist"),
             "stats": {
                 "total_models": AIModel.objects.count(),
                 "active_models": AIModel.objects.filter(is_active=True).count(),
-                "gateway_available_models": AIModel.objects.filter(
-                    gateway_available=True
+                "openrouter_available_models": AIModel.objects.filter(
+                    openrouter_available=True
                 ).count(),
-                "gateway_managed_models": AIModel.objects.filter(
-                    gateway_managed=True
+                "openrouter_managed_models": AIModel.objects.filter(
+                    openrouter_managed=True
                 ).count(),
             },
             "latest_sync_at": latest_sync.last_synced_at if latest_sync else None,
