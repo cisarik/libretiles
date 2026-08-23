@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
+import { DEFAULT_FREE_MODEL_ID, resolveFreeRivalId } from "@/lib/free-rivals";
 import type {
   GameState,
   Placement,
@@ -62,10 +63,6 @@ interface GameStore {
   setAITimeout: (seconds: number) => void;
   aiMaxSteps: number;
   setAIMaxSteps: (steps: number) => void;
-  localAIContextLength: number;
-  setLocalAIContextLength: (tokens: number) => void;
-  localAIReloadAfterTurn: boolean;
-  setLocalAIReloadAfterTurn: (enabled: boolean) => void;
   boardTheme: BoardTheme;
   setBoardTheme: (theme: BoardTheme) => void;
   boardShineEnabled: boolean;
@@ -114,7 +111,7 @@ export const useGameStore = create<GameStore>()(
       creditBalance: null,
       setCreditBalance: (creditBalance) => set({ creditBalance }),
 
-      selectedModelId: process.env.NEXT_PUBLIC_DEFAULT_MODEL || "openai/gpt-5.4",
+      selectedModelId: DEFAULT_FREE_MODEL_ID,
       setSelectedModelId: (selectedModelId) => set({ selectedModelId }),
       selectedPromptId: null,
       setSelectedPromptId: (selectedPromptId) => set({ selectedPromptId }),
@@ -165,12 +162,6 @@ export const useGameStore = create<GameStore>()(
       setAITimeout: (aiTimeout) => set({ aiTimeout }),
       aiMaxSteps: 30,
       setAIMaxSteps: (aiMaxSteps) => set({ aiMaxSteps }),
-      localAIContextLength: 4096,
-      setLocalAIContextLength: (localAIContextLength) =>
-        set({ localAIContextLength }),
-      localAIReloadAfterTurn: true,
-      setLocalAIReloadAfterTurn: (localAIReloadAfterTurn) =>
-        set({ localAIReloadAfterTurn }),
       boardTheme: "wood",
       setBoardTheme: (boardTheme) => set({ boardTheme }),
       boardShineEnabled: true,
@@ -219,6 +210,17 @@ export const useGameStore = create<GameStore>()(
     }),
     {
       name: "libretiles-store",
+      version: 1,
+      migrate: (persistedState, version) => {
+        if (version >= 1) {
+          return persistedState as GameStore;
+        }
+        const incoming = { ...((persistedState ?? {}) as Record<string, unknown>) };
+        delete incoming.localAIContextLength;
+        delete incoming.localAIReloadAfterTurn;
+        incoming.selectedModelId = resolveFreeRivalId(incoming.selectedModelId);
+        return incoming as unknown as GameStore;
+      },
       storage: createJSONStorage(() =>
         typeof window !== "undefined" ? localStorage : {
           getItem: () => null,
@@ -233,8 +235,6 @@ export const useGameStore = create<GameStore>()(
         selectedPromptId: state.selectedPromptId,
         aiTimeout: state.aiTimeout,
         aiMaxSteps: state.aiMaxSteps,
-        localAIContextLength: state.localAIContextLength,
-        localAIReloadAfterTurn: state.localAIReloadAfterTurn,
         boardTheme: state.boardTheme,
         boardShineEnabled: state.boardShineEnabled,
         premiumLookEnabled: state.premiumLookEnabled,

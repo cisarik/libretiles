@@ -105,20 +105,6 @@ Only label a word invalid when you are confident no such natural usage exists.
 
 Return JSON: { "results": [{ "word": "...", "valid": true/false, "reason": "..." }] }`;
 
-export const LOCAL_MOVE_SYSTEM_PROMPT = `You are a Scrabble opponent running on a small local model.
-Return strict JSON only, no markdown and no commentary.
-Choose one simple legal move using only rack tiles. Prefer common short English words.
-If unsure, choose a conservative 2-5 letter word. Never invent random letter strings.
-Final JSON:
-{
-  "action": "place" | "exchange" | "pass",
-  "placements": [{"row": N, "col": N, "letter": "X", "blank_as": null}],
-  "exchange_letters": ["A"],
-  "primary_word": "WORD",
-  "expected_score": N,
-  "reasoning": "brief"
-}`;
-
 /**
  * Build the user prompt for AI move generation.
  * Includes compact board state, rack, scores, and tile values.
@@ -155,23 +141,4 @@ CURRENT BOARD STATE:
 ${context.compact_state}
 
 Find the best scoring legal move. Use the tools to validate before finalizing.`;
-}
-
-export function buildLocalMoveUserPrompt(context: {
-  compact_state: string;
-  ai_state: {
-    ai_rack: string;
-    human_score: number;
-    ai_score: number;
-  };
-  is_first_move: boolean;
-}): string {
-  return `RACK: ${context.ai_state.ai_rack}
-SCORES: Human ${context.ai_state.human_score}, AI ${context.ai_state.ai_score}
-${context.is_first_move ? "FIRST MOVE: place a word crossing center square row 7 col 7." : "Move must connect to existing board letters."}
-
-BOARD:
-${context.compact_state}
-
-Return one JSON move. Use row and col numbers from 0 to 14.`;
 }
