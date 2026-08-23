@@ -8,14 +8,15 @@
  * Validation pipeline:
  *   Tier 1: Local Collins 2019 dictionary (279,496 words, O(1) lookup) — Django
  *   Tier 2: Online dictionary API (optional) — Django
- *   Tier 3: AI Judge (this route) — Vercel AI Gateway
+ *   Tier 3: AI Judge (this route) — OpenRouter
  *
  * See: scrabgpt/ai/client.py build_judge_prompt() for the original desktop version.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { generateText } from "ai";
-import { getModel } from "@/lib/ai-gateway";
+import { resolveFreeRivalId } from "@/lib/free-rivals";
+import { getOpenRouterModel } from "@/lib/openrouter";
 import { JUDGE_SYSTEM_PROMPT } from "@/lib/prompts";
 
 export async function POST(req: NextRequest) {
@@ -32,7 +33,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const model = getModel(model_id);
+    const model = getOpenRouterModel(resolveFreeRivalId(model_id));
 
     const result = await generateText({
       model,

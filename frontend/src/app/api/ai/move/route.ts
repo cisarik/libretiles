@@ -22,21 +22,13 @@ import { NextRequest } from "next/server";
 import { generateText, tool, stepCountIs } from "ai";
 import { z } from "zod";
 import {
-  canUseDirectOpenAIModel,
-  getDirectModel,
-  getModel,
-  getProviderPath,
-  isGatewayConfigured,
-} from "@/lib/ai-gateway";
-import { isLocalAIModelId } from "@/lib/local-ai";
+  DEFAULT_FREE_MODEL_ID,
+  isFreeRivalId,
+  resolveFreeRivalId,
+} from "@/lib/free-rivals";
+import { getOpenRouterModel } from "@/lib/openrouter";
 import {
-  prepareLMStudioModelForTurn,
-  unloadLMStudioModel,
-} from "@/lib/lm-studio";
-import {
-  LOCAL_MOVE_SYSTEM_PROMPT,
   MOVE_SYSTEM_PROMPT,
-  buildLocalMoveUserPrompt,
   buildMoveUserPrompt,
 } from "@/lib/prompts";
 
@@ -48,171 +40,10 @@ const MAX_STEPS = 100;
 const DEFAULT_MAX_OUTPUT_TOKENS = 10000;
 const MIN_MAX_OUTPUT_TOKENS = 2000;
 const MAX_MAX_OUTPUT_TOKENS = 64000;
-const DEFAULT_LM_STUDIO_MAX_OUTPUT_TOKENS = 4096;
-const MIN_LM_STUDIO_MAX_OUTPUT_TOKENS = 512;
-const MAX_LM_STUDIO_MAX_OUTPUT_TOKENS = 8192;
-const DEFAULT_LM_STUDIO_CONTEXT_LENGTH = 4096;
-const MIN_LM_STUDIO_CONTEXT_LENGTH = 512;
-const MAX_LM_STUDIO_CONTEXT_LENGTH = 32768;
 const AUTO_FINALIZE_GRACE_MS = 2500;
 const AUTO_FINALIZE_VALID_CAP = 4;
 const EXTENDED_AUTO_FINALIZE_GRACE_MS = 6000;
 const EXTENDED_AUTO_FINALIZE_VALID_CAP = 7;
-const LOCAL_OPENING_FALLBACK_WORDS = [
-  "FILMS",
-  "MAILS",
-  "SLIM",
-  "FAIL",
-  "FILM",
-  "FILS",
-  "ABLE",
-  "BAIL",
-  "BAILS",
-  "AILS",
-  "AIMS",
-  "ALBS",
-  "ALMS",
-  "AMIS",
-  "BIAS",
-  "BALM",
-  "BALMS",
-  "BAMS",
-  "LAMS",
-  "LIBS",
-  "MILS",
-  "SIMA",
-  "AIS",
-  "ALS",
-  "AMI",
-  "BAM",
-  "BAS",
-  "BIS",
-  "FAS",
-  "IFS",
-  "ISM",
-  "LAM",
-  "LIB",
-  "LIS",
-  "MIL",
-  "MIS",
-  "SIB",
-  "SIM",
-  "AA",
-  "AB",
-  "AD",
-  "AE",
-  "AG",
-  "AH",
-  "AI",
-  "AL",
-  "AM",
-  "AN",
-  "AR",
-  "AS",
-  "AW",
-  "AX",
-  "AY",
-  "BA",
-  "BE",
-  "BI",
-  "BO",
-  "BY",
-  "DA",
-  "DE",
-  "DO",
-  "ED",
-  "EF",
-  "EH",
-  "EL",
-  "EM",
-  "EN",
-  "ER",
-  "ES",
-  "ET",
-  "EW",
-  "EX",
-  "FA",
-  "FE",
-  "FY",
-  "GI",
-  "GO",
-  "GU",
-  "HA",
-  "HE",
-  "HI",
-  "HM",
-  "HO",
-  "ID",
-  "IF",
-  "IN",
-  "IO",
-  "IS",
-  "IT",
-  "JO",
-  "KA",
-  "KI",
-  "KO",
-  "KY",
-  "LA",
-  "LI",
-  "LO",
-  "MA",
-  "ME",
-  "MI",
-  "MM",
-  "MO",
-  "MU",
-  "MY",
-  "NA",
-  "NE",
-  "NO",
-  "NU",
-  "OD",
-  "OE",
-  "OF",
-  "OH",
-  "OI",
-  "OM",
-  "ON",
-  "OO",
-  "OP",
-  "OR",
-  "OS",
-  "OU",
-  "OW",
-  "OX",
-  "OY",
-  "PA",
-  "PE",
-  "PI",
-  "PO",
-  "QI",
-  "RE",
-  "SH",
-  "SI",
-  "SO",
-  "ST",
-  "TA",
-  "TE",
-  "TI",
-  "TO",
-  "UG",
-  "UH",
-  "UM",
-  "UN",
-  "UP",
-  "UR",
-  "US",
-  "UT",
-  "WE",
-  "WO",
-  "XI",
-  "XU",
-  "YA",
-  "YE",
-  "YO",
-  "ZA",
-];
 
 function summarizeBackendBody(body: string) {
   return body.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 220);
@@ -311,9 +142,9 @@ type UsageLike = {
 
 type NormalizedRouteError = {
   code:
-    | "insufficient_user_credit"
-    | "insufficient_provider_funds"
-    | "provider_auth_failed";
+    | "provider_auth_failed"
+    | "provider_rate_limited"
+    | "provider_unavailable";
   message: string;
 };
 
@@ -326,28 +157,48 @@ function normalizeRouteError(error: unknown): NormalizedRouteError | null {
   const normalized = message.toLowerCase();
 
   if (
-    normalized.includes("insufficient funds") ||
-    normalized.includes("add credits to your account") ||
-    normalized.includes("top up your credits")
-  ) {
-    return {
-      code: "insufficient_provider_funds",
-      message:
-        "The shared AI provider budget is temporarily exhausted. Your personal balance is untouched. Switch models or try again later.",
-    };
-  }
-
-  if (
-    normalized.includes("authentication failed") ||
-    normalized.includes("vercel credential") ||
-    normalized.includes("ai gateway") && normalized.includes("credential") ||
+    normalized.includes("401") ||
     normalized.includes("unauthorized") ||
-    normalized.includes("invalid api key")
+    normalized.includes("authentication failed") ||
+    normalized.includes("invalid api key") ||
+    normalized.includes("invalid key") ||
+    normalized.includes("missing or invalid api key")
   ) {
     return {
       code: "provider_auth_failed",
       message:
-        "This rival is still using the cloud AI Gateway, and its credential is invalid. Switch to a local LM Studio model for offline play or fix the AI Gateway key.",
+        "This free rival could not authenticate. Switch to another free rival or retry later.",
+    };
+  }
+
+  if (
+    normalized.includes("429") ||
+    normalized.includes("rate limit") ||
+    normalized.includes("too many requests")
+  ) {
+    return {
+      code: "provider_rate_limited",
+      message:
+        "This free rival is rate limited. Switch to another free rival or retry later.",
+    };
+  }
+
+  if (
+    normalized.includes("insufficient funds") ||
+    normalized.includes("payment required") ||
+    normalized.includes("402") ||
+    normalized.includes("503") ||
+    normalized.includes("502") ||
+    normalized.includes("504") ||
+    normalized.includes("overloaded") ||
+    normalized.includes("temporarily unavailable") ||
+    normalized.includes("provider unavailable") ||
+    normalized.includes("service unavailable")
+  ) {
+    return {
+      code: "provider_unavailable",
+      message:
+        "This free rival is temporarily unavailable. Switch to another free rival or retry later.",
     };
   }
 
@@ -538,70 +389,6 @@ function extractJsonObject(text: string, requireAction: boolean): unknown | null
   return null;
 }
 
-function getLMStudioMaxOutputTokens() {
-  const configured = Number.parseInt(
-    process.env.LM_STUDIO_MAX_OUTPUT_TOKENS ?? "",
-    10,
-  );
-
-  if (!Number.isFinite(configured)) {
-    return DEFAULT_LM_STUDIO_MAX_OUTPUT_TOKENS;
-  }
-
-  return clampNumber(
-    configured,
-    MIN_LM_STUDIO_MAX_OUTPUT_TOKENS,
-    MAX_LM_STUDIO_MAX_OUTPUT_TOKENS,
-  );
-}
-
-function getRequestedLMStudioContextLength(value: unknown) {
-  const parsed =
-    typeof value === "number"
-      ? value
-      : Number.parseInt(String(value ?? ""), 10);
-
-  if (!Number.isFinite(parsed)) {
-    return DEFAULT_LM_STUDIO_CONTEXT_LENGTH;
-  }
-
-  return clampNumber(
-    Math.round(parsed),
-    MIN_LM_STUDIO_CONTEXT_LENGTH,
-    MAX_LM_STUDIO_CONTEXT_LENGTH,
-  );
-}
-
-function canBuildWordFromRack(word: string, rack: string): boolean {
-  const counts = new Map<string, number>();
-  for (const letter of rack.toUpperCase()) {
-    counts.set(letter, (counts.get(letter) ?? 0) + 1);
-  }
-
-  for (const letter of word.toUpperCase()) {
-    const available = counts.get(letter) ?? 0;
-    const blanks = counts.get("?") ?? 0;
-    if (available > 0) {
-      counts.set(letter, available - 1);
-    } else if (blanks > 0) {
-      counts.set("?", blanks - 1);
-    } else {
-      return false;
-    }
-  }
-
-  return true;
-}
-
-function buildOpeningPlacements(word: string): PlacementData[] {
-  const startCol = 7 - Math.floor(word.length / 2);
-  return word.split("").map((letter, index) => ({
-    row: 7,
-    col: startCol + index,
-    letter,
-  }));
-}
-
 export async function POST(req: NextRequest) {
   const body = await req.json();
   const { game_id, token, model_id, timeout } = body as {
@@ -610,8 +397,6 @@ export async function POST(req: NextRequest) {
     model_id?: string;
     timeout?: number;
     max_steps?: number;
-    lmstudio_context_length?: number;
-    lmstudio_reload_after_turn?: boolean;
   };
 
   const timeoutS = Math.max(15, Math.min(timeout ?? DEFAULT_TIMEOUT_S, 600));
@@ -624,13 +409,6 @@ export async function POST(req: NextRequest) {
   );
   const startTime = Date.now();
   const requestedModelId = model_id || null;
-  const lmStudioContextLength = getRequestedLMStudioContextLength(
-    body.lmstudio_context_length,
-  );
-  const lmStudioReloadAfterTurn =
-    typeof body.lmstudio_reload_after_turn === "boolean"
-      ? body.lmstudio_reload_after_turn
-      : true;
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -667,8 +445,6 @@ export async function POST(req: NextRequest) {
       let accumulatedUsage: ReturnType<typeof normalizeUsage> = null;
       let completedStepCount = 0;
       let completedToolCallCount = 0;
-      let localRuntimeModelIdForUnload: string | null = null;
-      let shouldUnloadLocalRuntimeModel = false;
       const completedStepModels: Array<{
         step: number;
         provider: string;
@@ -795,17 +571,23 @@ export async function POST(req: NextRequest) {
               MAX_MAX_OUTPUT_TOKENS,
             )
           : DEFAULT_MAX_OUTPUT_TOKENS;
-        const resolvedModelId =
+        const resolvedModelId = resolveFreeRivalId(
           requestedModelId ||
-          sessionModelId ||
-          process.env.NEXT_PUBLIC_DEFAULT_MODEL ||
-          "openai/gpt-5.4";
-        const isLocalModel = isLocalAIModelId(resolvedModelId);
-        const localMaxOutputTokens = isLocalModel ? getLMStudioMaxOutputTokens() : null;
-        const maxOutputTokens =
-          localMaxOutputTokens !== null
-            ? Math.min(requestedMaxOutputTokens, localMaxOutputTokens)
-            : requestedMaxOutputTokens;
+            sessionModelId ||
+            process.env.NEXT_PUBLIC_DEFAULT_MODEL ||
+            DEFAULT_FREE_MODEL_ID,
+        );
+        if (!isFreeRivalId(resolvedModelId)) {
+          emit({
+            type: "error",
+            code: "provider_unavailable",
+            error:
+              "This rival is not on the free shortlist. Switch to another free rival or retry later.",
+          });
+          closeStream();
+          return;
+        }
+        const maxOutputTokens = requestedMaxOutputTokens;
         const useExtendedSearchBudget = timeoutS >= 90 || maxSteps >= 45;
         autoFinalizeGraceMs = useExtendedSearchBudget
           ? EXTENDED_AUTO_FINALIZE_GRACE_MS
@@ -813,89 +595,31 @@ export async function POST(req: NextRequest) {
         autoFinalizeValidCap = useExtendedSearchBudget
           ? EXTENDED_AUTO_FINALIZE_VALID_CAP
           : AUTO_FINALIZE_VALID_CAP;
-        const profile = await backendGet("/api/auth/me/", token).catch(() => null);
-        const availableCredits =
-          typeof profile?.credit_balance === "string"
-            ? Number.parseFloat(profile.credit_balance)
-            : Number.NaN;
-
-        if (!isLocalModel && Number.isFinite(availableCredits) && availableCredits <= 0) {
-          emit({
-            type: "error",
-            code: "insufficient_user_credit",
-            error:
-              "Your balance is empty. Open settings to top up or switch to a cheaper AI model.",
-            credit_balance: profile.credit_balance,
-          });
-          closeStream();
-          return;
-        }
 
         const activeMovePrompt =
           typeof context.ai_prompt_text === "string" && context.ai_prompt_text.trim().length > 0
             ? context.ai_prompt_text
             : MOVE_SYSTEM_PROMPT;
-        const localPrepareResult = isLocalModel
-          ? await prepareLMStudioModelForTurn({
-              catalogModelId: resolvedModelId,
-              contextLength: lmStudioContextLength,
-              reloadBeforeTurn: true,
-              signal: abortController.signal,
-            })
-          : null;
-        const runtimeModelId = localPrepareResult?.runtimeModelId ?? resolvedModelId;
-        const effectiveContextLength =
-          localPrepareResult?.effectiveContextLength ?? lmStudioContextLength;
-        if (!runtimeModelId) {
+        const runtimeModelId = resolvedModelId;
+
+        let model;
+        try {
+          model = getOpenRouterModel(resolvedModelId);
+        } catch (err) {
+          const normalizedError = normalizeRouteError(err) ?? {
+            code: "provider_auth_failed" as const,
+            message:
+              "This free rival could not authenticate. Switch to another free rival or retry later.",
+          };
           emit({
             type: "error",
-            error:
-              "LM Studio is reachable, but no loaded tool-capable chat model is available. Load a model in LM Studio and try again.",
+            code: normalizedError.code,
+            error: normalizedError.message,
           });
           closeStream();
           return;
         }
-        if (isLocalModel) {
-          localRuntimeModelIdForUnload =
-            localPrepareResult?.instanceId ?? runtimeModelId;
-          shouldUnloadLocalRuntimeModel = lmStudioReloadAfterTurn;
-        }
-
-        const model = getModel(
-          isLocalModel && runtimeModelId !== resolvedModelId
-            ? `lmstudio/${runtimeModelId}`
-            : resolvedModelId,
-        );
-        let providerPath = getProviderPath(resolvedModelId);
-        let gatewayFallbackUsed = false;
-
-        if (isLocalModel && runtimeModelId !== resolvedModelId) {
-          emit({
-            type: "thinking",
-            status: "local_model_resolved",
-            message: `Using loaded LM Studio model ${runtimeModelId}.`,
-          });
-        }
-        if (isLocalModel) {
-          emit({
-            type: "thinking",
-            status: "local_model_loaded",
-            message: localPrepareResult?.contextClamped
-              ? `LM Studio model is loaded with ${effectiveContextLength} context tokens (requested ${lmStudioContextLength}, capped to the model max ${localPrepareResult?.modelMaxContextLength}).`
-              : `LM Studio model is loaded with ${effectiveContextLength} context tokens.`,
-            lmstudio_context_length: effectiveContextLength,
-            lmstudio_requested_context_length: lmStudioContextLength,
-            lmstudio_model_max_context_length:
-              localPrepareResult?.modelMaxContextLength ?? null,
-            lmstudio_context_clamped: localPrepareResult?.contextClamped ?? false,
-            lmstudio_reload_after_turn: lmStudioReloadAfterTurn,
-            lmstudio_loaded_before_prepare:
-              localPrepareResult?.loadedBeforePrepare ?? false,
-            lmstudio_loaded_context_length:
-              localPrepareResult?.loadedContextLength ?? null,
-            lmstudio_load_result: localPrepareResult?.loadResult ?? null,
-          });
-        }
+        const providerPath = "openrouter";
 
         emit({
           type: "thinking",
@@ -905,66 +629,15 @@ export async function POST(req: NextRequest) {
           max_steps: maxSteps,
           max_output_tokens: maxOutputTokens,
           requested_max_output_tokens: requestedMaxOutputTokens,
-          local_max_output_tokens: localMaxOutputTokens,
-          lmstudio_context_length: isLocalModel ? effectiveContextLength : null,
-          lmstudio_requested_context_length: isLocalModel
-            ? lmStudioContextLength
-            : null,
-          lmstudio_model_max_context_length: isLocalModel
-            ? localPrepareResult?.modelMaxContextLength ?? null
-            : null,
-          lmstudio_reload_after_turn: isLocalModel
-            ? lmStudioReloadAfterTurn
-            : null,
           provider_path: providerPath,
         });
         emit({
           type: "thinking",
           status: "searching",
-          message: isLocalModel
-            ? "Using compact local prompt and server-side final validation..."
-            : "Exploring legal words and validating the board...",
+          message: "Exploring legal words and validating the board...",
         });
 
-        const runLocalGeneration = (activeModel: ReturnType<typeof getModel>) =>
-          Promise.race([
-            generateText({
-              model: activeModel,
-              maxOutputTokens,
-              temperature: 0.1,
-              system: LOCAL_MOVE_SYSTEM_PROMPT,
-              prompt: buildLocalMoveUserPrompt(context),
-              providerOptions: {
-                openai: {
-                  reasoningEffort: "none",
-                },
-              },
-              abortSignal: abortController.signal,
-              stopWhen: stepCountIs(1),
-              onStepFinish: (step) => {
-                completedStepCount += 1;
-                completedToolCallCount += step.toolCalls.length;
-                accumulatedUsage = mergeUsage(
-                  accumulatedUsage,
-                  normalizeUsage(step.usage as UsageLike | undefined),
-                );
-                completedStepModels.push({
-                  step: step.stepNumber,
-                  provider: step.model.provider,
-                  model_id: step.model.modelId,
-                  response_model: step.response.modelId,
-                });
-                lastResponseModelId = step.response.modelId;
-              },
-            }),
-            new Promise<never>((_, reject) => {
-              abortController.signal.addEventListener("abort", () => {
-                reject(new DOMException("Timeout", "AbortError"));
-              });
-            }),
-          ]);
-
-        const runGeneration = (activeModel: ReturnType<typeof getModel>) =>
+        const runGeneration = (activeModel: ReturnType<typeof getOpenRouterModel>) =>
           Promise.race([
             generateText({
               model: activeModel,
@@ -1082,44 +755,12 @@ export async function POST(req: NextRequest) {
         let timedOut = false;
 
         try {
-          aiResult = await (isLocalModel
-            ? runLocalGeneration(model)
-            : runGeneration(model));
+          aiResult = await runGeneration(model);
         } catch (err) {
           if (err instanceof DOMException && err.name === "AbortError") {
             timedOut = true;
           } else {
-            const normalizedError = normalizeRouteError(err);
-            const shouldFallbackToDirectOpenAI =
-              normalizedError?.code === "insufficient_provider_funds" &&
-              isGatewayConfigured() &&
-              canUseDirectOpenAIModel(resolvedModelId);
-
-            if (!shouldFallbackToDirectOpenAI) {
-              throw err;
-            }
-
-            emit({
-              type: "thinking",
-              status: "provider_fallback",
-              message:
-                "The shared AI Gateway budget is exhausted. Retrying directly with OpenAI for this model...",
-            });
-
-            try {
-              aiResult = await runGeneration(getDirectModel(resolvedModelId));
-              providerPath = "direct_openai";
-              gatewayFallbackUsed = true;
-            } catch (fallbackError) {
-              if (
-                fallbackError instanceof DOMException &&
-                fallbackError.name === "AbortError"
-              ) {
-                timedOut = true;
-              } else {
-                throw fallbackError;
-              }
-            }
+            throw err;
           }
         } finally {
           clearTimeout(timeoutId);
@@ -1153,9 +794,7 @@ export async function POST(req: NextRequest) {
           }
         } else if (aiResult) {
           // Parse AI response text
-          const parsed =
-            extractJsonObject(aiResult.text, true) ??
-            (isLocalModel ? extractJsonObject(aiResult.text, false) : null);
+          const parsed = extractJsonObject(aiResult.text, true);
           if (isRecord(parsed)) {
             if (typeof parsed.action === "string") {
               finalAction = parsed.action;
@@ -1196,34 +835,6 @@ export async function POST(req: NextRequest) {
             }
           }
 
-          if (
-            isLocalModel &&
-            finalPlacements.length === 0 &&
-            context.is_first_move
-          ) {
-            const rack = String(context.ai_state?.ai_rack ?? "");
-            for (const word of LOCAL_OPENING_FALLBACK_WORDS) {
-              if (!canBuildWordFromRack(word, rack)) continue;
-              const placements = buildOpeningPlacements(word);
-              const result = await backendPost(
-                `/api/game/${game_id}/validate-move/`,
-                { placements },
-                token,
-              );
-              trackCandidate(result, placements);
-              if (result.valid === true) {
-                finalAction = "place";
-                finalPlacements = placements;
-                emit({
-                  type: "thinking",
-                  status: "local_opening_fallback",
-                  message: `Local fallback found ${word}.`,
-                });
-                break;
-              }
-            }
-          }
-
           // If AI returned placements but we also have a better tracked candidate, prefer tracked
           const best = getBestCandidate();
           if (best && best.score > 0) {
@@ -1252,28 +863,8 @@ export async function POST(req: NextRequest) {
           model: resolvedModelId,
           runtime_model: runtimeModelId,
           provider_path: providerPath,
-          gateway_fallback_used: gatewayFallbackUsed,
           max_output_tokens: maxOutputTokens,
           requested_max_output_tokens: requestedMaxOutputTokens,
-          local_max_output_tokens: localMaxOutputTokens,
-          lmstudio_context_length: isLocalModel ? effectiveContextLength : null,
-          lmstudio_requested_context_length: isLocalModel
-            ? lmStudioContextLength
-            : null,
-          lmstudio_model_max_context_length: isLocalModel
-            ? localPrepareResult?.modelMaxContextLength ?? null
-            : null,
-          lmstudio_context_clamped: isLocalModel
-            ? localPrepareResult?.contextClamped ?? null
-            : null,
-          lmstudio_reload_after_turn: isLocalModel
-            ? lmStudioReloadAfterTurn
-            : null,
-          lmstudio_loaded_before_prepare:
-            localPrepareResult?.loadedBeforePrepare ?? null,
-          lmstudio_loaded_context_length:
-            localPrepareResult?.loadedContextLength ?? null,
-          lmstudio_load_result: localPrepareResult?.loadResult ?? null,
           response_model: aiResult?.response?.modelId ?? lastResponseModelId,
           response_id: aiResult?.response?.id,
           response_headers: aiResult?.response?.headers,
@@ -1477,25 +1068,6 @@ export async function POST(req: NextRequest) {
           });
         }
       } finally {
-        if (shouldUnloadLocalRuntimeModel && localRuntimeModelIdForUnload) {
-          try {
-            await unloadLMStudioModel(localRuntimeModelIdForUnload);
-            emit({
-              type: "thinking",
-              status: "local_model_unloaded",
-              message: `LM Studio model ${localRuntimeModelIdForUnload} was unloaded.`,
-            });
-          } catch (error) {
-            emit({
-              type: "thinking",
-              status: "local_model_unload_failed",
-              message:
-                error instanceof Error
-                  ? error.message
-                  : "LM Studio model unload failed.",
-            });
-          }
-        }
         closeStream();
       }
     },

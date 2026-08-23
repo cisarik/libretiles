@@ -33,7 +33,7 @@ import { TurnStatusNotice } from "@/components/game/TurnStatusNotice";
 import { useGameStore, type BoardTheme } from "@/hooks/useGameStore";
 import { useIsCoarsePointer } from "@/hooks/useIsCoarsePointer";
 import { api } from "@/lib/api";
-import { isLocalAIModelId } from "@/lib/local-ai";
+import { resolveFreeRivalId } from "@/lib/free-rivals";
 import { PREMIUM_FOOTER_STYLE, handlePremiumSurfacePointer } from "@/lib/premiumSurface";
 import { isPlausibleRack } from "@/lib/rack";
 import { buildGameWebSocketUrl } from "@/lib/ws";
@@ -173,10 +173,9 @@ type Toast = {
 };
 
 type AIBlockerModal = {
-  kind: "user_credit" | "provider_funds" | "provider_auth";
+  kind: "provider_auth_failed" | "provider_rate_limited" | "provider_unavailable";
   title: string;
   message: string;
-  creditBalance?: string | null;
 };
 
 const THEME_FRAME_BORDER: Record<BoardTheme, string> = {
@@ -202,46 +201,46 @@ function humanizeModelId(modelId?: string | null): string | null {
 function normalizeAIBlocker(
   message: string,
   code?: string,
-  creditBalance?: string | null,
 ): AIBlockerModal | null {
   const normalized = message.toLowerCase();
-
-  if (code === "insufficient_user_credit") {
-    return {
-      kind: "user_credit",
-      title: "Balance required",
-      message:
-        "AI turns are paused until you top up your balance or switch to a cheaper opponent.",
-      creditBalance,
-    };
-  }
-
-  if (
-    code === "insufficient_provider_funds" ||
-    normalized.includes("insufficient funds") ||
-    normalized.includes("top up your credits")
-  ) {
-    return {
-      kind: "provider_funds",
-      title: "AI service is temporarily unavailable",
-      message:
-        "Your own balance is fine. The shared AI provider budget behind this model is currently exhausted. Switch models or try again later.",
-      creditBalance,
-    };
-  }
 
   if (
     code === "provider_auth_failed" ||
     normalized.includes("authentication failed") ||
-    normalized.includes("vercel credential") ||
-    normalized.includes("ai gateway")
+    normalized.includes("invalid api key") ||
+    normalized.includes("unauthorized")
   ) {
     return {
-      kind: "provider_auth",
-      title: "Cloud rival is misconfigured",
+      kind: "provider_auth_failed",
+      title: "Rival authentication failed",
       message:
-        "The current rival is a cloud model using AI Gateway, and that credential is invalid. Switch the rival to a local LM Studio model for offline play, or fix AI_GATEWAY_API_KEY.",
-      creditBalance,
+        "This free rival could not authenticate. Switch to another free rival or retry later.",
+    };
+  }
+
+  if (
+    code === "provider_rate_limited" ||
+    normalized.includes("rate limit") ||
+    normalized.includes("too many requests")
+  ) {
+    return {
+      kind: "provider_rate_limited",
+      title: "Rival is rate limited",
+      message:
+        "This free rival is rate limited. Switch to another free rival or retry later.",
+    };
+  }
+
+  if (
+    code === "provider_unavailable" ||
+    normalized.includes("temporarily unavailable") ||
+    normalized.includes("insufficient funds")
+  ) {
+    return {
+      kind: "provider_unavailable",
+      title: "Rival is unavailable",
+      message:
+        "This free rival is temporarily unavailable. Switch to another free rival or retry later.",
     };
   }
 
@@ -257,13 +256,6 @@ function formatDisplayedCost(chargedUsd?: string | null) {
   }
 
   return "$0.00";
-}
-
-function formatBalanceValue(value?: string | null) {
-  if (value == null || value === "") return "$0.00";
-  const numeric = Number.parseFloat(value);
-  if (!Number.isFinite(numeric)) return "$0.00";
-  return `$${numeric.toFixed(2)}`;
 }
 
 function BillingCaption({
@@ -521,7 +513,11 @@ function AIBlockerOverlay({
         className="w-full max-w-md rounded-[1.8rem] border border-amber-300/20 bg-[linear-gradient(180deg,rgba(28,22,16,0.98),rgba(12,10,9,0.98))] p-6 shadow-[0_30px_90px_rgba(0,0,0,0.42)]"
       >
         <div className="text-[0.68rem] uppercase tracking-[0.28em] text-amber-200/66">
-          {modal.kind === "user_credit" ? "Balance Required" : "Service Budget"}
+          {modal.kind === "provider_auth_failed"
+            ? "Authentication"
+            : modal.kind === "provider_rate_limited"
+              ? "Rate Limited"
+              : "Unavailable"}
         </div>
         <h3 className="mt-3 text-2xl font-black tracking-tight text-stone-50">
           {modal.title}
@@ -529,12 +525,6 @@ function AIBlockerOverlay({
         <p className="mt-3 text-sm leading-6 text-stone-300">
           {modal.message}
         </p>
-        {modal.kind === "user_credit" && (
-          <div className="mt-4 rounded-[1.1rem] border border-amber-300/18 bg-amber-400/8 px-4 py-3 text-sm text-amber-100">
-            Balance: <span className="font-black">{formatBalanceValue(modal.creditBalance)}</span>
-          </div>
-        )}
-
         <div className="mt-6 flex flex-wrap justify-end gap-3">
           <button
             type="button"
@@ -585,8 +575,6 @@ export default function GamePage() {
   const setSelectedPromptId = useGameStore((s) => s.setSelectedPromptId);
   const aiTimeout = useGameStore((s) => s.aiTimeout);
   const aiMaxSteps = useGameStore((s) => s.aiMaxSteps);
-  const localAIContextLength = useGameStore((s) => s.localAIContextLength);
-  const localAIReloadAfterTurn = useGameStore((s) => s.localAIReloadAfterTurn);
   const boardTheme = useGameStore((s) => s.boardTheme);
   const premiumLookEnabled = useGameStore((s) => s.premiumLookEnabled);
   const addAICandidate = useGameStore((s) => s.addAICandidate);
@@ -1019,21 +1007,9 @@ export default function GamePage() {
     if (gameState.current_turn_slot !== aiSlotNumber) return;
     if (aiInFlightRef.current) return;
 
-    const activeModelId = selectedModelId || gameState.ai_model_id;
-    const availableCredits = creditBalance ? Number.parseFloat(creditBalance) : Number.NaN;
-    if (
-      !isLocalAIModelId(activeModelId) &&
-      Number.isFinite(availableCredits) &&
-      availableCredits <= 0
-    ) {
-      const blocker = normalizeAIBlocker("", "insufficient_user_credit", creditBalance);
-      setAiApproved(false);
-      if (blocker) {
-        setAiError(blocker.message);
-        setAIBlockerModal(blocker);
-      }
-      return;
-    }
+    const activeModelId = resolveFreeRivalId(
+      selectedModelId || gameState.ai_model_id,
+    );
 
     aiInFlightRef.current = true;
     clearAICandidates();
@@ -1053,8 +1029,6 @@ export default function GamePage() {
           model_id: activeModelId,
           timeout: aiTimeout,
           max_steps: aiMaxSteps,
-          lmstudio_context_length: localAIContextLength,
-          lmstudio_reload_after_turn: localAIReloadAfterTurn,
         }),
       });
       const contentType = res.headers.get("content-type") ?? "";
@@ -1080,7 +1054,6 @@ export default function GamePage() {
           const blocker = normalizeAIBlocker(
             error.message,
             error.code,
-            error.creditBalance ?? creditBalance,
           );
           setAiApproved(false);
           if (blocker) {
@@ -1174,7 +1147,7 @@ export default function GamePage() {
       aiInFlightRef.current = false;
     }
   }, [
-    token, gameState, gameId, selectedModelId, aiTimeout, aiMaxSteps, localAIContextLength, localAIReloadAfterTurn, creditBalance, aiSlotNumber,
+    token, gameState, gameId, selectedModelId, aiTimeout, aiMaxSteps, aiSlotNumber,
     setCreditBalance, setAIThinking, setLastMoveResult, setGameState, setAIStatusMessage, syncState,
     clearAICandidates, addAICandidate, startCountdown, stopCountdown, showToast,
   ]);
