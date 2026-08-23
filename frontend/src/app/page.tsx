@@ -4,7 +4,9 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { api } from "@/lib/api";
+import { DEFAULT_FREE_MODEL_ID } from "@/lib/free-rivals";
 import { useGameStore } from "@/hooks/useGameStore";
+import type { AIModel } from "@/lib/types";
 import {
   PREMIUM_GOLD_TEXT_SHADOW_CLASS,
   PREMIUM_HEADER_STYLE,
@@ -43,22 +45,34 @@ export default function Home() {
       const { access, refresh } = await api.login({ username, password });
       setToken(access);
       setRefreshToken(refresh);
-      const profile = await api.me(access);
+      const [profile, catalog] = await Promise.all([
+        api.me(access),
+        api.getModels().catch((): AIModel[] => []),
+      ]);
       setCreditBalance(profile.credit_balance);
+      const eligibleIds = catalog.map((model) => model.model_id);
+      const preferredId = profile.preferred_ai_model_id ?? "";
+      const resolvedSelection =
+        (preferredId && eligibleIds.includes(preferredId) ? preferredId : null) ??
+        (selectedModelId && eligibleIds.includes(selectedModelId)
+          ? selectedModelId
+          : null) ??
+        (eligibleIds.includes(DEFAULT_FREE_MODEL_ID)
+          ? DEFAULT_FREE_MODEL_ID
+          : null) ??
+        eligibleIds[0] ??
+        null;
 
-      const models = await api.getModels();
-      const fallbackModelId = models[0]?.model_id ?? null;
-      const preferredModelId = profile.preferred_ai_model_id || selectedModelId;
-      const resolvedSelection = models.some((model) => model.model_id === preferredModelId)
-        ? preferredModelId
-        : fallbackModelId;
-
-      if (!resolvedSelection) {
-        throw new Error("No active AI models are available.");
+      if (resolvedSelection && resolvedSelection !== selectedModelId) {
+        setSelectedModelId(resolvedSelection);
       }
 
-      if (resolvedSelection !== selectedModelId) {
-        setSelectedModelId(resolvedSelection);
+      if (preferredId && resolvedSelection && preferredId !== resolvedSelection) {
+        try {
+          await api.updateMe(access, { preferred_ai_model_id: resolvedSelection });
+        } catch {
+          // Preference repair is best-effort; Play refuses stale ids.
+        }
       }
 
       resetGameUi();

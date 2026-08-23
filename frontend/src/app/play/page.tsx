@@ -7,12 +7,14 @@ import { motion } from "framer-motion";
 import { GameHistoryPanel } from "@/components/game/GameHistoryPanel";
 import { useGameStore } from "@/hooks/useGameStore";
 import { api } from "@/lib/api";
+import { DEFAULT_FREE_MODEL_ID } from "@/lib/free-rivals";
 import {
   PREMIUM_GOLD_TEXT_SHADOW_CLASS,
   PREMIUM_HEADER_STYLE,
   handlePremiumSurfacePointer,
 } from "@/lib/premiumSurface";
 import type {
+  AIModel,
   CreateGameResponse,
   GameHistoryFilter,
   GameHistoryItem,
@@ -20,6 +22,20 @@ import type {
   GameHistorySort,
   QueueJoinResponse,
 } from "@/lib/types";
+
+const CATALOG_EMPTY_MESSAGE =
+  "The rival catalog is empty. Seed the four free rivals to play AI matches.";
+
+function resolveEligibleModelId(
+  eligibleIds: string[],
+  preferredId: string | null | undefined,
+  storedId: string | null | undefined,
+): string | null {
+  if (preferredId && eligibleIds.includes(preferredId)) return preferredId;
+  if (storedId && eligibleIds.includes(storedId)) return storedId;
+  if (eligibleIds.includes(DEFAULT_FREE_MODEL_ID)) return DEFAULT_FREE_MODEL_ID;
+  return eligibleIds[0] ?? null;
+}
 
 function humanizeModelId(modelId?: string | null): string {
   if (!modelId) return "Choose AI";
@@ -35,6 +51,7 @@ export default function PlayPage() {
   const router = useRouter();
   const token = useGameStore((state) => state.token);
   const selectedModelId = useGameStore((state) => state.selectedModelId);
+  const setSelectedModelId = useGameStore((state) => state.setSelectedModelId);
   const selectedPromptId = useGameStore((state) => state.selectedPromptId);
   const premiumLookEnabled = useGameStore((state) => state.premiumLookEnabled);
   const setStartingDraw = useGameStore((state) => state.setStartingDraw);
@@ -50,8 +67,13 @@ export default function PlayPage() {
   const [historyData, setHistoryData] = useState<GameHistoryResponse | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
-  const activeModelLabel = humanizeModelId(selectedModelId);
+  const [catalogModels, setCatalogModels] = useState<AIModel[]>([]);
+  const [catalogReady, setCatalogReady] = useState(false);
+  const catalogMatch = catalogModels.find((model) => model.model_id === selectedModelId);
+  const activeModelLabel = catalogMatch?.display_name
+    ?? (catalogReady ? "Choose AI" : humanizeModelId(selectedModelId));
   const premiumTitleClass = premiumLookEnabled ? PREMIUM_GOLD_TEXT_SHADOW_CLASS : "";
+  const canStartAI = catalogReady && catalogModels.length > 0;
 
   const fetchHistory = useCallback(async ({
     page = 1,
@@ -81,6 +103,37 @@ export default function PlayPage() {
     }
   }, [historyFilter, historySort, token]);
 
+  const reconcileRival = useCallback(async (): Promise<string | null> => {
+    if (!token) return null;
+
+    const [catalog, profile] = await Promise.all([
+      api.getModels().catch((): AIModel[] => []),
+      api.me(token).catch(() => null),
+    ]);
+    setCatalogModels(catalog);
+
+    const eligibleIds = catalog.map((model) => model.model_id);
+    const storedId = useGameStore.getState().selectedModelId;
+    const preferredId = profile?.preferred_ai_model_id ?? "";
+    const resolved = resolveEligibleModelId(eligibleIds, preferredId, storedId);
+
+    if (!resolved) return null;
+
+    if (resolved !== storedId) {
+      setSelectedModelId(resolved);
+    }
+
+    if (preferredId && preferredId !== resolved) {
+      try {
+        await api.updateMe(token, { preferred_ai_model_id: resolved });
+      } catch {
+        // Preference repair is best-effort; createGame still uses the resolved catalog id.
+      }
+    }
+
+    return resolved;
+  }, [token, setSelectedModelId]);
+
   useEffect(() => {
     if (!token) {
       router.replace("/");
@@ -89,15 +142,38 @@ export default function PlayPage() {
     void fetchHistory({ page: 1 });
   }, [fetchHistory, router, token]);
 
+  useEffect(() => {
+    if (!token) return;
+    let cancelled = false;
+    void (async () => {
+      const resolved = await reconcileRival();
+      if (cancelled) return;
+      setCatalogReady(true);
+      if (!resolved) {
+        setError(CATALOG_EMPTY_MESSAGE);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [reconcileRival, token]);
+
   async function handleStartAI() {
     if (!token || startingAI) return;
 
     setStartingAI(true);
     setError(null);
     try {
+      const resolved = await reconcileRival();
+      setCatalogReady(true);
+      if (!resolved) {
+        setError(CATALOG_EMPTY_MESSAGE);
+        return;
+      }
+
       const result = (await api.createGame(token, {
         game_mode: "vs_ai",
-        ai_model_model_id: selectedModelId || undefined,
+        ai_model_model_id: resolved,
         ai_prompt_id: selectedPromptId ?? undefined,
       })) as CreateGameResponse;
       resetGameUi();
@@ -187,7 +263,7 @@ export default function PlayPage() {
           <div className="grid gap-4 lg:grid-cols-2">
             <button
               onClick={() => void handleStartAI()}
-              disabled={startingAI || joiningHuman}
+              disabled={startingAI || joiningHuman || !canStartAI}
               className={`group relative overflow-hidden rounded-[2rem] border border-amber-300/20 p-7 text-left shadow-[0_26px_60px_rgba(0,0,0,0.32)] transition-all hover:border-white/40 hover:shadow-[0_30px_70px_rgba(255,255,255,0.06)] disabled:opacity-50 ${premiumLookEnabled ? "backdrop-blur-[14px]" : "bg-[linear-gradient(180deg,rgba(52,34,14,0.96),rgba(18,12,9,0.98))]"}`}
               style={premiumLookEnabled ? PREMIUM_HEADER_STYLE : undefined}
               onMouseMove={premiumLookEnabled ? handlePremiumSurfacePointer : undefined}
