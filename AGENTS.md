@@ -4,12 +4,14 @@ This document is for **automated coding agents** and humans who continue develop
 
 ## What Libre Tiles is
 
-- **Frontend**: Next.js (React), Tailwind, Framer Motion, Zustand, DnD Kit; AI via Vercel AI Gateway (Next.js API routes).
+- **Frontend**: Next.js (React), Tailwind, Framer Motion, Zustand, DnD Kit; AI via OpenRouter free rivals (Next.js API routes).
 - **Backend**: Django + DRF; pure game logic in `gamecore/` (board, rules, scoring, Collins 2019 dictionary).
 - **Realtime**: Django Channels + Redis for human-vs-human matchmaking, websocket sync, and chat.
 - **Separation**: No imports outside `libretiles/`. All assets (dictionary, premiums, variants) live under `backend/assets/`.
 
 ## Quick start (local)
+
+AI-only local play needs two terminals (Django + Next.js). Redis is required only for human-vs-human websockets, not for AI-only boot.
 
 1. **Backend** (recommended: Poetry + virtual environment in `backend/.venv`):
 
@@ -19,22 +21,27 @@ This document is for **automated coding agents** and humans who continue develop
    source .venv/bin/activate   # Windows: .venv\Scripts\activate
    pip install poetry
    poetry install
-   cp .env.example .env
+   [ -f .env ] || cp .env.example .env
    poetry run python manage.py migrate
    poetry run python manage.py seed_models
    poetry run python manage.py runserver 0.0.0.0:8000
    ```
 
+   `seed_models` loads the offline four-rival shortlist. Do not require `sync_openrouter_models` to start; that optional public catalog fetch is later and non-blocking.
+
 2. **Frontend**:
 
    ```bash
    cd frontend
-   cp .env.local.example .env.local
+   [ -f .env.local ] || cp .env.local.example .env.local
+   # Set OPENROUTER_API_KEY from https://openrouter.ai/keys (server-only).
    npm install
    npm run dev
    ```
 
-3. Or from the repo root: `./scripts/libretiles.sh` (see [README.md](README.md)).
+   The UI still boots if the key is missing or a placeholder; AI turns fail until a real key is set.
+
+3. Or from the repo root: `./scripts/libretiles.sh` (see [README.md](README.md)). Scripts copy env examples only when the target file is absent.
 
 ## Code quality
 
@@ -63,6 +70,10 @@ npm run build
 | Collins 2019 dictionary (Tier 1) | `backend/assets/dicts/collins2019.txt` |
 | Word validation (lazy load) | `services._get_dictionary()`, `_word_passes_dictionary()` |
 | AI stream (SSE) | `frontend/src/app/api/ai/move/route.ts` |
+| OpenRouter client | `frontend/src/lib/openrouter.ts` |
+| Free-rival IDs | `frontend/src/lib/free-rivals.ts` |
+| Catalog seed | `backend/catalog/management/commands/seed_models.py` |
+| Optional catalog sync | `backend/catalog/management/commands/sync_openrouter_models.py` |
 | Agent prompts | `frontend/src/lib/prompts.ts` |
 | Game UI | `frontend/src/app/game/[id]/page.tsx` |
 | Header / game chrome | `frontend/src/components/game/ScorePanel.tsx`, `frontend/src/components/game/GameControls.tsx` |
@@ -84,7 +95,7 @@ npm run build
   - shared pointer-reactive gold/black chrome in `frontend/src/lib/premiumSurface.ts`
   - used by settings plus the game header/footer
   - controlled by the persisted `premiumLookEnabled` store flag
-- Credits are now treated as USD (`1 credit = $1`) with higher internal precision for small AI charges while UI formatting stays compact.
+- Credits remain in the product as a dormant USD balance (`1 credit = $1`). This cut charges **zero app credits** for AI turns; Stripe top-up is unfinished.
 
 ## Word validation (important)
 
@@ -95,9 +106,10 @@ npm run build
 
 ## Making the AI stronger
 
-- **Model**: higher tier in Django Admin / catalog (`catalog.AIModel`) + `NEXT_PUBLIC_DEFAULT_MODEL`.
-- **Time**: `aiTimeout` in frontend settings (store) and the SSE route.
+- **Model**: pick one of the four curated OpenRouter free rivals (`frontend/src/lib/free-rivals.ts`). Default `google/gemma-4-31b-it:free`; alternates `nvidia/nemotron-3-super-120b-a12b:free`, `z-ai/glm-5.2:free`, `google/gemma-4-26b-a4b-it:free`. Use native IDs (never `openrouter/google/...`). Do not buy a paid catalog tier for this cut.
+- **Time / search**: `aiTimeout` and `aiMaxSteps` in the Zustand store / Settings, consumed by the SSE move route.
 - **Prompt**: `frontend/src/lib/prompts.ts` — strategy, tools, anti-pass logic; change carefully and test against backend validation.
+- Optional `NEXT_PUBLIC_DEFAULT_MODEL` is only a documented fallback for move/judge routes. The store default is `DEFAULT_FREE_MODEL_ID`, not `process.env`.
 
 ## Deployment
 

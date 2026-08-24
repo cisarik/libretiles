@@ -7,7 +7,7 @@ cd "$(dirname "$0")/../backend"
 
 echo "=== Libre Tiles — Backend ==="
 
-# Ensure .env exists
+# Copy env only when absent. Never overwrite an existing developer .env.
 if [ ! -f .env ]; then
     echo "Creating .env from .env.example..."
     cp .env.example .env
@@ -21,9 +21,8 @@ poetry install --quiet
 echo "Running migrations..."
 poetry run python manage.py migrate --run-syncdb
 
-# Seed AI models (skip if already exist)
-# echo "Seeding AI models..."
-# poetry run python manage.py seed_models
+echo "Seeding curated OpenRouter free rivals..."
+poetry run python manage.py seed_models
 
 echo ""
 echo "Starting Django on http://localhost:8000"

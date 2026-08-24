@@ -21,7 +21,7 @@ cd libretiles
 # Backend — optional: dedicated venv in backend/.venv (gitignored)
 cd backend
 python3.12 -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
-cp .env.example .env
+[ -f .env ] || cp .env.example .env
 poetry install
 poetry run python manage.py migrate
 poetry run python manage.py seed_models
@@ -29,14 +29,16 @@ poetry run python manage.py createsuperuser
 
 # Frontend
 cd ../frontend
-cp .env.local.example .env.local
-# Prefer AI_GATEWAY_API_KEY + AI_GATEWAY_BASE_URL for Vercel AI Gateway (see .env.local.example)
+[ -f .env.local ] || cp .env.local.example .env.local
+# Set OPENROUTER_API_KEY from https://openrouter.ai/keys (server-only).
 npm install
 ```
 
 See **[AGENTS.md](AGENTS.md)** for architecture notes, validation rules, and tips for coding agents continuing the project.
 
 ### Running locally
+
+AI-only play is two terminals. Redis is required only for human-vs-human websockets.
 
 ```bash
 # Terminal 1: Django backend
@@ -84,9 +86,9 @@ npx tsc --noEmit                     # TypeScript strict check
 ```
 Backend (Django)           Frontend (Next.js)          AI Models
 ┌──────────────┐          ┌──────────────────┐       ┌─────────────┐
-│ gamecore/    │◄─────────│ /api/ai/move     │──────►│ Vercel AI   │
-│ game/        │ validate │ /api/ai/judge    │       │ Gateway     │
-│ accounts/    │ + score  │ /api/models      │       │ (or direct) │
+│ gamecore/    │◄─────────│ /api/ai/move     │──────►│ OpenRouter  │
+│ game/        │ validate │ /api/ai/judge    │       │ free rivals │
+│ accounts/    │ + score  │ /api/models      │       │             │
 │ catalog/     │          │                  │       └─────────────┘
 │ billing/     │          │ React UI         │
 │ config/      │          │ Zustand store    │
@@ -98,7 +100,7 @@ Backend (Django)           Frontend (Next.js)          AI Models
 1. **gamecore/ is pure Python** -- no Django imports, no network calls. It's the game engine.
 2. **Django handles state + validation** -- all game logic goes through `game/services.py`.
 3. **Next.js API routes handle AI** -- the AI agent runs in Next.js, calls Django for validation.
-4. **Admin-first config** -- all models, pricing, settings come from Django Admin.
+4. **Admin-first catalog** -- the four free rivals are seeded by `seed_models`; optional later sync is `sync_openrouter_models`.
 5. **AI plays with tools** -- the AI model uses tool calling to validate its own moves.
 
 ### Where to find things
@@ -111,7 +113,8 @@ Backend (Django)           Frontend (Next.js)          AI Models
 | AI model catalog | `backend/catalog/` |
 | AI move generation | `frontend/src/app/api/ai/move/route.ts` |
 | AI prompts | `frontend/src/lib/prompts.ts` |
-| AI gateway config | `frontend/src/lib/ai-gateway.ts` |
+| OpenRouter client | `frontend/src/lib/openrouter.ts` |
+| Free-rival IDs | `frontend/src/lib/free-rivals.ts` |
 | Game UI components | `frontend/src/components/` |
 | Client state | `frontend/src/hooks/useGameStore.ts` |
 
@@ -124,12 +127,9 @@ Backend (Django)           Frontend (Next.js)          AI Models
 3. Add the tool definition in `frontend/src/app/api/ai/move/route.ts`
 4. Update the system prompt in `frontend/src/lib/prompts.ts` if needed
 
-### Adding a new AI model provider
+### Changing the free-rival shortlist
 
-1. Add the provider to `PROVIDER_CHOICES` in `backend/catalog/models.py`
-2. Add it to `seed_models.py` default list
-3. Add provider icon in `frontend/src/app/settings/page.tsx`
-4. If the provider isn't OpenAI-compatible, update `frontend/src/lib/ai-gateway.ts`
+This cut ships a curated four-ID OpenRouter shortlist. Do not add Vercel AI Gateway, direct OpenAI, or LM Studio providers. Changing the shortlist is a separate product change in `frontend/src/lib/free-rivals.ts`, `backend/catalog/selection.py`, and `seed_models.py`. Use native OpenRouter IDs (never `openrouter/google/...`).
 
 ### Modifying game rules
 
@@ -160,7 +160,7 @@ poetry run pytest --cov=. --cov-report=html
 
 - **Gamecore tests** -- pure Python, no network, no DB. Always pass.
 - **API tests** -- use Django TestCase, create real DB records.
-- **AI tests** -- marked with `@pytest.mark.internet`, require API keys.
+- **Live provider tests** -- not part of this cut; do not add an internet pytest suite here.
 
 ## Submitting Changes
 

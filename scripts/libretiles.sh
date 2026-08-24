@@ -251,11 +251,46 @@ ensure_backend_env() {
     fi
 }
 
+warn_if_openrouter_key_unusable() {
+    local env_file="$1"
+    local raw=""
+    local key=""
+
+    if [ ! -f "$env_file" ]; then
+        echo "warning: OPENROUTER_API_KEY is missing; the UI can boot, but AI turns will fail until you set a key from https://openrouter.ai/keys" >&2
+        return 0
+    fi
+
+    raw="$(grep -E '^[[:space:]]*OPENROUTER_API_KEY=' "$env_file" | tail -n 1 || true)"
+    if [ -z "$raw" ]; then
+        echo "warning: OPENROUTER_API_KEY is missing; the UI can boot, but AI turns will fail until you set a key from https://openrouter.ai/keys" >&2
+        return 0
+    fi
+
+    key="${raw#*=}"
+    if [ "${key#\"}" != "$key" ] && [ "${key%\"}" != "$key" ]; then
+        key="${key#\"}"
+        key="${key%\"}"
+    elif [ "${key#\'}" != "$key" ] && [ "${key%\'}" != "$key" ]; then
+        key="${key#\'}"
+        key="${key%\'}"
+    fi
+    key="${key#"${key%%[![:space:]]*}"}"
+    key="${key%"${key##*[![:space:]]}"}"
+
+    case "$key" in
+        ""|"your-openrouter-api-key"|"change-me"|"your-vercel-ai-gateway-api-key")
+            echo "warning: OPENROUTER_API_KEY is missing or a placeholder; the UI can boot, but AI turns will fail until you set a key from https://openrouter.ai/keys" >&2
+            ;;
+    esac
+}
+
 ensure_frontend_env() {
     if [ ! -f "$FRONTEND_DIR/.env.local" ]; then
         cp "$FRONTEND_DIR/.env.local.example" "$FRONTEND_DIR/.env.local"
         echo "[frontend] Created frontend/.env.local from .env.local.example"
     fi
+    warn_if_openrouter_key_unusable "$FRONTEND_DIR/.env.local"
 }
 
 prepare_backend() {

@@ -10,9 +10,9 @@ Libre Tiles is a web application with three runtime components:
 
 1. **Next.js Frontend** (deployed on Vercel) -- UI, AI agent orchestration, model routing
 2. **Django Backend** (self-hosted VPS) -- game state, matchmaking, validation, auth, admin, dictionary
-3. **Redis** -- Django Channels backing store for websocket rooms and realtime fan-out
+3. **Redis** -- Django Channels backing store for websocket rooms and realtime fan-out (human multiplayer only; not required for AI-only local play)
 
-The AI models are accessed through the **Vercel AI Gateway**, which provides a unified OpenAI-compatible API for multiple providers (OpenAI, Google, Anthropic, etc.).
+AI turns use **OpenRouter** free rivals. Next.js `/api/ai/move` and `/api/ai/judge` call `https://openrouter.ai/api/v1` with server-only `OPENROUTER_API_KEY`. Model IDs are native OpenRouter IDs (default `google/gemma-4-31b-it:free`). Never prefix `openrouter/`. The Vercel AI SDK is an OpenAI-compatible adapter only; do not configure Vercel AI Gateway.
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -32,8 +32,8 @@ The AI models are accessed through the **Vercel AI Gateway**, which provides a u
 ┌───────────────────────────────────────┐
 │       Next.js Server (Vercel)         │
 │                                       │
-│  /api/ai/move    -- AI agent route    │   ──────►  Vercel AI Gateway
-│  /api/ai/judge   -- Word judge route  │            (or direct OpenAI)
+│  /api/ai/move    -- AI agent route    │   ──────►  OpenRouter
+│  /api/ai/judge   -- Word judge route  │            (free rivals)
 │  /api/models     -- Catalog proxy     │
 │                                       │
 │  Uses: Vercel AI SDK v6              │
@@ -169,14 +169,15 @@ Frontend Settings ──► create game request (`ai_model_model_id`)
                     `/api/game/{id}/ai-context/` returns locked model id
                               │
                               ▼
-                    `/api/ai/move` calls `getModel(session.ai_model_id)`
+                    `/api/ai/move` calls `getOpenRouterModel(session.ai_model_id)`
                               │
                      requested model + actual response model are stored in `Move.ai_metadata`
 ```
 
-- **Production** (Vercel): `AI_GATEWAY_API_KEY` + `AI_GATEWAY_BASE_URL` are set. Model IDs use `provider/model` format. All requests go through the Vercel AI Gateway.
-- **Local dev**: Falls back to direct provider SDK. The `provider/` prefix is stripped from model IDs.
-- **Catalog sync**: `python manage.py sync_gateway_models` fetches the latest public Vercel AI Gateway catalog from `https://ai-gateway.vercel.sh/v1/models`, updates technical metadata on `catalog.AIModel`, and marks missing models unavailable.
+- **Runtime**: `OPENROUTER_API_KEY` is the only AI credential. The base URL is hardcoded in `frontend/src/lib/openrouter.ts`. Native IDs such as `google/gemma-4-31b-it:free`.
+- **Store default**: Zustand uses `DEFAULT_FREE_MODEL_ID` from `frontend/src/lib/free-rivals.ts`. Optional `NEXT_PUBLIC_DEFAULT_MODEL` is only a documented fallback for move/judge routes.
+- **Catalog seed**: `python manage.py seed_models` writes the four-rival offline shortlist and is required for local boot.
+- **Catalog sync** (optional, later): `python manage.py sync_openrouter_models` is an unauthenticated public GET. An unavailable catalog must not block boot. Do not put `OPENROUTER_API_KEY` in backend env.
 
 ## Word Validation Pipeline
 
@@ -234,12 +235,12 @@ Human-vs-human multiplayer reuses the same `GameSession`, `PlayerSlot`, `Move`, 
 ### Core entities
 
 - **User** (accounts) -- custom user with preferred AI model
-- **AIModel** (catalog) -- provider, model_id, display_name, cost, quality_tier, gateway metadata, availability sync
+- **AIModel** (catalog) -- provider, model_id, display_name, OpenRouter metadata, availability sync; this cut exposes the four free rivals
 - **GameSession** (game) -- board state JSON, bag, turn tracking, game status
 - **PlayerSlot** (game) -- links users (or AI) to game positions with rack + score
 - **Move** (game) -- move history with placements, words, score, AI metadata
 - **ChatMessage** (game) -- compact persisted in-game chat entries for human sessions
-- **CreditBalance / Transaction** (billing) -- per-user credits for AI games
+- **CreditBalance / Transaction** (billing) -- dormant per-user credits; this cut charges zero app credits for AI turns
 
 ### State persistence
 
@@ -257,13 +258,13 @@ Game state is stored in `GameSession.state_json` as a JSON blob managed by `game
 
 - **Frontend**: Vercel (automatic deploys from `main` branch)
 - **Backend**: Self-hosted VPS with Docker Compose (Django + PostgreSQL + Redis)
-- **AI**: Vercel AI Gateway (single API key for all providers)
+- **AI**: OpenRouter free rivals (`OPENROUTER_API_KEY` on the Next.js server)
 
 ### Local development
 
-- Backend: `poetry run python manage.py runserver` (SQLite)
-- Frontend: `npm run dev` (with direct OPENAI_API_KEY)
-- Redis: required for human multiplayer, websocket sync, and chat
+- Backend: `poetry run python manage.py runserver` (SQLite); `seed_models` for the offline shortlist
+- Frontend: `npm run dev` (server-only `OPENROUTER_API_KEY`)
+- Redis: required for human multiplayer, websocket sync, and chat; not required for AI-only play
 - Database: SQLite (zero config) or Docker Compose PostgreSQL
 
 ## Security Considerations
@@ -300,12 +301,15 @@ These notes are for the next Codex agent continuing AI gameplay and billing work
 
 ### Current model catalog policy
 
-- Selectable models are now intentionally conservative:
-  - only `is_active=True` language models are selectable by default
-  - synced gateway models are preferred over unsynced entries
-  - tool-capable models are preferred over non-tool models
-  - `openai/gpt-5.4` remains explicitly pinnable even if it falls outside the active top-10
+- Selectable models are the curated OpenRouter free-rival shortlist:
+  - `google/gemma-4-31b-it:free` (default)
+  - `nvidia/nemotron-3-super-120b-a12b:free`
+  - `z-ai/glm-5.2:free`
+  - `google/gemma-4-26b-a4b-it:free`
+  - shortlist membership, active/available, explicit free pricing, and tools
+- `seed_models` is the boot path. `sync_openrouter_models` is optional and non-blocking.
 - Relevant files:
+  - `frontend/src/lib/free-rivals.ts`
   - `backend/catalog/selection.py`
   - `backend/catalog/views.py`
   - `backend/tests/test_api.py`
@@ -324,9 +328,8 @@ These notes are for the next Codex agent continuing AI gameplay and billing work
 
 ### Current billing / insufficient funds behavior
 
-- Before AI generation, the Next.js AI route now checks the authenticated user's backend credit balance.
-- If user credit is empty, the route emits a structured SSE error and the game shows a friendly blocker modal instead of raw console noise.
-- Provider-side "insufficient funds" errors from the upstream AI service are also normalized into a user-friendly modal.
+- This cut charges **zero app credits** for AI turns. Frontend empty-credit gates are gone.
+- Credits UX remains in the product as a dormant USD balance. Stripe top-up is unfinished; do not document a top-up flow.
 - Relevant files:
   - `frontend/src/app/api/ai/move/route.ts`
   - `frontend/src/app/game/[id]/page.tsx`
@@ -341,7 +344,7 @@ These notes are for the next Codex agent continuing AI gameplay and billing work
   - recent games
   - recent AI turns
   - top models by spend
-- AI models admin now includes a dedicated sync page with a button that calls the `sync_gateway_models` management command.
+- AI models admin now includes a dedicated sync page with a button that calls the optional `sync_openrouter_models` management command.
 - User credit can now be edited directly in admin from the user detail page or from the credit balance list.
 - Relevant files:
   - `backend/game/admin.py`

@@ -2,34 +2,34 @@
 
 Open-source web Libre Tiles game with AI opponents, live human-vs-human multiplayer, and an eye-candy animated frontend.
 
-**Architecture**: Next.js frontend on Vercel (AI Gateway + beautiful UI) + lightweight Django backend (game logic, validation, admin).
+**Architecture**: Next.js frontend (OpenRouter free-rival AI + UI) + lightweight Django backend (game logic, validation, admin).
 
 **Standalone repository**: This folder is intended to be published as its **own** GitHub repository. It does **not** depend on the parent `scrabgpt_sk` monorepo — all assets and code live under `libretiles/`. For agent/continuation notes see **[AGENTS.md](AGENTS.md)**.
 
 ## Features
 
 - Full Libre Tiles game engine (English variant, Collins 2019 dictionary ~279k words, Tier-1 strict validation in Django)
-- AI opponents via Vercel AI Gateway -- choose from OpenAI, Google, Anthropic models
+- AI opponents via OpenRouter free rivals -- four curated native IDs with tool calling
 - Live human-vs-human multiplayer with waiting-room matchmaking, realtime board sync, and in-game chat
 - AI plays as a tool-calling agent: validates moves, checks words, calculates scores
 - Advanced drag-and-drop with touch/mobile support (@dnd-kit)
 - Animated tile drawing, scoring, and game-end effects (Framer Motion, confetti)
-- Django Admin for all configuration (AI models, pricing, games)
-- Settings page with model selector cards
-- Per-game credit billing based on AI model cost
+- Django Admin for configuration (AI model catalog, games)
+- Settings page with the four-rival free shortlist
+- This cut charges zero app credits for AI turns; Stripe top-up is unfinished
 - Responsive design (desktop, tablet, mobile)
 - 3-tier word validation: local Collins 2019, online API (optional), AI judge
 
 ## Quick Start
 
-For AI-only local development you need **two terminals**: one for the Django backend, one for the Next.js frontend. For live human-vs-human multiplayer you also need a running Redis instance for Django Channels.
+For AI-only local development you need **two terminals**: one for the Django backend, one for the Next.js frontend. Redis is **not** required for AI-only play. For live human-vs-human multiplayer you also need a running Redis instance for Django Channels.
 
 ### Python environment (backend)
 
 Recommended: let **Poetry** create and use a virtualenv under `backend/.venv` (gitignored):
 
 ```bash
-cd libretiles/backend
+cd backend
 python3.12 -m venv .venv          # optional: explicit venv in this directory
 source .venv/bin/activate         # Windows: .venv\Scripts\activate
 pip install poetry                # if you don't have Poetry globally
@@ -41,32 +41,32 @@ Alternatively, `poetry install` alone will create a venv according to your Poetr
 ### 1. Backend (Django)
 
 ```bash
-cd libretiles/backend
-cp .env.example .env                             # create env (edit SECRET_KEY)
+cd backend
+[ -f .env ] || cp .env.example .env               # copy only if missing
 poetry install                                    # install Python dependencies
 poetry run python manage.py migrate               # create database tables
-poetry run python manage.py seed_models           # seed AI model catalog
-poetry run python manage.py sync_gateway_models   # sync latest Gateway model metadata
+poetry run python manage.py seed_models           # seed the four-rival offline shortlist
 poetry run python manage.py createsuperuser       # (optional) admin account
 poetry run python manage.py runserver 0.0.0.0:8000
 ```
 
 Backend runs at http://localhost:8000. Django Admin at http://localhost:8000/admin/.
 
-Redis must be running for websocket matchmaking, realtime sync, and chat. The default local URL is `redis://127.0.0.1:6379/0`.
+Do **not** require `sync_openrouter_models` to start. That optional command later fetches the public OpenRouter catalog (`GET https://openrouter.ai/api/v1/models`, unauthenticated). An unavailable catalog must not block boot.
+
+Redis is required only for websocket matchmaking, realtime sync, and chat. The default local URL is `redis://127.0.0.1:6379/0`.
 
 ### 2. Frontend (Next.js)
 
 ```bash
-cd libretiles/frontend
-cp .env.local.example .env.local                  # configure API URL + AI keys
+cd frontend
+[ -f .env.local ] || cp .env.local.example .env.local
+# Set OPENROUTER_API_KEY from https://openrouter.ai/keys (server-only).
 npm install                                       # install JS dependencies
 npm run dev                                       # start dev server at :3000
 ```
 
-Open http://localhost:3000, register, choose a mode, and play.
-
-`sync_gateway_models` fetches the latest public catalog from `https://ai-gateway.vercel.sh/v1/models`, updates technical metadata in `catalog.AIModel`, and keeps newly discovered models inactive by default unless you pass `--activate-new`.
+Open http://localhost:3000, register, choose a mode, and play. The UI still boots if `OPENROUTER_API_KEY` is missing or a placeholder; AI turns fail until a real key is set. The OpenRouter base URL is hardcoded in `frontend/src/lib/openrouter.ts`; do not add a base-URL env var.
 
 ### Environment Variables
 
@@ -83,20 +83,20 @@ Open http://localhost:3000, register, choose a mode, and play.
 **Frontend** (`frontend/.env.local`):
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `NEXT_PUBLIC_API_URL` | `http://localhost:8000` | Django backend URL |
-| `BACKEND_URL` | `http://localhost:8000` | Backend URL (server-side) |
-| `OPENAI_API_KEY` | - | OpenAI API key (local dev) |
-| `AI_GATEWAY_API_KEY` | - | Vercel AI Gateway key (production) |
-| `NEXT_PUBLIC_DEFAULT_MODEL` | `openai/gpt-5.4` | Default AI model |
-| `LM_STUDIO_BASE_URL` | `http://localhost:1234/v1` | OpenAI-compatible LM Studio server for local/offline AI |
-| `LM_STUDIO_API_KEY` | `lm-studio` | Non-empty bearer token sent to LM Studio |
-| `LM_STUDIO_MAX_OUTPUT_TOKENS` | `4096` | Local-only output cap for `lmstudio/*` models |
+| `NEXT_PUBLIC_API_URL` | `http://localhost:8000` | Django backend URL (browser) |
+| `BACKEND_URL` | `http://localhost:8000` | Django backend URL (Next.js server routes) |
+| `NEXT_DEV_ALLOWED_ORIGINS` | unset | Optional extra hosts allowed to load Next.js dev assets |
+| `OPENROUTER_API_KEY` | `your-openrouter-api-key` | Server-only OpenRouter key from https://openrouter.ai/keys |
+| `NEXT_PUBLIC_DEFAULT_MODEL` | `google/gemma-4-31b-it:free` | Optional move/judge fallback. Store default is `DEFAULT_FREE_MODEL_ID`. |
 
-### Local offline AI with LM Studio
+The four curated rivals (native OpenRouter IDs, never `openrouter/google/...`):
 
-Start LM Studio's local server, load a tool-capable chat model, then run `poetry run python manage.py seed_models` from `backend/`. Select **LM Studio Auto (Free)** in Settings, or set `NEXT_PUBLIC_DEFAULT_MODEL=lmstudio/auto` in `frontend/.env.local`.
+1. `google/gemma-4-31b-it:free` (default)
+2. `nvidia/nemotron-3-super-120b-a12b:free`
+3. `z-ai/glm-5.2:free`
+4. `google/gemma-4-26b-a4b-it:free`
 
-The `lmstudio/` prefix is Libre Tiles' catalog/provider marker. `lmstudio/auto` uses the first loaded tool-capable LM Studio model; a specific model like `lmstudio/qwen3-14b-sk` sends the part after the prefix to LM Studio's OpenAI-compatible `/v1/chat/completions` endpoint. Local LM Studio turns have zero token price and do not require a positive credit balance.
+Transitive `@ai-sdk/gateway` in the lockfile is unused. Do not configure Vercel AI Gateway.
 
 ### Docker (optional PostgreSQL + Redis)
 
@@ -111,7 +111,6 @@ Then set `DB_ENGINE=postgresql` in `backend/.env` and re-run `migrate`.
 
 ```bash
 # Start everything in detached dev mode (both backend + frontend):
-cd libretiles
 ./scripts/libretiles.sh
 
 # Check status / logs / restart / stop:
@@ -136,14 +135,13 @@ The scripts handle `.env` creation, dependency installation, migrations, and mod
 
 ```bash
 # Terminal 1 (backend):
-cd libretiles/backend && cp .env.example .env && poetry install && \
+cd backend && [ -f .env ] || cp .env.example .env && poetry install && \
   poetry run python manage.py migrate && \
   poetry run python manage.py seed_models && \
-  poetry run python manage.py sync_gateway_models && \
   poetry run python manage.py runserver 0.0.0.0:8000
 
 # Terminal 2 (frontend):
-cd libretiles/frontend && cp .env.local.example .env.local && npm install && npm run dev
+cd frontend && [ -f .env.local ] || cp .env.local.example .env.local && npm install && npm run dev
 ```
 
 ## Architecture
@@ -151,10 +149,10 @@ cd libretiles/frontend && cp .env.local.example .env.local && npm install && npm
 See [docs/architecture.md](docs/architecture.md) for full technical documentation.
 
 ```
-  Browser (Next.js)                   Vercel AI Gateway
+  Browser (Next.js)                   OpenRouter
   ┌─────────────────┐                ┌──────────────────┐
-  │ React UI        │                │ OpenAI / Google / │
-  │ @dnd-kit + FM   │◄──────────────►│ Anthropic models  │
+  │ React UI        │                │ Free rivals      │
+  │ @dnd-kit + FM   │◄──────────────►│ gemma-4-31b, …   │
   │ Zustand store   │  /api/ai/move  └──────────────────┘
   │                 │  /api/ai/judge          │
   │ Settings page   │        ▲                │ generateText()
@@ -194,7 +192,7 @@ libretiles/
 │   ├── config/          # Django settings, URLs, ASGI
 │   ├── gamecore/        # Pure Python Libre Tiles engine (ported from scrabgpt/core)
 │   ├── accounts/        # User auth (JWT)
-│   ├── catalog/         # AI model catalog (admin-managed + gateway sync)
+│   ├── catalog/         # AI model catalog (seed_models + optional OpenRouter sync)
 │   │   └── management/commands/
 │   ├── game/            # Game sessions, moves, validation, AI tools
 │   ├── billing/         # Credits + transactions (v2)
@@ -205,7 +203,7 @@ libretiles/
 │   │   ├── app/         # Next.js pages (landing, game, settings, API routes)
 │   │   ├── components/  # Board, Tile, TileRack, ScorePanel, GameControls...
 │   │   ├── hooks/       # Zustand store (useGameStore)
-│   │   └── lib/         # Types, API client, AI gateway, prompts, constants
+│   │   └── lib/         # Types, API client, OpenRouter, free-rivals, prompts, constants
 │   └── package.json
 ├── docs/                # Technical architecture docs
 ├── docker-compose.yml
@@ -225,7 +223,7 @@ libretiles/
 - `POST /api/auth/change-password/` -- Change password for the authenticated user
 
 ### Catalog
-- `GET /api/catalog/models/` -- List active AI models with pricing
+- `GET /api/catalog/models/` -- List the curated OpenRouter free-rival shortlist
 
 ### Game
 - `POST /api/game/create/` -- Start new AI game
@@ -255,7 +253,7 @@ libretiles/
 
 ```bash
 # Backend
-cd libretiles/backend
+cd backend
 poetry run pytest                          # All tests
 poetry run pytest tests/test_gamecore.py   # Pure game logic (fast, offline)
 poetry run pytest tests/test_dictionary_validation.py  # Collins 2019 / invalid-word regressions
@@ -264,7 +262,7 @@ poetry run ruff check .                    # Lint
 poetry run mypy .                          # Type check
 
 # Frontend
-cd libretiles/frontend
+cd frontend
 npm run lint                               # ESLint
 npx tsc --noEmit                           # TypeScript check
 ```
@@ -281,7 +279,7 @@ npx tsc --noEmit                           # TypeScript check
 ### Frontend
 - Next.js 16, React 19, TypeScript
 - Tailwind CSS 4, Framer Motion, @dnd-kit/core
-- Vercel AI SDK v6 (AI Gateway, tool calling, structured output)
+- Vercel AI SDK v6 via OpenRouter (OpenAI-compatible adapter, tool calling)
 - Zustand (state management with localStorage persistence)
 - canvas-confetti (endgame effects)
 
@@ -302,7 +300,7 @@ Conceptually aligned with the desktop `scrabgpt` engine; this tree ships its **o
 ## Troubleshooting
 
 - **Invalid word but the server “accepted” it** — Distinguish between an **AI overlay candidate** (may show `valid: false`) and a **saved move**. Word validity is always decided by Django (`submit_move` / `validate_move_for_ai`) using `backend/assets/dicts/collins2019.txt`. Regression tests: `tests/test_dictionary_validation.py`.
-- **Weak AI play** — Use a stronger catalog model, raise the timeout in settings, and tune prompts in `frontend/src/lib/prompts.ts` (see [AGENTS.md](AGENTS.md)).
+- **Weak AI play** — Switch among the four free rivals, raise timeout / search steps in Settings, and tune `frontend/src/lib/prompts.ts` (see [AGENTS.md](AGENTS.md)). Do not buy a paid catalog tier for this cut.
 
 ## Contributing
 
