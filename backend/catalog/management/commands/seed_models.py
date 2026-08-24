@@ -90,12 +90,10 @@ class Command(BaseCommand):
                 "display_name": data["display_name"],
                 "description": data["description"],
                 "quality_tier": "standard",
-                "cost_per_game": 0,
                 "openrouter_managed": data["openrouter_managed"],
                 "openrouter_available": data["openrouter_available"],
                 "model_type": "language",
                 "tags": ["tools"],
-                "pricing": {"input": "0", "output": "0"},
                 "is_active": True,
                 "sort_order": SHORTLIST_SORT_ORDER[model_id],
             }

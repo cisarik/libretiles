@@ -1,6 +1,6 @@
 """Django settings for Libre Tiles backend.
 
-Admin-first philosophy: all game configuration (AI models, pricing, variants)
+Admin-first philosophy: all game configuration (AI models, variants)
 is managed through Django Admin at /admin/.
 """
 
@@ -35,7 +35,6 @@ INSTALLED_APPS = [
     "accounts",
     "catalog",
     "game",
-    "billing",
 ]
 
 MIDDLEWARE = [

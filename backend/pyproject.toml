@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Libre Tiles — Django backend for a web-based Libre Tiles game with AI opponents via OpenRouter free rivals."
 authors = ["Libre Tiles Contributors"]
 readme = "../README.md"
-packages = [{ include = "config" }, { include = "gamecore" }, { include = "game" }, { include = "accounts" }, { include = "catalog" }, { include = "billing" }]
+packages = [{ include = "config" }, { include = "gamecore" }, { include = "game" }, { include = "accounts" }, { include = "catalog" }]
 
 [tool.poetry.dependencies]
 python = ">=3.11,<3.14"

@@ -7,7 +7,7 @@ from .serializers import AIModelSerializer, AIPromptSerializer
 
 
 class AIModelListView(APIView):
-    """Public list of selectable AI models with pricing."""
+    """Public list of selectable AI models."""
 
     permission_classes = [permissions.AllowAny]
 

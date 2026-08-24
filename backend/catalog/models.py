@@ -23,12 +23,6 @@ class AIModel(models.Model):
     display_name = models.CharField(max_length=200)
     description = models.TextField(blank=True, default="")
     quality_tier = models.CharField(max_length=20, choices=QUALITY_CHOICES, default="standard")
-    cost_per_game = models.DecimalField(
-        max_digits=6,
-        decimal_places=2,
-        default=0,
-        help_text="Credits charged per game against this model",
-    )
     openrouter_managed = models.BooleanField(
         default=False,
         help_text="If enabled, sync updates display name and description from OpenRouter.",
@@ -41,7 +35,6 @@ class AIModel(models.Model):
     context_window = models.PositiveIntegerField(null=True, blank=True)
     max_tokens = models.PositiveIntegerField(null=True, blank=True)
     tags = models.JSONField(default=list, blank=True)
-    pricing = models.JSONField(default=dict, blank=True)
     released_at = models.DateTimeField(null=True, blank=True)
     last_synced_at = models.DateTimeField(null=True, blank=True)
     is_active = models.BooleanField(default=True)

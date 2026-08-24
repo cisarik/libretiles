@@ -18,11 +18,9 @@ class AIModelAdmin(admin.ModelAdmin):
         "display_name",
         "provider",
         "model_id",
-        "pricing_summary",
         "openrouter_available",
         "openrouter_managed",
         "quality_tier",
-        "cost_per_game",
         "is_active",
         "sort_order",
         "last_synced_at",
@@ -34,7 +32,7 @@ class AIModelAdmin(admin.ModelAdmin):
         "openrouter_available",
         "openrouter_managed",
     )
-    list_editable = ("cost_per_game", "is_active", "sort_order")
+    list_editable = ("is_active", "sort_order")
     search_fields = ("display_name", "model_id")
     ordering = ("sort_order", "display_name")
     readonly_fields = ("created_at", "updated_at", "last_synced_at")
@@ -48,14 +46,6 @@ class AIModelAdmin(admin.ModelAdmin):
             )
         ]
         return custom_urls + super().get_urls()
-
-    @admin.display(description="Pricing")
-    def pricing_summary(self, obj: AIModel) -> str:
-        pricing = obj.pricing if isinstance(obj.pricing, dict) else {}
-        input_price = pricing.get("input", "—")
-        output_price = pricing.get("output", "—")
-        cache_price = pricing.get("input_cache_read", pricing.get("cache", "—"))
-        return f"in {input_price} / out {output_price} / cache {cache_price}"
 
     def sync_models_view(self, request: HttpRequest) -> HttpResponse:
         if request.method == "POST":

@@ -1,6 +1,5 @@
 """Django REST API tests — test the full request/response cycle."""
 
-from decimal import Decimal
 from io import StringIO
 from typing import Any
 from unittest.mock import patch
@@ -10,7 +9,6 @@ from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
 from accounts.models import User
-from billing.models import CreditBalance
 from catalog.models import AIModel, AIPrompt
 from catalog.selection import (
     DEFAULT_FREE_MODEL_ID,
@@ -38,8 +36,6 @@ class AuthAPITest(TestCase):
         assert User.objects.filter(username="testplayer").exists()
         assert "credit_balance" not in resp.json()
         assert "credit_updated_at" not in resp.json()
-        user = User.objects.get(username="testplayer")
-        assert not CreditBalance.objects.filter(user=user).exists()
 
     def test_login_and_me(self) -> None:
         User.objects.create_user(username="player1", password="pass1234")
@@ -57,7 +53,6 @@ class AuthAPITest(TestCase):
         assert data["username"] == "player1"
         assert "credit_balance" not in data
         assert "credit_updated_at" not in data
-        assert not CreditBalance.objects.filter(user__username="player1").exists()
 
     def test_change_password(self) -> None:
         User.objects.create_user(username="player1", password="pass1234")
@@ -123,8 +118,6 @@ def _make_rival(*, model_id: str = DEFAULT_FREE_MODEL_ID, **overrides: Any) -> A
         "is_active": True,
         "model_type": "language",
         "tags": ["tools"],
-        "pricing": {"input": "0", "output": "0"},
-        "cost_per_game": 0,
         "sort_order": (index + 1) * 10,
     }
     defaults.update(overrides)
@@ -136,7 +129,7 @@ def _seed_shortlist() -> list[AIModel]:
 
 
 class CatalogAPITest(TestCase):
-    def test_list_models_returns_shortlist_in_free_rival_order_with_zero_costs(self) -> None:
+    def test_list_models_returns_shortlist_in_free_rival_order_without_pricing(self) -> None:
         _seed_shortlist()
         AIModel.objects.create(
             provider="openai",
@@ -146,7 +139,6 @@ class CatalogAPITest(TestCase):
             is_active=True,
             model_type="language",
             tags=["tools"],
-            pricing={"input": "0.000001", "output": "0.000002"},
         )
         AIModel.objects.create(
             provider="openrouter",
@@ -156,8 +148,6 @@ class CatalogAPITest(TestCase):
             is_active=False,
             model_type="language",
             tags=["tools"],
-            pricing={"input": "0", "output": "0"},
-            cost_per_game=0,
         )
 
         resp = self.client.get("/api/catalog/models/")
@@ -167,11 +157,17 @@ class CatalogAPITest(TestCase):
             FREE_RIVAL_PAIRS
         )
         assert len(data) <= 5
+        money_keys = {
+            "cost_per_game",
+            "pricing",
+            "input_cost_per_million",
+            "output_cost_per_million",
+            "cache_read_cost_per_million",
+            "cache_write_cost_per_million",
+            "combined_cost_per_million",
+        }
         for item in data:
-            assert Decimal(item["cost_per_game"]) == Decimal("0")
-            assert Decimal(item["input_cost_per_million"]) == Decimal("0.00")
-            assert Decimal(item["output_cost_per_million"]) == Decimal("0.00")
-            assert Decimal(item["combined_cost_per_million"]) == Decimal("0.00")
+            assert money_keys.isdisjoint(item)
             assert item["is_flagship"] is (item["model_id"] == DEFAULT_FREE_MODEL_ID)
         assert sum(1 for item in data if item["is_flagship"]) == 1
 
@@ -187,7 +183,6 @@ class CatalogAPITest(TestCase):
             is_active=True,
             model_type="language",
             tags=["tools"],
-            pricing={"input": "0.000001", "output": "0.000002"},
         )
         AIModel.objects.create(
             provider="openrouter",
@@ -197,7 +192,6 @@ class CatalogAPITest(TestCase):
             is_active=True,
             model_type="language",
             tags=["tools"],
-            pricing={"input": "0", "output": "0"},
         )
         AIModel.objects.create(
             provider="openrouter",
@@ -207,8 +201,6 @@ class CatalogAPITest(TestCase):
             is_active=True,
             model_type="language",
             tags=["temperature"],
-            pricing={"input": "0", "output": "0"},
-            cost_per_game=0,
         )
         AIModel.objects.create(
             provider="lmstudio",
@@ -245,8 +237,6 @@ class CatalogAPITest(TestCase):
             is_active=False,
             model_type="language",
             tags=["tools"],
-            pricing={"input": "0", "output": "0"},
-            cost_per_game=0,
         )
 
         resp = self.client.get("/api/catalog/models/")
@@ -345,7 +335,7 @@ class CatalogAPITest(TestCase):
                     "id": "meta-llama/llama-3.3-70b-instruct:free",
                     "name": "Llama 3.3 70B Instruct",
                     "description": "Eligible extra",
-                    "pricing": {"prompt": "0", "completion": "0"},
+                    "pricing": {"prompt": "0.000001", "completion": "0.000002"},
                     "supported_parameters": ["tools", "temperature"],
                     "architecture": {"output_modalities": ["text"]},
                     "context_length": 128000,
@@ -408,6 +398,8 @@ class CatalogAPITest(TestCase):
         assert extra.openrouter_managed is True
         assert extra.openrouter_available is True
         assert extra.is_active is False
+        assert not hasattr(extra, "pricing")
+        assert not hasattr(extra, "cost_per_game")
         default = AIModel.objects.get(model_id=DEFAULT_FREE_MODEL_ID)
         assert default.is_active is True
         assert default.openrouter_managed is True
@@ -436,30 +428,37 @@ class CatalogAPITest(TestCase):
             is_active=True,
             model_type="language",
             tags=["tools"],
-            pricing={"input": "0", "output": "0"},
-            cost_per_game=0,
         )
         resp = self.client.get("/api/catalog/models/")
         ids = [item["model_id"] for item in resp.json()]
         assert NVIDIA_NIM_MODEL_ID not in ids
         assert is_selectable_model(NVIDIA_NIM_MODEL_ID) is False
 
-    def test_eligibility_rejects_inactive_non_language_missing_tools_and_bad_prices(
+    def test_eligibility_rejects_inactive_non_language_missing_tools_unavailable_and_non_curated(
         self,
     ) -> None:
-        cases: list[dict[str, Any]] = [
+        openrouter_rejections: list[dict[str, Any]] = [
             {"is_active": False},
             {"model_type": "image"},
             {"tags": ["temperature"]},
-            {"pricing": {}},
-            {"pricing": {"input": "0"}},
-            {"pricing": {"output": "0"}},
-            {"pricing": {"input": None, "output": "0"}},
-            {"pricing": {"input": "0", "output": ""}},
-            {"pricing": {"input": "0.1", "output": "0"}},
-            {"cost_per_game": 1},
+            {"tags": {"tools": True}},
+            {"openrouter_available": False},
         ]
-        for overrides in cases:
+        for overrides in openrouter_rejections:
+            AIModel.objects.all().delete()
+            _make_rival(**overrides)
+            assert is_selectable_model(DEFAULT_FREE_MODEL_ID) is False, overrides
+            resp = self.client.get("/api/catalog/models/")
+            assert DEFAULT_FREE_MODEL_ID not in [
+                item["model_id"] for item in resp.json()
+            ], overrides
+
+        nim_rejections: list[dict[str, Any]] = [
+            {"is_active": False},
+            {"model_type": "image"},
+            {"tags": ["temperature"]},
+        ]
+        for overrides in nim_rejections:
             AIModel.objects.all().delete()
             _make_rival(model_id=NVIDIA_NIM_MODEL_ID, **overrides)
             assert is_selectable_model(NVIDIA_NIM_MODEL_ID) is False, overrides
@@ -467,6 +466,22 @@ class CatalogAPITest(TestCase):
             assert NVIDIA_NIM_MODEL_ID not in [
                 item["model_id"] for item in resp.json()
             ], overrides
+
+        AIModel.objects.all().delete()
+        _seed_shortlist()
+        extra_id = "meta-llama/llama-3.3-70b-instruct:free"
+        AIModel.objects.create(
+            provider=OPENROUTER_PROVIDER,
+            model_id=extra_id,
+            display_name="Non-curated extra",
+            openrouter_available=True,
+            is_active=True,
+            model_type="language",
+            tags=["tools"],
+        )
+        assert is_selectable_model(extra_id) is False
+        resp = self.client.get("/api/catalog/models/")
+        assert [item["model_id"] for item in resp.json()] == list(FREE_RIVAL_IDS)
 
     def test_seed_models_does_not_steal_conflicting_provider_row(self) -> None:
         collision = AIModel.objects.create(
@@ -499,8 +514,6 @@ class CatalogAPITest(TestCase):
             is_active=True,
             model_type="language",
             tags=["tools"],
-            pricing={"input": "0", "output": "0"},
-            cost_per_game=0,
             sort_order=20,
         )
         sync_openrouter_models(
@@ -513,7 +526,6 @@ class CatalogAPITest(TestCase):
                     context_window=1,
                     max_tokens=1,
                     tags=["temperature"],
-                    pricing={"input": "9", "output": "9"},
                     released_at=None,
                 )
             ]
@@ -527,7 +539,6 @@ class CatalogAPITest(TestCase):
         assert nim.is_active is True
         assert nim.model_type == "language"
         assert nim.tags == ["tools"]
-        assert nim.pricing == {"input": "0", "output": "0"}
         assert nim.sort_order == 20
         assert not AIModel.objects.filter(
             provider=OPENROUTER_PROVIDER,
@@ -595,8 +606,6 @@ class GameAPITest(TestCase):
             is_active=False,
             model_type="language",
             tags=["tools"],
-            pricing={"input": "0", "output": "0"},
-            cost_per_game=0,
         )
         create_resp = self.client.post("/api/game/create/", {
             "game_mode": "vs_ai",
@@ -632,9 +641,10 @@ class GameAPITest(TestCase):
         assert resp.status_code == 404
 
     def test_admin_has_no_billing_models_or_monetary_controls(self) -> None:
-        from django.contrib import admin
+        import importlib
 
-        from billing.models import Transaction
+        from django.conf import settings
+        from django.contrib import admin
 
         admin_user = User.objects.create_superuser(
             username="admin",
@@ -651,8 +661,10 @@ class GameAPITest(TestCase):
         assert "AI spend" not in content
         assert "charged credits" not in content.lower()
         assert "USD" not in content
-        assert not admin.site.is_registered(CreditBalance)
-        assert not admin.site.is_registered(Transaction)
+        assert "billing" not in settings.INSTALLED_APPS
+        assert all(model._meta.app_label != "billing" for model in admin.site._registry)
+        with self.assertRaises(ModuleNotFoundError):
+            importlib.import_module("billing.models")
 
     def test_create_game_with_prompt_returns_prompt_metadata(self) -> None:
         prompt = AIPrompt.objects.create(

@@ -38,7 +38,6 @@ class OpenRouterCatalogMigrationTests(TestCase):
             is_active=True,
             model_type="language",
             tags=["tools"],
-            pricing={"input": "0.000001", "output": "0.000002"},
         )
         extra_free = AIModel.objects.create(
             provider="openrouter",
@@ -49,8 +48,6 @@ class OpenRouterCatalogMigrationTests(TestCase):
             is_active=True,
             model_type="language",
             tags=["tools"],
-            pricing={"input": "0", "output": "0"},
-            cost_per_game=0,
         )
         shortlist = AIModel.objects.create(
             provider="openrouter",
@@ -61,8 +58,6 @@ class OpenRouterCatalogMigrationTests(TestCase):
             is_active=True,
             model_type="language",
             tags=["tools"],
-            pricing={"input": "0", "output": "0"},
-            cost_per_game=0,
         )
         session = GameSession.objects.create(
             game_mode="vs_ai",
@@ -127,7 +122,14 @@ class ProviderNeutralHelpTextMigrationTests(TransactionTestCase):
         )
 
     def test_provider_neutral_help_text_migrations_forward_and_reverse(self) -> None:
-        call_command("migrate", "catalog", "0006_openrouter_catalog", verbosity=0)
+        from django.core.management.base import CommandError
+        from django.db.migrations.exceptions import IrreversibleError
+
+        with self.assertRaises((CommandError, IrreversibleError)):
+            call_command("migrate", "catalog", "0007_provider_neutral_model_help", verbosity=0)
+        with self.assertRaises((CommandError, IrreversibleError)):
+            call_command("migrate", "game", "0004_gamesession_ai_prompt_alter_move_kind", verbosity=0)
+
         call_command("migrate", "accounts", "0002_openrouter_catalog", verbosity=0)
         call_command("migrate", "catalog", verbosity=0)
         call_command("migrate", "accounts", verbosity=0)
@@ -150,7 +152,6 @@ class ProviderNeutralHelpTextMigrationTests(TransactionTestCase):
             display_name="Survivor",
         )
         survivor_id = survivor.id
-        call_command("migrate", "catalog", "0006_openrouter_catalog", verbosity=0)
         call_command("migrate", "accounts", "0002_openrouter_catalog", verbosity=0)
         assert AIModel.objects.filter(pk=survivor_id).exists()
         call_command("migrate", verbosity=0)
