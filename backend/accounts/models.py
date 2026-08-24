@@ -10,8 +10,8 @@ class User(AbstractUser):
         blank=True,
         default="",
         help_text=(
-            "Native OpenRouter id for the preferred free rival, "
-            "e.g. 'google/gemma-4-31b-it:free'"
+            "Native model id for the preferred free rival, "
+            "e.g. 'google/gemma-4-31b-it:free' or 'nvidia/nemotron-3-super-120b-a12b'"
         ),
     )
 

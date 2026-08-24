@@ -15,7 +15,10 @@ class AIModel(models.Model):
     model_id = models.CharField(
         max_length=200,
         unique=True,
-        help_text="Native OpenRouter id, e.g. 'google/gemma-4-31b-it:free'",
+        help_text=(
+            "Native model id for this provider, "
+            "e.g. 'google/gemma-4-31b-it:free' or 'nvidia/nemotron-3-super-120b-a12b'"
+        ),
     )
     display_name = models.CharField(max_length=200)
     description = models.TextField(blank=True, default="")

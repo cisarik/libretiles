@@ -12,7 +12,15 @@ from rest_framework.test import APIClient
 from accounts.models import User
 from billing.models import Transaction
 from catalog.models import AIModel, AIPrompt
-from catalog.selection import DEFAULT_FREE_MODEL_ID, FREE_RIVAL_IDS
+from catalog.selection import (
+    DEFAULT_FREE_MODEL_ID,
+    FREE_RIVAL_IDS,
+    FREE_RIVAL_PAIRS,
+    NVIDIA_NIM_MODEL_ID,
+    NVIDIA_NIM_PROVIDER,
+    OPENROUTER_PROVIDER,
+    is_selectable_model,
+)
 from game.models import GameSession
 
 
@@ -92,14 +100,19 @@ class AuthAPITest(TestCase):
         assert resp.json()["error"] == "Current password is incorrect."
 
 
+_PROVIDER_BY_ID = {model_id: provider for provider, model_id in FREE_RIVAL_PAIRS}
+
+
 def _make_rival(*, model_id: str = DEFAULT_FREE_MODEL_ID, **overrides: Any) -> AIModel:
     index = list(FREE_RIVAL_IDS).index(model_id) if model_id in FREE_RIVAL_IDS else 0
+    provider = _PROVIDER_BY_ID.get(model_id, OPENROUTER_PROVIDER)
+    is_nim = provider == NVIDIA_NIM_PROVIDER
     defaults: dict[str, Any] = {
-        "provider": "openrouter",
+        "provider": provider,
         "model_id": model_id,
         "display_name": f"Rival {index + 1}",
-        "openrouter_available": True,
-        "openrouter_managed": True,
+        "openrouter_available": not is_nim,
+        "openrouter_managed": not is_nim,
         "is_active": True,
         "model_type": "language",
         "tags": ["tools"],
@@ -143,10 +156,11 @@ class CatalogAPITest(TestCase):
         resp = self.client.get("/api/catalog/models/")
         assert resp.status_code == 200
         data = resp.json()
-        assert [item["model_id"] for item in data] == list(FREE_RIVAL_IDS)
-        assert len(data) <= 4
+        assert [(item["provider"], item["model_id"]) for item in data] == list(
+            FREE_RIVAL_PAIRS
+        )
+        assert len(data) <= 5
         for item in data:
-            assert item["provider"] == "openrouter"
             assert Decimal(item["cost_per_game"]) == Decimal("0")
             assert Decimal(item["input_cost_per_million"]) == Decimal("0.00")
             assert Decimal(item["output_cost_per_million"]) == Decimal("0.00")
@@ -291,6 +305,10 @@ class CatalogAPITest(TestCase):
             .values_list("model_id", flat=True)
         )
         assert ids == list(FREE_RIVAL_IDS)
+        nim = AIModel.objects.get(model_id=NVIDIA_NIM_MODEL_ID)
+        assert nim.provider == NVIDIA_NIM_PROVIDER
+        assert nim.openrouter_managed is False
+        assert nim.openrouter_available is False
         assert AIModel.objects.filter(model_id=leftover.model_id).exists()
         command = load_command_class("catalog", "seed_models")
         parser = command.create_parser("manage.py", "seed_models")
@@ -391,6 +409,123 @@ class CatalogAPITest(TestCase):
         assert retired.openrouter_available is False
         assert retired.is_active is False
         assert AIModel.objects.filter(pk=retired.pk).exists()
+
+    def test_nim_row_is_selectable_without_openrouter_available(self) -> None:
+        nim = _make_rival(model_id=NVIDIA_NIM_MODEL_ID)
+        assert nim.provider == NVIDIA_NIM_PROVIDER
+        assert nim.openrouter_available is False
+        resp = self.client.get("/api/catalog/models/")
+        ids = [item["model_id"] for item in resp.json()]
+        assert NVIDIA_NIM_MODEL_ID in ids
+        assert is_selectable_model(NVIDIA_NIM_MODEL_ID) is True
+
+    def test_openrouter_row_with_nim_id_is_not_selectable(self) -> None:
+        AIModel.objects.create(
+            provider=OPENROUTER_PROVIDER,
+            model_id=NVIDIA_NIM_MODEL_ID,
+            display_name="OpenRouter impersonator",
+            openrouter_available=True,
+            openrouter_managed=True,
+            is_active=True,
+            model_type="language",
+            tags=["tools"],
+            pricing={"input": "0", "output": "0"},
+            cost_per_game=0,
+        )
+        resp = self.client.get("/api/catalog/models/")
+        ids = [item["model_id"] for item in resp.json()]
+        assert NVIDIA_NIM_MODEL_ID not in ids
+        assert is_selectable_model(NVIDIA_NIM_MODEL_ID) is False
+
+    def test_eligibility_rejects_inactive_non_language_missing_tools_and_bad_prices(
+        self,
+    ) -> None:
+        cases: list[dict[str, Any]] = [
+            {"is_active": False},
+            {"model_type": "image"},
+            {"tags": ["temperature"]},
+            {"pricing": {}},
+            {"pricing": {"input": "0"}},
+            {"pricing": {"output": "0"}},
+            {"pricing": {"input": None, "output": "0"}},
+            {"pricing": {"input": "0", "output": ""}},
+            {"pricing": {"input": "0.1", "output": "0"}},
+            {"cost_per_game": 1},
+        ]
+        for overrides in cases:
+            AIModel.objects.all().delete()
+            _make_rival(model_id=NVIDIA_NIM_MODEL_ID, **overrides)
+            assert is_selectable_model(NVIDIA_NIM_MODEL_ID) is False, overrides
+            resp = self.client.get("/api/catalog/models/")
+            assert NVIDIA_NIM_MODEL_ID not in [
+                item["model_id"] for item in resp.json()
+            ], overrides
+
+    def test_seed_models_does_not_steal_conflicting_provider_row(self) -> None:
+        collision = AIModel.objects.create(
+            provider=OPENROUTER_PROVIDER,
+            model_id=NVIDIA_NIM_MODEL_ID,
+            display_name="OpenRouter collision",
+            openrouter_managed=True,
+            openrouter_available=True,
+            is_active=True,
+        )
+        call_command("seed_models", stdout=StringIO())
+        collision.refresh_from_db()
+        assert collision.provider == OPENROUTER_PROVIDER
+        assert collision.display_name == "OpenRouter collision"
+        assert not AIModel.objects.filter(
+            provider=NVIDIA_NIM_PROVIDER,
+            model_id=NVIDIA_NIM_MODEL_ID,
+        ).exists()
+
+    def test_sync_openrouter_models_does_not_mutate_nvidia_nim_row(self) -> None:
+        from catalog.openrouter_sync import OpenRouterModelRecord, sync_openrouter_models
+
+        nim = AIModel.objects.create(
+            provider=NVIDIA_NIM_PROVIDER,
+            model_id=NVIDIA_NIM_MODEL_ID,
+            display_name="Nemotron NIM",
+            description="seeded nim",
+            openrouter_managed=False,
+            openrouter_available=False,
+            is_active=True,
+            model_type="language",
+            tags=["tools"],
+            pricing={"input": "0", "output": "0"},
+            cost_per_game=0,
+            sort_order=20,
+        )
+        sync_openrouter_models(
+            models=[
+                OpenRouterModelRecord(
+                    model_id=NVIDIA_NIM_MODEL_ID,
+                    display_name="Stolen",
+                    description="must not apply",
+                    model_type="multimodal",
+                    context_window=1,
+                    max_tokens=1,
+                    tags=["temperature"],
+                    pricing={"input": "9", "output": "9"},
+                    released_at=None,
+                )
+            ]
+        )
+        nim.refresh_from_db()
+        assert nim.provider == NVIDIA_NIM_PROVIDER
+        assert nim.display_name == "Nemotron NIM"
+        assert nim.description == "seeded nim"
+        assert nim.openrouter_managed is False
+        assert nim.openrouter_available is False
+        assert nim.is_active is True
+        assert nim.model_type == "language"
+        assert nim.tags == ["tools"]
+        assert nim.pricing == {"input": "0", "output": "0"}
+        assert nim.sort_order == 20
+        assert not AIModel.objects.filter(
+            provider=OPENROUTER_PROVIDER,
+            model_id=NVIDIA_NIM_MODEL_ID,
+        ).exists()
 
 
 class GameAPITest(TestCase):
@@ -521,6 +656,39 @@ class GameAPITest(TestCase):
         session.refresh_from_db()
         assert session.total_cost_usd == starting_cost
         assert Transaction.objects.count() == starting_tx
+
+    def test_nim_and_openrouter_curated_ids_charge_free_rival_zero(self) -> None:
+        nim = _make_rival(model_id=NVIDIA_NIM_MODEL_ID)
+        openrouter_nemotron = _make_rival(model_id=FREE_RIVAL_IDS[2])
+        for model in (nim, openrouter_nemotron):
+            create_resp = self.client.post("/api/game/create/", {
+                "game_mode": "vs_ai",
+                "ai_model_model_id": model.model_id,
+            })
+            game_id = create_resp.json()["game_id"]
+            session = GameSession.objects.get(public_id=game_id)
+            starting_cost = session.total_cost_usd
+            starting_tx = Transaction.objects.count()
+            resp = self.client.post(
+                "/api/billing/charge-ai-turn/",
+                {
+                    "game_id": game_id,
+                    "ai_metadata": {
+                        "usage": {
+                            "inputTokens": 1000,
+                            "outputTokens": 200,
+                            "totalTokens": 1200,
+                        }
+                    },
+                },
+                format="json",
+            )
+            assert resp.status_code == 200, model.model_id
+            assert resp.json()["charge_source"] == "free_rival", model.model_id
+            assert resp.json()["charged_credits"] == "0.000000", model.model_id
+            session.refresh_from_db()
+            assert session.total_cost_usd == starting_cost
+            assert Transaction.objects.count() == starting_tx
 
     def test_create_game_with_prompt_returns_prompt_metadata(self) -> None:
         prompt = AIPrompt.objects.create(

@@ -9,7 +9,13 @@ import httpx
 from django.utils import timezone as django_timezone
 
 from .models import AIModel
-from .selection import FREE_RIVAL_IDS, SHORTLIST_SORT_ORDER, TOOLS_TAG
+from .selection import (
+    NVIDIA_NIM_MODEL_ID,
+    NVIDIA_NIM_PROVIDER,
+    OPENROUTER_SHORTLIST_IDS,
+    SHORTLIST_SORT_ORDER,
+    TOOLS_TAG,
+)
 
 OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 AUTO_SORT_ORDER_START = 1000
@@ -59,13 +65,17 @@ def sync_openrouter_models(*, models: list[OpenRouterModelRecord]) -> dict[str, 
     disabled = 0
 
     for index, remote in enumerate(models):
-        is_shortlist = remote.model_id in FREE_RIVAL_IDS
+        if remote.model_id == NVIDIA_NIM_MODEL_ID:
+            continue
+        is_shortlist = remote.model_id in OPENROUTER_SHORTLIST_IDS
         sort_order = (
             SHORTLIST_SORT_ORDER[remote.model_id]
             if is_shortlist
             else AUTO_SORT_ORDER_START + index
         )
         obj = AIModel.objects.filter(model_id=remote.model_id).first()
+        if obj is not None and obj.provider == NVIDIA_NIM_PROVIDER:
+            continue
         if obj is None:
             AIModel.objects.create(
                 provider="openrouter",
@@ -113,8 +123,10 @@ def sync_openrouter_models(*, models: list[OpenRouterModelRecord]) -> dict[str, 
         else:
             unchanged += 1
 
-    missing = AIModel.objects.filter(openrouter_managed=True).exclude(
-        model_id__in=seen_model_ids
+    missing = (
+        AIModel.objects.filter(openrouter_managed=True)
+        .exclude(model_id__in=seen_model_ids)
+        .exclude(provider=NVIDIA_NIM_PROVIDER)
     )
     for obj in missing:
         changed_fields = _set_if_changed(obj, "openrouter_available", False)
@@ -139,6 +151,8 @@ def normalize_openrouter_model(item: Any) -> OpenRouterModelRecord | None:
 
     model_id = _as_non_empty_string(item.get("id"))
     if model_id is None or "/" not in model_id:
+        return None
+    if model_id == NVIDIA_NIM_MODEL_ID:
         return None
     if model_id in EXCLUDED_MODEL_IDS or not model_id.endswith(":free"):
         return None

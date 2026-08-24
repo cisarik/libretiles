@@ -8,7 +8,7 @@ from django.db import transaction
 
 from billing.models import CreditBalance, Transaction
 from catalog.models import AIModel
-from catalog.selection import FREE_RIVAL_IDS
+from catalog.selection import is_curated_free_rival
 from game.models import GameSession
 
 _ZERO = Decimal("0")
@@ -94,7 +94,7 @@ def _calculate_ai_charge(
     usage_summary = _extract_usage_summary(usage)
     if ai_model is None:
         return (_ZERO, usage_summary, "none")
-    if ai_model.model_id in FREE_RIVAL_IDS:
+    if is_curated_free_rival(ai_model):
         return (_ZERO, usage_summary, "free_rival")
     return (_ZERO, usage_summary, "dormant")
 
