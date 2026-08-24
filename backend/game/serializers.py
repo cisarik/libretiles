@@ -54,7 +54,7 @@ class GameHistoryQuerySerializer(serializers.Serializer):
         default="all",
     )
     sort = serializers.ChoiceField(
-        choices=["updated", "cost_desc"],
+        choices=["updated"],
         required=False,
         default="updated",
     )

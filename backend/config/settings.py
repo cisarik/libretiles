@@ -7,7 +7,6 @@ is managed through Django Admin at /admin/.
 from __future__ import annotations
 
 import os
-from decimal import Decimal
 from datetime import timedelta
 from pathlib import Path
 
@@ -156,5 +155,3 @@ PRIMARY_DICTIONARY_PATH = DICTS_DIR / os.getenv("PRIMARY_DICTIONARY_FILE", "coll
 # AI budget (unified, same as scrabgpt)
 AI_MOVE_MAX_OUTPUT_TOKENS = int(os.getenv("AI_MOVE_MAX_OUTPUT_TOKENS", "15000"))
 AI_MOVE_TIMEOUT_SECONDS = int(os.getenv("AI_MOVE_TIMEOUT_SECONDS", "120"))
-DEFAULT_STARTING_CREDITS = Decimal(os.getenv("DEFAULT_STARTING_CREDITS", "10.00"))
-CREDITS_PER_USD = Decimal(os.getenv("CREDITS_PER_USD", "1"))

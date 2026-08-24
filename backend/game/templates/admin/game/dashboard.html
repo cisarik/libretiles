@@ -74,7 +74,6 @@
   <div id="content-main">
     <h1>{{ title }}</h1>
     <div class="ops-actions">
-      <a href="{{ balances_url }}" class="button default">Edit balances</a>
       <a href="{{ users_url }}" class="button">Users</a>
       <a href="{{ model_sync_url }}" class="button">Sync models</a>
       <a href="{{ model_catalog_url }}" class="button">Model catalog</a>
@@ -127,8 +126,6 @@
             <tr><th>Input tokens</th><td>{{ token_totals.input_tokens }}</td></tr>
             <tr><th>Output tokens</th><td>{{ token_totals.output_tokens }}</td></tr>
             <tr><th>Total tokens</th><td>{{ token_totals.total_tokens }}</td></tr>
-            <tr><th>Total charged credits</th><td>${{ total_credits_spent }}</td></tr>
-            <tr><th>Total charged USD</th><td>${{ total_usd_spent }}</td></tr>
           </tbody>
         </table>
       </div>
@@ -136,7 +133,7 @@
 
     <div class="ops-layout" style="margin-top: 18px;">
       <div class="ops-panel">
-        <h2>Top models by spend</h2>
+        <h2>Top models by token usage</h2>
         <table class="ops-table">
           <thead>
             <tr>
@@ -144,7 +141,6 @@
               <th>Moves</th>
               <th>Games</th>
               <th>Total tokens</th>
-              <th>USD</th>
             </tr>
           </thead>
           <tbody>
@@ -154,10 +150,9 @@
                 <td>{{ row.moves }}</td>
                 <td>{{ row.games }}</td>
                 <td>{{ row.total_tokens }}</td>
-                <td>${{ row.charged_usd }}</td>
               </tr>
             {% empty %}
-              <tr><td colspan="5">No AI moves logged yet.</td></tr>
+              <tr><td colspan="4">No AI moves logged yet.</td></tr>
             {% endfor %}
           </tbody>
         </table>
@@ -171,7 +166,6 @@
               <th>Game / move</th>
               <th>Model</th>
               <th>Tokens</th>
-              <th>USD</th>
             </tr>
           </thead>
           <tbody>
@@ -180,10 +174,9 @@
                 <td><strong>{{ row.game_id }}</strong><div class="ops-muted">Move #{{ row.seq }} · {{ row.created_at }}</div></td>
                 <td>{{ row.model_id }}</td>
                 <td>{{ row.total_tokens }}<div class="ops-muted">{{ row.input_tokens }} in / {{ row.output_tokens }} out</div></td>
-                <td>${{ row.charged_usd }}</td>
               </tr>
             {% empty %}
-              <tr><td colspan="4">No AI turns logged yet.</td></tr>
+              <tr><td colspan="3">No AI turns logged yet.</td></tr>
             {% endfor %}
           </tbody>
         </table>

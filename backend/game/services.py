@@ -61,21 +61,13 @@ def _serialize_last_move(session: GameSession, *, moves: list[Move] | None = Non
             "last_move_points": 0,
             "last_move_words": [],
             "last_move_player_slot": None,
-            "last_move_billing": None,
         }
-
-    billing: dict[str, Any] | None = None
-    if isinstance(last_move.ai_metadata, dict):
-        maybe_billing = last_move.ai_metadata.get("billing")
-        if isinstance(maybe_billing, dict):
-            billing = maybe_billing
 
     return {
         "last_move_cells": last_move.placements or [],
         "last_move_points": last_move.points,
         "last_move_words": last_move.words_formed or [],
         "last_move_player_slot": last_move.player_slot.slot if last_move.player_slot_id else None,
-        "last_move_billing": billing,
     }
 
 
@@ -83,11 +75,6 @@ def _serialize_move_history(session: GameSession, *, moves: list[Move] | None = 
     history: list[dict[str, Any]] = []
     ordered_moves = moves if moves is not None else list(session.moves.select_related("player_slot").all())
     for move in ordered_moves:
-        billing: dict[str, Any] | None = None
-        if isinstance(move.ai_metadata, dict):
-            maybe_billing = move.ai_metadata.get("billing")
-            if isinstance(maybe_billing, dict):
-                billing = maybe_billing
         history.append(
             {
                 "seq": move.seq,
@@ -96,7 +83,6 @@ def _serialize_move_history(session: GameSession, *, moves: list[Move] | None = 
                 "placements": move.placements or [],
                 "words": move.words_formed or [],
                 "points": move.points,
-                "billing": billing,
                 "created_at": move.created_at.isoformat(),
             }
         )
@@ -267,7 +253,6 @@ def _build_state(session: GameSession, *, current_user_id: int, my_slot: PlayerS
         "winner_slot": session.winner_slot,
         "my_slot": my_slot.slot,
         "my_rack": list(my_slot.rack) if isinstance(my_slot.rack, list) else [],
-        "total_cost_usd": format(session.total_cost_usd, "f"),
         "ai_model_id": session.ai_model.model_id if session.ai_model else None,
         "ai_model_display_name": session.ai_model.display_name if session.ai_model else None,
         "ai_prompt_id": session.ai_prompt_id,
@@ -783,7 +768,6 @@ def _serialize_game_history_item(
         "ai_model_display_name": session.ai_model.display_name if session.ai_model else None,
         "my_score": my_slot.score,
         "opponent_score": opponent_slot.score if opponent_slot else 0,
-        "total_cost_usd": format(session.total_cost_usd, "f"),
         "move_count": int(getattr(session, "move_count", 0)),
         "is_my_turn": (
             session.status == "active"
@@ -815,10 +799,7 @@ def list_games_for_user(
     )
     if game_mode != "all":
         queryset = queryset.filter(game_mode=game_mode)
-    if sort == "cost_desc":
-        queryset = queryset.order_by("-total_cost_usd", "-updated_at")
-    else:
-        queryset = queryset.order_by("-updated_at")
+    queryset = queryset.order_by("-updated_at")
 
     paginator = Paginator(queryset, page_size)
     page_obj = paginator.get_page(page)

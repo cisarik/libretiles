@@ -10,7 +10,7 @@ from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
 from accounts.models import User
-from billing.models import Transaction
+from billing.models import CreditBalance
 from catalog.models import AIModel, AIPrompt
 from catalog.selection import (
     DEFAULT_FREE_MODEL_ID,
@@ -21,7 +21,7 @@ from catalog.selection import (
     OPENROUTER_PROVIDER,
     is_selectable_model,
 )
-from game.models import GameSession
+from game.models import GameSession, Move
 
 
 class AuthAPITest(TestCase):
@@ -36,6 +36,10 @@ class AuthAPITest(TestCase):
         })
         assert resp.status_code == 201
         assert User.objects.filter(username="testplayer").exists()
+        assert "credit_balance" not in resp.json()
+        assert "credit_updated_at" not in resp.json()
+        user = User.objects.get(username="testplayer")
+        assert not CreditBalance.objects.filter(user=user).exists()
 
     def test_login_and_me(self) -> None:
         User.objects.create_user(username="player1", password="pass1234")
@@ -49,8 +53,11 @@ class AuthAPITest(TestCase):
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
         resp = self.client.get("/api/auth/me/")
         assert resp.status_code == 200
-        assert resp.json()["username"] == "player1"
-        assert resp.json()["credit_balance"] == "10.000000"
+        data = resp.json()
+        assert data["username"] == "player1"
+        assert "credit_balance" not in data
+        assert "credit_updated_at" not in data
+        assert not CreditBalance.objects.filter(user__username="player1").exists()
 
     def test_change_password(self) -> None:
         User.objects.create_user(username="player1", password="pass1234")
@@ -616,79 +623,36 @@ class GameAPITest(TestCase):
             )
             assert switched.status_code == 400, model_id
 
-    def test_dormant_billing_zeroes_non_shortlist_model(self) -> None:
-        legacy = AIModel.objects.create(
-            provider="openai",
-            model_id="openai/gpt-5-mini",
-            display_name="GPT-5 Mini",
-            tags=["tools"],
-            pricing={"input": "0.000001", "output": "0.000002"},
-            cost_per_game=1,
-        )
-        create_resp = self.client.post("/api/game/create/", {
-            "game_mode": "vs_ai",
-            "ai_model_model_id": self.ai_model.model_id,
-        })
-        game_id = create_resp.json()["game_id"]
-        session = GameSession.objects.get(public_id=game_id)
-        session.ai_model = legacy
-        session.save(update_fields=["ai_model"])
-        starting_cost = session.total_cost_usd
-        starting_tx = Transaction.objects.count()
-
+    def test_charge_ai_turn_endpoint_is_removed(self) -> None:
         resp = self.client.post(
             "/api/billing/charge-ai-turn/",
-            {
-                "game_id": game_id,
-                "ai_metadata": {
-                    "usage": {
-                        "inputTokens": 1000,
-                        "outputTokens": 200,
-                        "totalTokens": 1200,
-                    }
-                },
-            },
+            {"game_id": "00000000-0000-0000-0000-000000000000"},
             format="json",
         )
-        assert resp.status_code == 200
-        assert resp.json()["charge_source"] == "dormant"
-        assert resp.json()["charged_credits"] == "0.000000"
-        session.refresh_from_db()
-        assert session.total_cost_usd == starting_cost
-        assert Transaction.objects.count() == starting_tx
+        assert resp.status_code == 404
 
-    def test_nim_and_openrouter_curated_ids_charge_free_rival_zero(self) -> None:
-        nim = _make_rival(model_id=NVIDIA_NIM_MODEL_ID)
-        openrouter_nemotron = _make_rival(model_id=FREE_RIVAL_IDS[2])
-        for model in (nim, openrouter_nemotron):
-            create_resp = self.client.post("/api/game/create/", {
-                "game_mode": "vs_ai",
-                "ai_model_model_id": model.model_id,
-            })
-            game_id = create_resp.json()["game_id"]
-            session = GameSession.objects.get(public_id=game_id)
-            starting_cost = session.total_cost_usd
-            starting_tx = Transaction.objects.count()
-            resp = self.client.post(
-                "/api/billing/charge-ai-turn/",
-                {
-                    "game_id": game_id,
-                    "ai_metadata": {
-                        "usage": {
-                            "inputTokens": 1000,
-                            "outputTokens": 200,
-                            "totalTokens": 1200,
-                        }
-                    },
-                },
-                format="json",
-            )
-            assert resp.status_code == 200, model.model_id
-            assert resp.json()["charge_source"] == "free_rival", model.model_id
-            assert resp.json()["charged_credits"] == "0.000000", model.model_id
-            session.refresh_from_db()
-            assert session.total_cost_usd == starting_cost
-            assert Transaction.objects.count() == starting_tx
+    def test_admin_has_no_billing_models_or_monetary_controls(self) -> None:
+        from django.contrib import admin
+
+        from billing.models import Transaction
+
+        admin_user = User.objects.create_superuser(
+            username="admin",
+            email="admin@example.com",
+            password="adminpass123",
+        )
+        admin_client = APIClient()
+        admin_client.force_login(admin_user)
+
+        dashboard = admin_client.get("/admin/game/gamesession/dashboard/")
+        assert dashboard.status_code == 200
+        content = dashboard.content.decode()
+        assert "Edit balances" not in content
+        assert "AI spend" not in content
+        assert "charged credits" not in content.lower()
+        assert "USD" not in content
+        assert not admin.site.is_registered(CreditBalance)
+        assert not admin.site.is_registered(Transaction)
 
     def test_create_game_with_prompt_returns_prompt_metadata(self) -> None:
         prompt = AIPrompt.objects.create(
@@ -730,6 +694,9 @@ class GameAPITest(TestCase):
         assert data["bag_remaining"] < 100
         assert len(data["my_rack"]) == 7
         assert data["my_slot"] == 0
+        assert "total_cost_usd" not in data
+        assert "last_move_billing" not in data
+        assert all("billing" not in item for item in data["move_history"])
 
     def test_submit_pass(self) -> None:
         create_resp = self.client.post("/api/game/create/", {"game_mode": "vs_ai"})
@@ -763,6 +730,32 @@ class GameAPITest(TestCase):
         assert resp.status_code == 200
         assert resp.json()["ok"] is True
         assert resp.json()["state"]["current_turn_slot"] == 0
+        assert "billing" not in resp.json()
+        assert "last_move_billing" not in resp.json()["state"]
+        move = Move.objects.get(game=session, kind="pass")
+        assert not move.ai_metadata
+
+    def test_ai_exchange_succeeds_without_billing_metadata(self) -> None:
+        create_resp = self.client.post("/api/game/create/", {"game_mode": "vs_ai"})
+        game_id = create_resp.json()["game_id"]
+        session = GameSession.objects.get(public_id=game_id)
+        session.current_turn_slot = 1
+        session.save(update_fields=["current_turn_slot"])
+        ai_slot = session.slots.get(slot=1)
+        letter = ai_slot.rack[0]
+
+        resp = self.client.post(
+            f"/api/game/{game_id}/ai-exchange/",
+            {"letters": [letter]},
+            format="json",
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is True
+        assert "billing" not in resp.json()
+        assert "last_move_billing" not in resp.json()["state"]
+        move = Move.objects.get(game=session, kind="exchange")
+        assert not move.ai_metadata
 
     def test_validate_words(self) -> None:
         create_resp = self.client.post("/api/game/create/", {"game_mode": "vs_ai"})
@@ -831,7 +824,7 @@ class GameAPITest(TestCase):
 
     @patch("game.views.services.get_game_state_for_user")
     @patch("game.views.services.submit_move_for_ai")
-    def test_apply_ai_move_returns_billing(self, mock_submit_move, mock_get_state) -> None:
+    def test_apply_ai_move_response_has_no_billing(self, mock_submit_move, mock_get_state) -> None:
         mock_submit_move.return_value = {
             "ok": True,
             "points": 42,
@@ -864,87 +857,13 @@ class GameAPITest(TestCase):
         )
 
         assert resp.status_code == 200
-        assert resp.json()["billing"]["charge_source"] == "free_rival"
-        assert resp.json()["billing"]["charged_credits"] == "0.000000"
-        assert resp.json()["state"]["last_move_billing"]["charged_usd"] == resp.json()["billing"]["charged_usd"]
+        assert "billing" not in resp.json()
+        assert "last_move_billing" not in resp.json()["state"]
 
         profile = self.client.get("/api/auth/me/")
         assert profile.status_code == 200
-        assert profile.json()["credit_balance"] == "10.000000"
-
-    def test_charge_ai_turn_endpoint_deducts_credits(self) -> None:
-        create_resp = self.client.post("/api/game/create/", {
-            "game_mode": "vs_ai",
-            "ai_model_model_id": self.ai_model.model_id,
-        })
-        game_id = create_resp.json()["game_id"]
-        session = GameSession.objects.get(public_id=game_id)
-        starting_cost = session.total_cost_usd
-        starting_tx = Transaction.objects.count()
-
-        resp = self.client.post(
-            "/api/billing/charge-ai-turn/",
-            {
-                "game_id": game_id,
-                "ai_metadata": {
-                    "usage": {
-                        "inputTokens": 1000,
-                        "outputTokens": 200,
-                        "totalTokens": 1200,
-                    }
-                },
-            },
-            format="json",
-        )
-
-        assert resp.status_code == 200
-        assert resp.json()["charge_source"] == "free_rival"
-        assert resp.json()["charged_credits"] == "0.000000"
-        session.refresh_from_db()
-        assert session.total_cost_usd == starting_cost
-        assert Transaction.objects.count() == starting_tx
-
-        profile = self.client.get("/api/auth/me/")
-        assert profile.status_code == 200
-        assert profile.json()["credit_balance"] == "10.000000"
-
-    def test_charge_ai_turn_accepts_nested_ai_sdk_usage_shape(self) -> None:
-        create_resp = self.client.post("/api/game/create/", {
-            "game_mode": "vs_ai",
-            "ai_model_model_id": self.ai_model.model_id,
-        })
-        game_id = create_resp.json()["game_id"]
-
-        resp = self.client.post(
-            "/api/billing/charge-ai-turn/",
-            {
-                "game_id": game_id,
-                "ai_metadata": {
-                    "usage": {
-                        "inputTokens": {
-                            "total": 1200,
-                            "noCache": 1000,
-                            "cacheRead": 200,
-                            "cacheWrite": 0,
-                        },
-                        "outputTokens": {
-                            "total": 300,
-                            "text": 240,
-                            "reasoning": 60,
-                        },
-                        "totalTokens": 1500,
-                    }
-                },
-            },
-            format="json",
-        )
-
-        assert resp.status_code == 200
-        assert resp.json()["charge_source"] == "free_rival"
-        assert resp.json()["charged_credits"] == "0.000000"
-        assert resp.json()["input_tokens"] == 1200
-        assert resp.json()["output_tokens"] == 300
-        assert resp.json()["total_tokens"] == 1500
+        assert "credit_balance" not in profile.json()
+        assert "credit_updated_at" not in profile.json()
 
     def test_give_up_ends_game_and_marks_it_abandoned(self) -> None:
         create_resp = self.client.post("/api/game/create/", {
@@ -965,10 +884,6 @@ class GameAPITest(TestCase):
         assert data["state"]["status"] == "abandoned"
 
     def test_game_history_can_filter_and_paginate(self) -> None:
-        from decimal import Decimal
-
-        from game.models import GameSession
-
         ai_game_ids: list[str] = []
         for _ in range(3):
             resp = self.client.post("/api/game/create/", {
@@ -976,10 +891,6 @@ class GameAPITest(TestCase):
                 "ai_model_model_id": self.ai_model.model_id,
             })
             ai_game_ids.append(resp.json()["game_id"])
-
-        priciest = GameSession.objects.get(public_id=ai_game_ids[0])
-        priciest.total_cost_usd = Decimal("0.125000")
-        priciest.save(update_fields=["total_cost_usd"])
 
         waiting = self.client.post("/api/game/queue/join/", {"variant_slug": "english"}, format="json")
         self.client2.post("/api/game/queue/join/", {"variant_slug": "english"}, format="json")
@@ -996,6 +907,7 @@ class GameAPITest(TestCase):
         assert ai_data["has_next"] is True
         assert len(ai_data["items"]) == 2
         assert all(item["game_mode"] == "vs_ai" for item in ai_data["items"])
+        assert all("total_cost_usd" not in item for item in ai_data["items"])
 
         human_only = self.client.get("/api/game/history/?game_mode=vs_human")
         assert human_only.status_code == 200
@@ -1006,10 +918,7 @@ class GameAPITest(TestCase):
         assert human_items[0]["opponent_label"] == "player2"
 
         cost_sorted = self.client.get("/api/game/history/?game_mode=vs_ai&sort=cost_desc")
-        assert cost_sorted.status_code == 200
-        assert cost_sorted.json()["sort"] == "cost_desc"
-        assert cost_sorted.json()["items"][0]["game_id"] == ai_game_ids[0]
-        assert cost_sorted.json()["items"][0]["total_cost_usd"] == "0.125000"
+        assert cost_sorted.status_code == 400
 
         all_games = self.client.get("/api/game/history/?game_mode=all")
         assert all_games.status_code == 200
@@ -1033,7 +942,7 @@ class GameAPITest(TestCase):
         assert item["outcome"] == "gave_up"
         assert item["opponent_label"] == self.ai_model.display_name
         assert item["game_end_reason"] == "give_up"
-        assert item["total_cost_usd"] == "0.000000"
+        assert "total_cost_usd" not in item
 
     def test_game_history_marks_in_progress_for_active_game(self) -> None:
         create_resp = self.client.post("/api/game/create/", {
@@ -1146,6 +1055,9 @@ class GameAPITest(TestCase):
                     {"row": 7, "col": 8, "letter": "O"},
                     {"row": 7, "col": 9, "letter": "E"},
                 ],
+                "ai_metadata": {
+                    "usage": {"inputTokens": 100, "outputTokens": 20, "totalTokens": 120}
+                },
             },
             format="json",
         )
@@ -1156,6 +1068,11 @@ class GameAPITest(TestCase):
         assert data["state"]["board"][7][7:10] == "JOE"
         assert len(data["state"]["my_rack"]) == 7
         assert data["state"]["current_turn_slot"] == 0
+        assert "billing" not in data
+        assert "last_move_billing" not in data["state"]
+        move = Move.objects.get(game=session, kind="place")
+        assert move.ai_metadata["usage"]["totalTokens"] == 120
+        assert "billing" not in move.ai_metadata
 
     def test_human_queue_matches_second_player_into_first_waiting_game(self) -> None:
         first = self.client.post("/api/game/queue/join/", {"variant_slug": "english"}, format="json")

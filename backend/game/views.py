@@ -2,8 +2,6 @@ from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from billing.services import charge_ai_move
-
 from . import services
 from .serializers import (
     ApplyAIMoveSerializer,
@@ -283,24 +281,7 @@ class ApplyAIMoveView(APIView):
                 last_move.save(update_fields=["ai_metadata"])
 
         if result.get("ok"):
-            from .models import GameSession, Move
-
             result["state"] = services.get_game_state_for_user(game_id, request.user.id)
-            session = GameSession.objects.select_related("ai_model").get(public_id=game_id)
-            billing = charge_ai_move(
-                user=request.user,
-                game=session,
-                ai_model=session.ai_model,
-                ai_metadata=serializer.validated_data.get("ai_metadata"),
-            )
-            result["billing"] = billing
-            if isinstance(result.get("state"), dict):
-                result["state"]["last_move_billing"] = billing
-            if serializer.validated_data.get("ai_metadata"):
-                last_move = Move.objects.filter(game__public_id=game_id).order_by("-seq").first()
-                if last_move and isinstance(last_move.ai_metadata, dict):
-                    last_move.ai_metadata["billing"] = billing
-                    last_move.save(update_fields=["ai_metadata"])
 
         return Response(result, status=200 if result.get("ok") else 400)
 

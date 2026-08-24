@@ -1,7 +1,6 @@
 from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 
-from billing.services import ensure_credit_balance
 from catalog.selection import is_selectable_model
 
 from .models import User
@@ -15,20 +14,10 @@ class RegisterSerializer(serializers.ModelSerializer):
         fields = ("username", "email", "password")
 
     def create(self, validated_data: dict) -> User:  # type: ignore[override]
-        user = User.objects.create_user(**validated_data)
-        ensure_credit_balance(user)
-        return user
+        return User.objects.create_user(**validated_data)
 
 
 class UserSerializer(serializers.ModelSerializer):
-    credit_balance = serializers.DecimalField(
-        source="credit_balance.balance",
-        max_digits=12,
-        decimal_places=6,
-        read_only=True,
-    )
-    credit_updated_at = serializers.DateTimeField(source="credit_balance.updated_at", read_only=True)
-
     class Meta:
         model = User
         fields = (
@@ -36,8 +25,6 @@ class UserSerializer(serializers.ModelSerializer):
             "username",
             "email",
             "preferred_ai_model_id",
-            "credit_balance",
-            "credit_updated_at",
             "date_joined",
         )
         read_only_fields = ("id", "date_joined")
