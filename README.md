@@ -2,21 +2,21 @@
 
 Open-source web Libre Tiles game with AI opponents, live human-vs-human multiplayer, and an eye-candy animated frontend.
 
-**Architecture**: Next.js frontend (OpenRouter free-rival AI + UI) + lightweight Django backend (game logic, validation, admin).
+**Architecture**: Next.js frontend (provider-diverse free-rival AI + UI) + lightweight Django backend (game logic, validation, admin).
 
 **Standalone repository**: This folder is intended to be published as its **own** GitHub repository. It does **not** depend on the parent `scrabgpt_sk` monorepo — all assets and code live under `libretiles/`. For agent/continuation notes see **[AGENTS.md](AGENTS.md)**.
 
 ## Features
 
 - Full Libre Tiles game engine (English variant, Collins 2019 dictionary ~279k words, Tier-1 strict validation in Django)
-- AI opponents via OpenRouter free rivals -- four curated native IDs with tool calling
+- AI opponents via five curated `(provider, model_id)` free rivals with tool calling (OpenRouter + NVIDIA NIM)
 - Live human-vs-human multiplayer with waiting-room matchmaking, realtime board sync, and in-game chat
 - AI plays as a tool-calling agent: validates moves, checks words, calculates scores
 - Advanced drag-and-drop with touch/mobile support (@dnd-kit)
 - Animated tile drawing, scoring, and game-end effects (Framer Motion, confetti)
 - Django Admin for configuration (AI model catalog, games)
-- Settings page with the four-rival free shortlist
-- This cut charges zero app credits for AI turns; Stripe top-up is unfinished
+- Settings page with the five-card provider-diverse free shortlist
+- This cut charges zero app credits for these rivals (`free_rival` / dormant); external NVIDIA trial/quota terms can change and are not app credits. Stripe top-up is unfinished
 - Responsive design (desktop, tablet, mobile)
 - 3-tier word validation: local Collins 2019, online API (optional), AI judge
 
@@ -45,14 +45,14 @@ cd backend
 [ -f .env ] || cp .env.example .env               # copy only if missing
 poetry install                                    # install Python dependencies
 poetry run python manage.py migrate               # create database tables
-poetry run python manage.py seed_models           # seed the four-rival offline shortlist
+poetry run python manage.py seed_models           # seed the five-pair offline shortlist
 poetry run python manage.py createsuperuser       # (optional) admin account
 poetry run python manage.py runserver 0.0.0.0:8000
 ```
 
 Backend runs at http://localhost:8000. Django Admin at http://localhost:8000/admin/.
 
-Do **not** require `sync_openrouter_models` to start. That optional command later fetches the public OpenRouter catalog (`GET https://openrouter.ai/api/v1/models`, unauthenticated). An unavailable catalog must not block boot.
+Do **not** require `sync_openrouter_models` to start. That optional command later fetches the public OpenRouter catalog (`GET https://openrouter.ai/api/v1/models`, unauthenticated). It must not own or disable the NIM row. There is no NIM catalog discovery. An unavailable catalog must not block boot.
 
 Redis is required only for websocket matchmaking, realtime sync, and chat. The default local URL is `redis://127.0.0.1:6379/0`.
 
@@ -61,12 +61,12 @@ Redis is required only for websocket matchmaking, realtime sync, and chat. The d
 ```bash
 cd frontend
 [ -f .env.local ] || cp .env.local.example .env.local
-# Set OPENROUTER_API_KEY from https://openrouter.ai/keys (server-only).
+# Set server-only OPENROUTER_API_KEY and/or NVIDIA_API_KEY.
 npm install                                       # install JS dependencies
 npm run dev                                       # start dev server at :3000
 ```
 
-Open http://localhost:3000, register, choose a mode, and play. The UI still boots if `OPENROUTER_API_KEY` is missing or a placeholder; AI turns fail until a real key is set. The OpenRouter base URL is hardcoded in `frontend/src/lib/openrouter.ts`; do not add a base-URL env var.
+Open http://localhost:3000, register, choose a mode, and play. Both keys live on the Next.js server. The UI still boots if either is missing or a placeholder; AI turns fail only when neither credential is usable. Bases are hardcoded: OpenRouter `https://openrouter.ai/api/v1` and NVIDIA NIM `https://integrate.api.nvidia.com/v1`; do not add base-URL env vars.
 
 ### Environment Variables
 
@@ -87,16 +87,18 @@ Open http://localhost:3000, register, choose a mode, and play. The UI still boot
 | `BACKEND_URL` | `http://localhost:8000` | Django backend URL (Next.js server routes) |
 | `NEXT_DEV_ALLOWED_ORIGINS` | unset | Optional extra hosts allowed to load Next.js dev assets |
 | `OPENROUTER_API_KEY` | `your-openrouter-api-key` | Server-only OpenRouter key from https://openrouter.ai/keys |
+| `NVIDIA_API_KEY` | `your-nvidia-api-key` | Server-only NVIDIA NIM key from https://build.nvidia.com |
 | `NEXT_PUBLIC_DEFAULT_MODEL` | `google/gemma-4-31b-it:free` | Optional move/judge fallback. Store default is `DEFAULT_FREE_MODEL_ID`. |
 
-The four curated rivals (native OpenRouter IDs, never `openrouter/google/...`):
+Five curated `(provider, model_id)` pairs (native IDs, never `openrouter/google/...`). Default remains OpenRouter Gemma. The NIM id has no `:free` suffix and is not the FrameNest Omni/VLM:
 
-1. `google/gemma-4-31b-it:free` (default)
-2. `nvidia/nemotron-3-super-120b-a12b:free`
-3. `z-ai/glm-5.2:free`
-4. `google/gemma-4-26b-a4b-it:free`
+1. `openrouter` — `google/gemma-4-31b-it:free` (default)
+2. `nvidia-nim` — `nvidia/nemotron-3-super-120b-a12b`
+3. `openrouter` — `nvidia/nemotron-3-super-120b-a12b:free`
+4. `openrouter` — `z-ai/glm-5.2:free`
+5. `openrouter` — `google/gemma-4-26b-a4b-it:free`
 
-Transitive `@ai-sdk/gateway` in the lockfile is unused. Do not configure Vercel AI Gateway.
+Django Admin remains catalog authority; deactivating the NIM row is the operational kill switch. One AI turn may try at most three sequential `/api/ai/move` streams; preference `model_id` is unchanged and `runtime_model_id` is the attempt. Collins 2019 on Django remains the move validator. LM Studio, Vercel AI Gateway, Stripe completion, Slovak dictionary, and push/deploy are still out of this cut.
 
 ### Docker (optional PostgreSQL + Redis)
 
@@ -149,7 +151,7 @@ cd frontend && [ -f .env.local ] || cp .env.local.example .env.local && npm inst
 See [docs/architecture.md](docs/architecture.md) for full technical documentation.
 
 ```
-  Browser (Next.js)                   OpenRouter
+  Browser (Next.js)                   OpenRouter / NVIDIA NIM
   ┌─────────────────┐                ┌──────────────────┐
   │ React UI        │                │ Free rivals      │
   │ @dnd-kit + FM   │◄──────────────►│ gemma-4-31b, …   │
@@ -192,7 +194,7 @@ libretiles/
 │   ├── config/          # Django settings, URLs, ASGI
 │   ├── gamecore/        # Pure Python Libre Tiles engine (ported from scrabgpt/core)
 │   ├── accounts/        # User auth (JWT)
-│   ├── catalog/         # AI model catalog (seed_models + optional OpenRouter sync)
+│   ├── catalog/         # AI model catalog (seed_models + optional OpenRouter sync; NIM is Admin-seeded)
 │   │   └── management/commands/
 │   ├── game/            # Game sessions, moves, validation, AI tools
 │   ├── billing/         # Credits + transactions (v2)
@@ -203,7 +205,7 @@ libretiles/
 │   │   ├── app/         # Next.js pages (landing, game, settings, API routes)
 │   │   ├── components/  # Board, Tile, TileRack, ScorePanel, GameControls...
 │   │   ├── hooks/       # Zustand store (useGameStore)
-│   │   └── lib/         # Types, API client, OpenRouter, free-rivals, prompts, constants
+│   │   └── lib/         # Types, API client, OpenRouter, NIM, free-rivals, prompts, constants
 │   └── package.json
 ├── docs/                # Technical architecture docs
 ├── docker-compose.yml
@@ -223,7 +225,7 @@ libretiles/
 - `POST /api/auth/change-password/` -- Change password for the authenticated user
 
 ### Catalog
-- `GET /api/catalog/models/` -- List the curated OpenRouter free-rival shortlist
+- `GET /api/catalog/models/` -- List the curated provider-diverse free-rival shortlist
 
 ### Game
 - `POST /api/game/create/` -- Start new AI game
@@ -279,7 +281,7 @@ npx tsc --noEmit                           # TypeScript check
 ### Frontend
 - Next.js 16, React 19, TypeScript
 - Tailwind CSS 4, Framer Motion, @dnd-kit/core
-- Vercel AI SDK v6 via OpenRouter (OpenAI-compatible adapter, tool calling)
+- Vercel AI SDK v6 via OpenRouter and NVIDIA NIM (OpenAI-compatible adapter, tool calling)
 - Zustand (state management with localStorage persistence)
 - canvas-confetti (endgame effects)
 
@@ -300,7 +302,7 @@ Conceptually aligned with the desktop `scrabgpt` engine; this tree ships its **o
 ## Troubleshooting
 
 - **Invalid word but the server “accepted” it** — Distinguish between an **AI overlay candidate** (may show `valid: false`) and a **saved move**. Word validity is always decided by Django (`submit_move` / `validate_move_for_ai`) using `backend/assets/dicts/collins2019.txt`. Regression tests: `tests/test_dictionary_validation.py`.
-- **Weak AI play** — Switch among the four free rivals, raise timeout / search steps in Settings, and tune `frontend/src/lib/prompts.ts` (see [AGENTS.md](AGENTS.md)). Do not buy a paid catalog tier for this cut.
+- **Weak AI play** — Switch among the five curated free rivals, raise timeout / search steps in Settings, and tune `frontend/src/lib/prompts.ts` (see [AGENTS.md](AGENTS.md)). Do not buy a paid catalog tier for this cut.
 
 ## Contributing
 

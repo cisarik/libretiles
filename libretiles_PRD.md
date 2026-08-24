@@ -4,12 +4,12 @@ Updated: March 20, 2026
 
 ## 1. Product in One Sentence
 
-Libre Tiles is an open-source web-based Libre Tiles game with an eye-candy animated frontend, AI opponents via OpenRouter free rivals, and a lightweight Django backend with full admin control.
+Libre Tiles is an open-source web-based Libre Tiles game with an eye-candy animated frontend, AI opponents via provider-diverse free rivals, and a lightweight Django backend with full admin control.
 
 ## 2. Product Goals
 
 1. Deliver a visually stunning, native-feeling Libre Tiles experience in the browser (desktop + mobile).
-2. Let users choose which of the four curated OpenRouter free rivals to play against. This cut charges zero app credits per AI turn; Stripe remains unfinished.
+2. Let users choose which of the five curated `(provider, model_id)` free rivals to play against. This cut charges zero app credits per AI turn (`free_rival` / dormant); Stripe remains unfinished. External NVIDIA trial/quota terms can change and are not app credits.
 3. Provide a Django Admin-first configuration model: all game settings, AI models, and pricing managed through /admin/.
 4. Prepare architecture for human-vs-human multiplayer (v2).
 5. Maintain open-source quality: tests, documentation, clean architecture, GitHub-ready.
@@ -23,7 +23,7 @@ Libre Tiles is an open-source web-based Libre Tiles game with an eye-candy anima
 ## 4. Architecture Overview
 
 - **Frontend**: Next.js 16 (React 19, TypeScript, Tailwind CSS 4, Framer Motion, @dnd-kit) deployed on **Vercel**.
-- **AI**: Next.js API routes using Vercel AI SDK as an OpenAI-compatible adapter against OpenRouter (`OPENROUTER_API_KEY` only). Four native free-rival IDs; no Vercel AI Gateway configuration.
+- **AI**: Next.js API routes using Vercel AI SDK as an OpenAI-compatible adapter against OpenRouter and NVIDIA NIM (`OPENROUTER_API_KEY` and `NVIDIA_API_KEY` on the Next.js server). Five curated pairs; hardcoded bases; no Vercel AI Gateway, LM Studio, or base-URL env vars.
 - **Backend**: Django 5.x + DRF on self-hosted VPS (game state, validation, auth, admin).
 - **Database**: PostgreSQL (production), SQLite (dev).
 - **Game Engine**: Pure Python `gamecore/` package ported from scrabgpt/core/ (zero UI dependencies).
@@ -50,15 +50,15 @@ Libre Tiles is an open-source web-based Libre Tiles game with an eye-candy anima
 - Starting draw animation data (which tiles drawn, who goes first).
 - Status: **Implemented** (game/).
 
-### FR-04: AI Opponent via OpenRouter Free Rivals
-- AI models configured in Django Admin; this cut exposes the four curated OpenRouter free rivals.
+### FR-04: AI Opponent via Provider-Diverse Free Rivals
+- AI models configured in Django Admin; this cut exposes five curated `(provider, model_id)` pairs (default OpenRouter Gemma plus NVIDIA NIM Nemotron and three other OpenRouter rows). Deactivating the NIM row is the operational kill switch.
 - Frontend fetches available models from /api/catalog/models/.
-- User selects preferred rival in Settings.
-- AI move generation through Next.js API route (/api/ai/move) using Vercel AI SDK against OpenRouter.
-- AI uses tool calling: validate moves, check words, score moves via Django API endpoints.
-- AI judge fallback for word validation (Tier 3) via /api/ai/judge.
+- User selects preferred rival in Settings (`model_id` preference). One AI turn may try at most three sequential `/api/ai/move` streams; `runtime_model_id` is the attempt only.
+- AI move generation through Next.js API route (/api/ai/move) using Vercel AI SDK against the selected provider runtime.
+- AI uses tool calling: validate moves, check words, score moves via Django API endpoints. Collins 2019 on Django remains the move validator.
+- AI judge fallback for word validation (Tier 3) via /api/ai/judge (no fallback loop).
 - AI prompt ported from desktop scrabgpt: strategic priorities, blank policy, anti-blunder rules.
-- Status: **Implemented** (frontend/src/app/api/ai/, frontend/src/lib/prompts.ts, openrouter.ts, free-rivals.ts).
+- Status: **Implemented** (frontend/src/app/api/ai/, frontend/src/lib/prompts.ts, openrouter.ts, nvidia-nim.ts, ai-runtimes.ts, ai-fallback.ts, free-rivals.ts).
 
 ### FR-05: 3-Tier Word Validation
 - Tier 1: Local SOWPODS dictionary (in-memory frozenset, O(1) lookup).
@@ -83,7 +83,7 @@ Libre Tiles is an open-source web-based Libre Tiles game with an eye-candy anima
 - Status: **Core implemented** (Board, Tile, TileRack, ScorePanel, GameControls, BlankPicker, DnD, confetti). Premium animations in progress.
 
 ### FR-07: Settings (MVP)
-- AI model selection: the four curated OpenRouter free rivals (name, description, Free badge, selected state).
+- AI model selection: the five curated provider-diverse free rivals (name, description, Free badge, provider badge, selected state).
 - Fetched from Django catalog API.
 - Timeout and search-step controls remain.
 - Status: **Implemented** (frontend/src/app/settings/page.tsx).
@@ -97,7 +97,7 @@ Libre Tiles is an open-source web-based Libre Tiles game with an eye-candy anima
 - Status: **Implemented** (admin.py in each app).
 
 ### FR-09: Billing (Credits System)
-- This cut charges **zero app credits** for AI turns.
+- This cut charges **zero app credits** for these rivals (`free_rival` / dormant).
 - Stripe Checkout / credit purchase remains unfinished; do not document a top-up flow.
 - Human vs human games are free.
 - Billing models remain in Django Admin as dormant compatibility surfaces.
@@ -151,7 +151,7 @@ Libre Tiles is an open-source web-based Libre Tiles game with an eye-candy anima
 
 1. **Phase 1** (done): Scaffolding, gamecore extraction, Django project, assets, tests.
 2. **Phase 2** (done): Django apps (accounts, catalog, game, billing), REST API, admin.
-3. **Phase 3** (done): OpenRouter free-rival tool-calling (Next.js API routes, agent, prompts). Historical Gateway/direct-OpenAI/LM Studio paths are removed from this cut.
+3. **Phase 3** (done): OpenRouter free-rival tool-calling (Next.js API routes, agent, prompts). Historical Gateway/direct-OpenAI/LM Studio paths remain out of this cut.
 4. **Phase 4** (done): Eye-candy frontend (board, tiles, DnD, animations, settings, game flow).
 5. **Phase 5**: Polish -- mobile UX, move history timeline, starting draw animation, AI thinking particles.
 6. **Phase 6**: Human vs human multiplayer (WebSocket, lobby, invites).

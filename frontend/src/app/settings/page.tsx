@@ -53,7 +53,7 @@ const MODAL_TRANSITION = {
 };
 
 const CATALOG_EMPTY_MESSAGE =
-  "The rival catalog is empty. Seed the four free rivals to play AI matches.";
+  "The rival catalog is empty. Seed the five curated free rivals to play AI matches.";
 
 type NoticeTone = "success" | "warning" | "info";
 
@@ -601,7 +601,7 @@ export default function SettingsPage() {
             <section ref={rivalSectionRef} className="min-h-0">
               <SettingsPanel
                 title="Choose the rival"
-                description="Free OpenRouter rivals from the live catalog."
+                description="Provider-diverse free rivals from the live catalog (five cards)."
               >
                 <div className="mb-4 min-w-0">
                   <div
@@ -620,7 +620,7 @@ export default function SettingsPage() {
 
                 {loading ? (
                   <div className="grid gap-3 sm:grid-cols-2">
-                    {Array.from({ length: 4 }).map((_, index) => (
+                    {Array.from({ length: 5 }).map((_, index) => (
                       <div
                         key={index}
                         className="min-h-[168px] animate-pulse rounded-[1.15rem] border border-white/8 bg-black/12"

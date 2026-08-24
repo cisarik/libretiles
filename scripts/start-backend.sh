@@ -21,7 +21,7 @@ poetry install --quiet
 echo "Running migrations..."
 poetry run python manage.py migrate --run-syncdb
 
-echo "Seeding curated OpenRouter free rivals..."
+echo "Seeding curated provider-diverse free rivals..."
 poetry run python manage.py seed_models
 
 echo ""

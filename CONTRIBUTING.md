@@ -30,7 +30,7 @@ poetry run python manage.py createsuperuser
 # Frontend
 cd ../frontend
 [ -f .env.local ] || cp .env.local.example .env.local
-# Set OPENROUTER_API_KEY from https://openrouter.ai/keys (server-only).
+# Set server-only OPENROUTER_API_KEY and/or NVIDIA_API_KEY.
 npm install
 ```
 
@@ -87,8 +87,8 @@ npx tsc --noEmit                     # TypeScript strict check
 Backend (Django)           Frontend (Next.js)          AI Models
 ┌──────────────┐          ┌──────────────────┐       ┌─────────────┐
 │ gamecore/    │◄─────────│ /api/ai/move     │──────►│ OpenRouter  │
-│ game/        │ validate │ /api/ai/judge    │       │ free rivals │
-│ accounts/    │ + score  │ /api/models      │       │             │
+│ game/        │ validate │ /api/ai/judge    │       │ + NVIDIA NIM│
+│ accounts/    │ + score  │ /api/models      │       │ free rivals │
 │ catalog/     │          │                  │       └─────────────┘
 │ billing/     │          │ React UI         │
 │ config/      │          │ Zustand store    │
@@ -100,7 +100,7 @@ Backend (Django)           Frontend (Next.js)          AI Models
 1. **gamecore/ is pure Python** -- no Django imports, no network calls. It's the game engine.
 2. **Django handles state + validation** -- all game logic goes through `game/services.py`.
 3. **Next.js API routes handle AI** -- the AI agent runs in Next.js, calls Django for validation.
-4. **Admin-first catalog** -- the four free rivals are seeded by `seed_models`; optional later sync is `sync_openrouter_models`.
+4. **Admin-first catalog** -- the five curated pairs are seeded by `seed_models`; optional later OpenRouter sync is `sync_openrouter_models` and must not own or disable the NIM row. Deactivating the NIM row in Django Admin is the operational kill switch.
 5. **AI plays with tools** -- the AI model uses tool calling to validate its own moves.
 
 ### Where to find things
@@ -114,6 +114,9 @@ Backend (Django)           Frontend (Next.js)          AI Models
 | AI move generation | `frontend/src/app/api/ai/move/route.ts` |
 | AI prompts | `frontend/src/lib/prompts.ts` |
 | OpenRouter client | `frontend/src/lib/openrouter.ts` |
+| NVIDIA NIM client | `frontend/src/lib/nvidia-nim.ts` |
+| Runtime dispatch | `frontend/src/lib/ai-runtimes.ts` |
+| Per-turn fallback | `frontend/src/lib/ai-fallback.ts` |
 | Free-rival IDs | `frontend/src/lib/free-rivals.ts` |
 | Game UI components | `frontend/src/components/` |
 | Client state | `frontend/src/hooks/useGameStore.ts` |
@@ -129,7 +132,7 @@ Backend (Django)           Frontend (Next.js)          AI Models
 
 ### Changing the free-rival shortlist
 
-This cut ships a curated four-ID OpenRouter shortlist. Do not add Vercel AI Gateway, direct OpenAI, or LM Studio providers. Changing the shortlist is a separate product change in `frontend/src/lib/free-rivals.ts`, `backend/catalog/selection.py`, and `seed_models.py`. Use native OpenRouter IDs (never `openrouter/google/...`).
+This cut ships five curated `(provider, model_id)` pairs (OpenRouter plus NVIDIA NIM). LM Studio, Vercel AI Gateway, Stripe completion, Slovak dictionary, and push/deploy remain out of this cut. Changing the shortlist is a separate product change in `frontend/src/lib/free-rivals.ts`, `backend/catalog/selection.py`, and `seed_models.py`. Use native IDs (never `openrouter/google/...`). The NIM id has no `:free` suffix.
 
 ### Modifying game rules
 

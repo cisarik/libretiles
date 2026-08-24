@@ -7,20 +7,20 @@ cd "$(dirname "$0")/../frontend"
 
 echo "=== Libre Tiles — Frontend ==="
 
-warn_if_openrouter_key_unusable() {
+# Classify a named env assignment as usable or not. Never print the value.
+env_key_is_usable() {
     local env_file="$1"
+    local name="$2"
     local raw=""
     local key=""
 
     if [ ! -f "$env_file" ]; then
-        echo "warning: OPENROUTER_API_KEY is missing; the UI can boot, but AI turns will fail until you set a key from https://openrouter.ai/keys" >&2
-        return 0
+        return 1
     fi
 
-    raw="$(grep -E '^[[:space:]]*OPENROUTER_API_KEY=' "$env_file" | tail -n 1 || true)"
+    raw="$(grep -E "^[[:space:]]*${name}=" "$env_file" | tail -n 1 || true)"
     if [ -z "$raw" ]; then
-        echo "warning: OPENROUTER_API_KEY is missing; the UI can boot, but AI turns will fail until you set a key from https://openrouter.ai/keys" >&2
-        return 0
+        return 1
     fi
 
     key="${raw#*=}"
@@ -35,10 +35,30 @@ warn_if_openrouter_key_unusable() {
     key="${key%"${key##*[![:space:]]}"}"
 
     case "$key" in
-        ""|"your-openrouter-api-key"|"change-me"|"your-vercel-ai-gateway-api-key")
-            echo "warning: OPENROUTER_API_KEY is missing or a placeholder; the UI can boot, but AI turns will fail until you set a key from https://openrouter.ai/keys" >&2
+        ""|"your-openrouter-api-key"|"your-nvidia-api-key"|"change-me"|"your-vercel-ai-gateway-api-key")
+            return 1
+            ;;
+        *)
+            return 0
             ;;
     esac
+}
+
+warn_if_no_ai_credential_usable() {
+    local env_file="$1"
+    local openrouter_ok=1
+    local nvidia_ok=1
+
+    if env_key_is_usable "$env_file" "OPENROUTER_API_KEY"; then
+        openrouter_ok=0
+    fi
+    if env_key_is_usable "$env_file" "NVIDIA_API_KEY"; then
+        nvidia_ok=0
+    fi
+
+    if [ "$openrouter_ok" -ne 0 ] && [ "$nvidia_ok" -ne 0 ]; then
+        echo "warning: neither OPENROUTER_API_KEY nor NVIDIA_API_KEY is usable (missing, empty, or a known placeholder); the UI can boot, but AI turns will fail until at least one server-only key is set" >&2
+    fi
 }
 
 # Copy env only when absent. Never overwrite an existing developer .env.local.
@@ -47,7 +67,7 @@ if [ ! -f .env.local ]; then
     cp .env.local.example .env.local
 fi
 
-warn_if_openrouter_key_unusable .env.local
+warn_if_no_ai_credential_usable .env.local
 
 # Install dependencies
 echo "Installing Node dependencies..."

@@ -12,7 +12,7 @@ Libre Tiles is a web application with three runtime components:
 2. **Django Backend** (self-hosted VPS) -- game state, matchmaking, validation, auth, admin, dictionary
 3. **Redis** -- Django Channels backing store for websocket rooms and realtime fan-out (human multiplayer only; not required for AI-only local play)
 
-AI turns use **OpenRouter** free rivals. Next.js `/api/ai/move` and `/api/ai/judge` call `https://openrouter.ai/api/v1` with server-only `OPENROUTER_API_KEY`. Model IDs are native OpenRouter IDs (default `google/gemma-4-31b-it:free`). Never prefix `openrouter/`. The Vercel AI SDK is an OpenAI-compatible adapter only; do not configure Vercel AI Gateway.
+AI turns use five curated **provider-diverse free rivals**. Next.js `/api/ai/move` and `/api/ai/judge` dispatch on the Next.js server: OpenRouter at hardcoded `https://openrouter.ai/api/v1` with server-only `OPENROUTER_API_KEY`, and NVIDIA NIM at hardcoded `https://integrate.api.nvidia.com/v1` with server-only `NVIDIA_API_KEY`. No base-URL env vars. Default remains OpenRouter `google/gemma-4-31b-it:free`. Never prefix `openrouter/`. The NIM id has no `:free` suffix and is not the FrameNest Omni/VLM. The UI still boots if either key is missing. The Vercel AI SDK is an OpenAI-compatible adapter only; LM Studio and Vercel AI Gateway remain out of this cut.
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -33,7 +33,8 @@ AI turns use **OpenRouter** free rivals. Next.js `/api/ai/move` and `/api/ai/jud
 │       Next.js Server (Vercel)         │
 │                                       │
 │  /api/ai/move    -- AI agent route    │   ──────►  OpenRouter
-│  /api/ai/judge   -- Word judge route  │            (free rivals)
+│  /api/ai/judge   -- Word judge route  │            + NVIDIA NIM
+│                                       │            (free rivals)
 │  /api/models     -- Catalog proxy     │
 │                                       │
 │  Uses: Vercel AI SDK v6              │
@@ -169,15 +170,19 @@ Frontend Settings ──► create game request (`ai_model_model_id`)
                     `/api/game/{id}/ai-context/` returns locked model id
                               │
                               ▼
-                    `/api/ai/move` calls `getOpenRouterModel(session.ai_model_id)`
+                    `/api/ai/move` dispatches the runtime pair (`model_id` preference;
+                              │  optional `runtime_model_id` for the current attempt)
                               │
                      requested model + actual response model are stored in `Move.ai_metadata`
 ```
 
-- **Runtime**: `OPENROUTER_API_KEY` is the only AI credential. The base URL is hardcoded in `frontend/src/lib/openrouter.ts`. Native IDs such as `google/gemma-4-31b-it:free`.
+- **Runtime**: two server-only Next.js keys, `OPENROUTER_API_KEY` and `NVIDIA_API_KEY`. Bases are hardcoded in `frontend/src/lib/openrouter.ts` and `frontend/src/lib/nvidia-nim.ts`. Do not put those keys in backend env.
+- **Fallback**: one AI turn may try at most three sequential `/api/ai/move` streams. Preference `model_id` is unchanged; `runtime_model_id` is the attempt. Collins 2019 on Django remains the move validator.
 - **Store default**: Zustand uses `DEFAULT_FREE_MODEL_ID` from `frontend/src/lib/free-rivals.ts`. Optional `NEXT_PUBLIC_DEFAULT_MODEL` is only a documented fallback for move/judge routes.
-- **Catalog seed**: `python manage.py seed_models` writes the four-rival offline shortlist and is required for local boot.
-- **Catalog sync** (optional, later): `python manage.py sync_openrouter_models` is an unauthenticated public GET. An unavailable catalog must not block boot. Do not put `OPENROUTER_API_KEY` in backend env.
+- **Catalog seed**: `python manage.py seed_models` writes the five-pair offline shortlist and is required for local boot.
+- **Catalog sync** (optional, later): `python manage.py sync_openrouter_models` is an unauthenticated public GET. It must not own or disable the NIM row. There is no NIM catalog discovery. An unavailable catalog must not block boot.
+- **Kill switch**: Django Admin remains catalog authority; deactivating the NIM row removes it from Settings and fallback queues.
+- **Credits**: these rivals charge zero app credits (`free_rival` / dormant). External NVIDIA trial/quota terms can change and are not app credits.
 
 ## Word Validation Pipeline
 
@@ -235,7 +240,7 @@ Human-vs-human multiplayer reuses the same `GameSession`, `PlayerSlot`, `Move`, 
 ### Core entities
 
 - **User** (accounts) -- custom user with preferred AI model
-- **AIModel** (catalog) -- provider, model_id, display_name, OpenRouter metadata, availability sync; this cut exposes the four free rivals
+- **AIModel** (catalog) -- provider, model_id, display_name, OpenRouter sync metadata, availability; this cut exposes five curated free-rival pairs
 - **GameSession** (game) -- board state JSON, bag, turn tracking, game status
 - **PlayerSlot** (game) -- links users (or AI) to game positions with rack + score
 - **Move** (game) -- move history with placements, words, score, AI metadata
@@ -258,12 +263,12 @@ Game state is stored in `GameSession.state_json` as a JSON blob managed by `game
 
 - **Frontend**: Vercel (automatic deploys from `main` branch)
 - **Backend**: Self-hosted VPS with Docker Compose (Django + PostgreSQL + Redis)
-- **AI**: OpenRouter free rivals (`OPENROUTER_API_KEY` on the Next.js server)
+- **AI**: provider-diverse free rivals (`OPENROUTER_API_KEY` and `NVIDIA_API_KEY` on the Next.js server)
 
 ### Local development
 
 - Backend: `poetry run python manage.py runserver` (SQLite); `seed_models` for the offline shortlist
-- Frontend: `npm run dev` (server-only `OPENROUTER_API_KEY`)
+- Frontend: `npm run dev` (server-only `OPENROUTER_API_KEY` and `NVIDIA_API_KEY`; UI boots if either is missing)
 - Redis: required for human multiplayer, websocket sync, and chat; not required for AI-only play
 - Database: SQLite (zero config) or Docker Compose PostgreSQL
 
@@ -301,13 +306,14 @@ These notes are for the next Codex agent continuing AI gameplay and billing work
 
 ### Current model catalog policy
 
-- Selectable models are the curated OpenRouter free-rival shortlist:
-  - `google/gemma-4-31b-it:free` (default)
-  - `nvidia/nemotron-3-super-120b-a12b:free`
-  - `z-ai/glm-5.2:free`
-  - `google/gemma-4-26b-a4b-it:free`
+- Selectable models are the five curated `(provider, model_id)` pairs:
+  - `openrouter` — `google/gemma-4-31b-it:free` (default)
+  - `nvidia-nim` — `nvidia/nemotron-3-super-120b-a12b`
+  - `openrouter` — `nvidia/nemotron-3-super-120b-a12b:free`
+  - `openrouter` — `z-ai/glm-5.2:free`
+  - `openrouter` — `google/gemma-4-26b-a4b-it:free`
   - shortlist membership, active/available, explicit free pricing, and tools
-- `seed_models` is the boot path. `sync_openrouter_models` is optional and non-blocking.
+- `seed_models` is the boot path. `sync_openrouter_models` is optional, non-blocking, and must not own or disable the NIM row.
 - Relevant files:
   - `frontend/src/lib/free-rivals.ts`
   - `backend/catalog/selection.py`

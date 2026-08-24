@@ -4,7 +4,7 @@ This document is for **automated coding agents** and humans who continue develop
 
 ## What Libre Tiles is
 
-- **Frontend**: Next.js (React), Tailwind, Framer Motion, Zustand, DnD Kit; AI via OpenRouter free rivals (Next.js API routes).
+- **Frontend**: Next.js (React), Tailwind, Framer Motion, Zustand, DnD Kit; AI via provider-diverse free rivals (OpenRouter + NVIDIA NIM on Next.js API routes).
 - **Backend**: Django + DRF; pure game logic in `gamecore/` (board, rules, scoring, Collins 2019 dictionary).
 - **Realtime**: Django Channels + Redis for human-vs-human matchmaking, websocket sync, and chat.
 - **Separation**: No imports outside `libretiles/`. All assets (dictionary, premiums, variants) live under `backend/assets/`.
@@ -27,19 +27,19 @@ AI-only local play needs two terminals (Django + Next.js). Redis is required onl
    poetry run python manage.py runserver 0.0.0.0:8000
    ```
 
-   `seed_models` loads the offline four-rival shortlist. Do not require `sync_openrouter_models` to start; that optional public catalog fetch is later and non-blocking.
+   `seed_models` loads the offline five-pair shortlist (four OpenRouter rows plus one NVIDIA NIM row). Do not require `sync_openrouter_models` to start; that optional public catalog fetch is later and non-blocking. It must not own or disable the NIM row. There is no NIM catalog discovery.
 
 2. **Frontend**:
 
    ```bash
    cd frontend
    [ -f .env.local ] || cp .env.local.example .env.local
-   # Set OPENROUTER_API_KEY from https://openrouter.ai/keys (server-only).
+   # Set server-only OPENROUTER_API_KEY and/or NVIDIA_API_KEY (see frontend/.env.local.example).
    npm install
    npm run dev
    ```
 
-   The UI still boots if the key is missing or a placeholder; AI turns fail until a real key is set.
+   Both keys live on the Next.js server. The UI still boots if either is missing or a placeholder; AI turns fail only when neither credential is usable.
 
 3. Or from the repo root: `./scripts/libretiles.sh` (see [README.md](README.md)). Scripts copy env examples only when the target file is absent.
 
@@ -71,6 +71,9 @@ npm run build
 | Word validation (lazy load) | `services._get_dictionary()`, `_word_passes_dictionary()` |
 | AI stream (SSE) | `frontend/src/app/api/ai/move/route.ts` |
 | OpenRouter client | `frontend/src/lib/openrouter.ts` |
+| NVIDIA NIM client | `frontend/src/lib/nvidia-nim.ts` |
+| Runtime dispatch | `frontend/src/lib/ai-runtimes.ts` |
+| Per-turn fallback | `frontend/src/lib/ai-fallback.ts` |
 | Free-rival IDs | `frontend/src/lib/free-rivals.ts` |
 | Catalog seed | `backend/catalog/management/commands/seed_models.py` |
 | Optional catalog sync | `backend/catalog/management/commands/sync_openrouter_models.py` |
@@ -95,7 +98,7 @@ npm run build
   - shared pointer-reactive gold/black chrome in `frontend/src/lib/premiumSurface.ts`
   - used by settings plus the game header/footer
   - controlled by the persisted `premiumLookEnabled` store flag
-- Credits remain in the product as a dormant USD balance (`1 credit = $1`). This cut charges **zero app credits** for AI turns; Stripe top-up is unfinished.
+- Credits remain in the product as a dormant USD balance (`1 credit = $1`). This cut charges **zero app credits** for these rivals (`free_rival` / dormant). External NVIDIA trial/quota terms can change and are not the same as app credits. Stripe top-up is unfinished.
 
 ## Word validation (important)
 
@@ -106,10 +109,12 @@ npm run build
 
 ## Making the AI stronger
 
-- **Model**: pick one of the four curated OpenRouter free rivals (`frontend/src/lib/free-rivals.ts`). Default `google/gemma-4-31b-it:free`; alternates `nvidia/nemotron-3-super-120b-a12b:free`, `z-ai/glm-5.2:free`, `google/gemma-4-26b-a4b-it:free`. Use native IDs (never `openrouter/google/...`). Do not buy a paid catalog tier for this cut.
+- **Model**: pick one of the five curated `(provider, model_id)` pairs (`frontend/src/lib/free-rivals.ts`). Default remains OpenRouter `google/gemma-4-31b-it:free`. The other pairs are NVIDIA NIM `nvidia/nemotron-3-super-120b-a12b` (no `:free` suffix; not the FrameNest Omni/VLM), OpenRouter `nvidia/nemotron-3-super-120b-a12b:free`, `z-ai/glm-5.2:free`, and `google/gemma-4-26b-a4b-it:free`. Use native IDs (never `openrouter/google/...`). Django Admin remains catalog authority; deactivating the NIM row is the operational kill switch. Do not buy a paid catalog tier for this cut.
+- **Fallback**: one AI turn may try at most three sequential `/api/ai/move` streams. Preference `model_id` is unchanged; `runtime_model_id` is the attempt.
 - **Time / search**: `aiTimeout` and `aiMaxSteps` in the Zustand store / Settings, consumed by the SSE move route.
 - **Prompt**: `frontend/src/lib/prompts.ts` — strategy, tools, anti-pass logic; change carefully and test against backend validation.
 - Optional `NEXT_PUBLIC_DEFAULT_MODEL` is only a documented fallback for move/judge routes. The store default is `DEFAULT_FREE_MODEL_ID`, not `process.env`.
+- Hardcoded bases: OpenRouter `https://openrouter.ai/api/v1`; NVIDIA NIM `https://integrate.api.nvidia.com/v1`. No base-URL env vars.
 
 ## Deployment
 
@@ -124,6 +129,7 @@ npm run build
 ## Not done yet (typical next steps)
 
 - Stripe / billing completion.
+- LM Studio, Vercel AI Gateway, Slovak dictionary, and push/deploy are out of this cut.
 - Tier 2 / 3 dictionary (optional API, AI judge) — see PRD and `docs/architecture.md`.
 - Stronger AI search / candidate generation beyond prompt-only improvements.
 
