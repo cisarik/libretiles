@@ -6,6 +6,7 @@ import { motion } from "framer-motion";
 
 import { GameHistoryPanel } from "@/components/game/GameHistoryPanel";
 import { useGameStore } from "@/hooks/useGameStore";
+import { providerBadgeLabel } from "@/lib/ai-fallback";
 import { api } from "@/lib/api";
 import { DEFAULT_FREE_MODEL_ID } from "@/lib/free-rivals";
 import {
@@ -278,8 +279,19 @@ export default function PlayPage() {
               <p className="mt-3 max-w-[28rem] text-sm text-stone-300">
                 Use the current AI rival and keep the animated opening draw.
               </p>
-              <div className="mt-6 inline-flex items-center rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-semibold text-stone-200">
-                {startingAI ? "Preparing game..." : activeModelLabel}
+              <div className="mt-6 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-semibold text-stone-200">
+                <span>{startingAI ? "Preparing game..." : activeModelLabel}</span>
+                {catalogMatch && !startingAI ? (
+                  <span
+                    className={`rounded-full border px-2 py-0.5 text-[0.68rem] font-semibold uppercase tracking-[0.16em] ${
+                      catalogMatch.provider === "nvidia-nim"
+                        ? "border-violet-300/26 bg-violet-300/14 text-violet-50"
+                        : "border-sky-300/26 bg-sky-300/14 text-sky-50"
+                    }`}
+                  >
+                    {providerBadgeLabel(catalogMatch.provider)}
+                  </span>
+                ) : null}
               </div>
             </button>
 

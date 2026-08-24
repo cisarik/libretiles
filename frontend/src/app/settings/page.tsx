@@ -10,6 +10,7 @@ import {
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { useGameStore, type BoardTheme } from "@/hooks/useGameStore";
+import { providerBadgeLabel } from "@/lib/ai-fallback";
 import { api } from "@/lib/api";
 import { DEFAULT_FREE_MODEL_ID } from "@/lib/free-rivals";
 import {
@@ -635,7 +636,7 @@ export default function SettingsPage() {
 
                       return (
                         <motion.button
-                          key={model.model_id}
+                          key={`${model.provider}:${model.model_id}`}
                           type="button"
                           whileHover={{ y: -1.5, scale: 1.01 }}
                           whileTap={{ scale: 0.985 }}
@@ -655,6 +656,15 @@ export default function SettingsPage() {
                               }`}
                             >
                               {model.display_name}
+                            </span>
+                            <span
+                              className={`rounded-full border px-2.5 py-1 text-[0.72rem] font-semibold uppercase tracking-[0.18em] ${
+                                model.provider === "nvidia-nim"
+                                  ? "border-violet-300/26 bg-violet-300/14 text-violet-50"
+                                  : "border-sky-300/26 bg-sky-300/14 text-sky-50"
+                              }`}
+                            >
+                              {providerBadgeLabel(model.provider)}
                             </span>
                             <span className="rounded-full border border-emerald-300/26 bg-emerald-300/14 px-2.5 py-1 text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-emerald-50">
                               Free

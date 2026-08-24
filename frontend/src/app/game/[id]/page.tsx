@@ -32,13 +32,20 @@ import { PromptPreviewModal } from "@/components/game/PromptPreviewModal";
 import { TurnStatusNotice } from "@/components/game/TurnStatusNotice";
 import { useGameStore, type BoardTheme } from "@/hooks/useGameStore";
 import { useIsCoarsePointer } from "@/hooks/useIsCoarsePointer";
+import {
+  aiMoveRequestBody,
+  buildFallbackQueue,
+  fallbackQueueForCatalogFailure,
+  orchestrateFallbackTurn,
+  providerBadgeLabel,
+} from "@/lib/ai-fallback";
+import { consumeAIStream } from "@/lib/ai-move-stream";
 import { api } from "@/lib/api";
 import { resolveFreeRivalId } from "@/lib/free-rivals";
 import { PREMIUM_FOOTER_STYLE, handlePremiumSurfacePointer } from "@/lib/premiumSurface";
 import { isPlausibleRack } from "@/lib/rack";
 import { buildGameWebSocketUrl } from "@/lib/ws";
 import type {
-  AICandidate,
   AIPrompt,
   GameHistoryFilter,
   GameHistoryItem,
@@ -62,81 +69,6 @@ type DragPreviewTarget = {
   row: number;
   col: number;
 };
-
-async function consumeAIStream(
-  response: Response,
-  callbacks: {
-    onCandidate: (c: AICandidate) => void;
-    onDone: (data: Record<string, unknown>) => void;
-    onError: (error: { message: string; code?: string; creditBalance?: string | null }) => void;
-    onStatus: (msg: string) => void;
-  },
-) {
-  const reader = response.body?.getReader();
-  if (!reader) {
-    callbacks.onError({ message: "No response stream" });
-    return;
-  }
-
-  const decoder = new TextDecoder();
-  let buffer = "";
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed.startsWith("data: ")) continue;
-      try {
-        const json = JSON.parse(trimmed.slice(6));
-        const type = json.type as string;
-        if (type === "candidate") {
-          callbacks.onCandidate({
-            word: json.word ?? "???",
-            score: json.score ?? 0,
-            valid: json.valid ?? false,
-            isBest: json.isBest ?? false,
-            timestamp: json.timestamp ?? 0,
-            allWords: json.allWords,
-          });
-        } else if (type === "thinking") {
-          if (typeof json.message === "string" && json.message.length > 0) {
-            callbacks.onStatus(json.message);
-          } else if (typeof json.model === "string") {
-            callbacks.onStatus(`Thinking with ${json.model}`);
-          }
-        } else if (type === "tool_use") {
-          callbacks.onStatus(
-            json.tool === "validateMove"
-              ? `Testing ${json.tileCount ?? "new"} tile move...`
-              : "Checking candidate words against the dictionary...",
-          );
-        } else if (type === "tool_result") {
-          if (json.tool === "validateMove") {
-            callbacks.onStatus(
-              json.valid
-                ? `Valid move found for ${json.score ?? 0} points.`
-                : "Rejected. Trying another line...",
-            );
-          }
-        } else if (type === "done") {
-          callbacks.onDone(json);
-        } else if (type === "error") {
-          callbacks.onError({
-            message: json.error ?? "AI error",
-            code: typeof json.code === "string" ? json.code : undefined,
-            creditBalance:
-              typeof json.credit_balance === "string" ? json.credit_balance : null,
-          });
-        }
-      } catch { /* malformed line */ }
-    }
-  }
-}
 
 function isHtmlResponse(body: string, contentType: string | null) {
   return contentType?.includes("text/html") === true || /<!doctype html|<html/i.test(body);
@@ -1007,81 +939,114 @@ export default function GamePage() {
     if (gameState.current_turn_slot !== aiSlotNumber) return;
     if (aiInFlightRef.current) return;
 
-    const activeModelId = resolveFreeRivalId(
+    const preferenceModelId = resolveFreeRivalId(
       selectedModelId || gameState.ai_model_id,
     );
+    const turnStartedAtMs = Date.now();
+    const turnAnchor = {
+      gameId,
+      moveCount: gameState.move_count,
+      aiSlot: aiSlotNumber,
+    };
 
     aiInFlightRef.current = true;
     clearAICandidates();
     setAIThinking(true);
-    setAIStatusMessage(`Exploring legal words with ${activeModelId}...`);
+    setAIStatusMessage(`Exploring legal words with ${preferenceModelId}...`);
     setAiError(null);
     setAIBlockerModal(null);
     startCountdown(aiTimeout);
 
     try {
-      const res = await fetch("/api/ai/move", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          game_id: gameId,
-          token,
-          model_id: activeModelId,
-          timeout: aiTimeout,
-          max_steps: aiMaxSteps,
-        }),
-      });
-      const contentType = res.headers.get("content-type") ?? "";
-      if (!res.ok || !contentType.includes("text/event-stream")) {
-        throw new Error(await getStreamStartError(res));
+      let queue;
+      try {
+        const catalog = await api.getModels();
+        queue = buildFallbackQueue(
+          preferenceModelId,
+          catalog.map((row) => ({
+            provider: row.provider,
+            model_id: row.model_id,
+          })),
+        );
+      } catch {
+        queue = fallbackQueueForCatalogFailure(preferenceModelId);
       }
 
-      let doneData: Record<string, unknown> | null = null;
-
-      await consumeAIStream(res, {
-        onCandidate: (candidate) => {
-          addAICandidate(candidate);
-        },
-        onDone: (data) => {
-          doneData = data;
-          const result = data as unknown as MoveResult;
-          setLastMoveResult(result);
-          if (result.state) {
-            setGameState(result.state);
+      const result = await orchestrateFallbackTurn({
+        queue,
+        turnStartedAtMs,
+        aiTimeoutSeconds: aiTimeout,
+        now: Date.now,
+        anchor: turnAnchor,
+        fetchGameState: async () => {
+          try {
+            const state = (await api.getGameState(token, gameId)) as GameState;
+            setGameState(state);
+            return {
+              game_id: state.game_id,
+              move_count: state.move_count,
+              status: state.status,
+              current_turn_slot: state.current_turn_slot,
+              game_over: state.game_over,
+            };
+          } catch {
+            return null;
           }
         },
-        onError: (error) => {
-          const blocker = normalizeAIBlocker(
-            error.message,
-            error.code,
-          );
-          setAiApproved(false);
-          if (blocker) {
-            setAiError(blocker.message);
-            setAIBlockerModal(blocker);
-            setAIThinking(false);
-            setAIStatusMessage(null);
-            stopCountdown();
-            return;
+        runStream: async ({ pair, attemptIndex, timeoutSeconds }) => {
+          const attemptLabel = `Attempt ${attemptIndex + 1}/${queue.length} · ${providerBadgeLabel(pair.provider)} · ${pair.model_id}`;
+          setAIStatusMessage(attemptLabel);
+          const payload = aiMoveRequestBody({
+            gameId,
+            token,
+            preferenceModelId,
+            runtimeModelId: pair.model_id,
+            timeout: timeoutSeconds,
+            maxSteps: aiMaxSteps,
+          });
+          const res = await fetch("/api/ai/move", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              game_id: payload.game_id,
+              token: payload.token,
+              model_id: payload.model_id,
+              runtime_model_id: payload.runtime_model_id,
+              timeout: payload.timeout,
+              max_steps: payload.max_steps,
+            }),
+          });
+          const contentType = res.headers.get("content-type") ?? "";
+          if (!res.ok || !contentType.includes("text/event-stream")) {
+            throw new Error(await getStreamStartError(res));
           }
-          console.error("AI stream error:", error.message);
-          setAiError(error.message);
-        },
-        onStatus: (msg) => {
-          setAIStatusMessage(msg);
+          return consumeAIStream(res, {
+            onCandidate: (candidate) => {
+              addAICandidate(candidate);
+            },
+            onDone: (data) => {
+              const move = data as unknown as MoveResult;
+              setLastMoveResult(move);
+              if (move.state) {
+                setGameState(move.state);
+              }
+            },
+            onStatus: (msg) => {
+              setAIStatusMessage(`${attemptLabel} — ${msg}`);
+            },
+          });
         },
       });
 
-      setAIThinking(false);
-      setAIStatusMessage(null);
-      stopCountdown();
+      const last = result.lastTerminal;
+      const doneData = last?.kind === "done" ? last.data : null;
 
       if (doneData) {
-        const billing = (doneData as MoveResult).billing;
+        const billing = (doneData as unknown as MoveResult).billing;
         if (billing?.remaining_credits) {
           setCreditBalance(billing.remaining_credits);
         }
-        const action = (doneData as Record<string, unknown>).action as string;
+        const action = doneData.action as string;
         if (action === "pass") {
           showToast({
             id: `pass-${Date.now()}`,
@@ -1092,15 +1057,15 @@ export default function GamePage() {
             remainingCredits: billing?.remaining_credits,
           });
         } else if (action === "place") {
-          const bestWord = (doneData as Record<string, unknown>).best_word as string | undefined;
-          const bestScore = (doneData as Record<string, unknown>).best_score as number | undefined;
-          const words = (doneData as Record<string, unknown>).words as Array<{ word: string }> | undefined;
+          const bestWord = doneData.best_word as string | undefined;
+          const bestScore = doneData.best_score as number | undefined;
+          const words = doneData.words as Array<{ word: string }> | undefined;
           showToast({
             id: `played-${Date.now()}`,
             type: "ai_played",
             message: `AI played ${bestWord ?? "a word"}`,
             words: words?.map((w) => w.word) ?? (bestWord ? [bestWord] : []),
-            score: bestScore ?? (doneData as Record<string, unknown>).points as number | undefined ?? 0,
+            score: bestScore ?? (doneData.points as number | undefined) ?? 0,
             chargedCredits: billing?.charged_credits,
             chargedUsd: billing?.charged_usd,
             remainingCredits: billing?.remaining_credits,
@@ -1115,6 +1080,34 @@ export default function GamePage() {
             remainingCredits: billing?.remaining_credits,
           });
         }
+      } else if (
+        result.stopReason === "queue_exhausted"
+        || result.stopReason === "deadline"
+        || result.stopReason === "empty_queue"
+      ) {
+        setAiApproved(false);
+        if (last?.kind === "coded_provider_error") {
+          const blocker = normalizeAIBlocker(last.message, last.code);
+          if (blocker) {
+            setAiError(blocker.message);
+            setAIBlockerModal(blocker);
+          } else {
+            setAiError(last.message);
+          }
+        } else if (result.stopReason === "empty_queue") {
+          const blocker = normalizeAIBlocker("", "provider_unavailable");
+          setAiError(blocker?.message ?? "No eligible free rival is available.");
+          setAIBlockerModal(blocker);
+        } else if (result.stopReason === "deadline") {
+          const blocker = normalizeAIBlocker("", "provider_unavailable");
+          setAiError(blocker?.message ?? "AI thinking time ran out.");
+          setAIBlockerModal(blocker);
+        }
+      } else if (result.stopReason === "generic_error" || result.stopReason === "no_terminal") {
+        setAiApproved(false);
+        const message = last?.kind === "generic_error" ? last.message : "AI move failed";
+        console.error("AI move failed:", message);
+        setAiError(message);
       }
 
       if (token) {
@@ -1125,25 +1118,19 @@ export default function GamePage() {
           .catch(() => {});
       }
 
-      const latest = await syncState((doneData as MoveResult | null)?.state);
+      const latest = await syncState((doneData as unknown as MoveResult | null)?.state);
       if (latest?.game_over && latest.winner_slot === latest.my_slot) {
         confetti({ particleCount: 200, spread: 100, origin: { y: 0.6 } });
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : "AI move failed";
-      const blocker = normalizeAIBlocker(message);
       setAiApproved(false);
-      if (blocker) {
-        setAiError(blocker.message);
-        setAIBlockerModal(blocker);
-      } else {
-        console.error("AI move failed:", err);
-        setAiError(message);
-      }
+      console.error("AI move failed:", err);
+      setAiError(message);
+    } finally {
       setAIThinking(false);
       setAIStatusMessage(null);
       stopCountdown();
-    } finally {
       aiInFlightRef.current = false;
     }
   }, [
