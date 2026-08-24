@@ -326,7 +326,6 @@ function PremiumLookPanel({
 export default function SettingsPage() {
   const router = useRouter();
   const token = useGameStore((s) => s.token);
-  const setCreditBalance = useGameStore((s) => s.setCreditBalance);
   const selectedModelId = useGameStore((s) => s.selectedModelId);
   const setSelectedModelId = useGameStore((s) => s.setSelectedModelId);
   const aiTimeout = useGameStore((s) => s.aiTimeout);
@@ -379,9 +378,7 @@ export default function SettingsPage() {
         setModels(nextModels);
         setAccountSyncAvailable(profileResult.ok);
 
-        if (profileResult.profile) {
-          setCreditBalance(profileResult.profile.credit_balance);
-        } else if (token) {
+        if (!profileResult.profile && token) {
           setNotice({
             tone: "info",
             text: "Account sync is unavailable right now. Settings still work locally on this device.",
@@ -423,7 +420,7 @@ export default function SettingsPage() {
     return () => {
       cancelled = true;
     };
-  }, [token, setCreditBalance, setSelectedModelId]);
+  }, [token, setSelectedModelId]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -487,8 +484,7 @@ export default function SettingsPage() {
 
     setSavingModelId(modelId);
     try {
-      const profile = await api.updateMe(token, { preferred_ai_model_id: modelId });
-      setCreditBalance(profile.credit_balance);
+      await api.updateMe(token, { preferred_ai_model_id: modelId });
       setNotice({
         tone: "success",
         text: `${chosenModel?.display_name ?? modelId} will be used for the next AI turn.`,

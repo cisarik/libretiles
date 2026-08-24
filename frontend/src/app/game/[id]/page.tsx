@@ -99,9 +99,6 @@ type Toast = {
   message: string;
   words?: string[];
   score?: number;
-  chargedCredits?: string;
-  chargedUsd?: string;
-  remainingCredits?: string;
 };
 
 type AIBlockerModal = {
@@ -177,42 +174,6 @@ function normalizeAIBlocker(
   }
 
   return null;
-}
-
-function formatDisplayedCost(chargedUsd?: string | null) {
-  if (chargedUsd != null && chargedUsd !== "") {
-    const numericUsd = Number.parseFloat(chargedUsd);
-    if (Number.isFinite(numericUsd)) {
-      return `$${numericUsd.toFixed(4).replace(/0+$/, "").replace(/\.$/, ".00")}`;
-    }
-  }
-
-  return "$0.00";
-}
-
-function BillingCaption({
-  chargedCredits,
-  chargedUsd,
-  remainingCredits,
-  tone,
-}: {
-  chargedCredits?: string;
-  chargedUsd?: string;
-  remainingCredits?: string;
-  tone: "sky" | "emerald";
-}) {
-  if (!chargedUsd && !chargedCredits && !remainingCredits) return null;
-
-  return (
-    <div className="mt-4 flex items-center justify-center gap-2">
-      <span className={`text-[0.98rem] font-black uppercase tracking-[0.16em] ${tone === "sky" ? "text-sky-50/96" : "text-emerald-50/96"}`}>
-        Cost:
-      </span>
-      <span className="font-gold-money text-[1.18rem] font-black leading-none sm:text-[1.34rem]">
-        {formatDisplayedCost(chargedUsd)}
-      </span>
-    </div>
-  );
 }
 
 function ToastOverlay({ toast, onDone }: { toast: Toast; onDone: () => void }) {
@@ -339,12 +300,6 @@ function ToastOverlay({ toast, onDone }: { toast: Toast; onDone: () => void }) {
               ? "AI refreshed the rack and spent the turn."
               : "Couldn't find a valid move - your turn!"}
           </p>
-          <BillingCaption
-            chargedCredits={toast.chargedCredits}
-            chargedUsd={toast.chargedUsd}
-            remainingCredits={toast.remainingCredits}
-            tone="sky"
-          />
         </div>
       </motion.div>
     );
@@ -384,12 +339,6 @@ function ToastOverlay({ toast, onDone }: { toast: Toast; onDone: () => void }) {
               ))}
             </div>
           )}
-          <BillingCaption
-            chargedCredits={toast.chargedCredits}
-            chargedUsd={toast.chargedUsd}
-            remainingCredits={toast.remainingCredits}
-            tone="emerald"
-          />
         </div>
       </motion.div>
     );
@@ -486,8 +435,6 @@ export default function GamePage() {
 
   const token = useGameStore((s) => s.token);
   const clearAuth = useGameStore((s) => s.clearAuth);
-  const creditBalance = useGameStore((s) => s.creditBalance);
-  const setCreditBalance = useGameStore((s) => s.setCreditBalance);
   const gameState = useGameStore((s) => s.gameState);
   const setGameState = useGameStore((s) => s.setGameState);
   const startingRack = useGameStore((s) => s.startingRack);
@@ -583,14 +530,13 @@ export default function GamePage() {
   }, [gameState?.my_rack, setStartingRack]);
 
   useEffect(() => {
-    if (!token || (creditBalance !== null && userProfile)) return;
+    if (!token || userProfile) return;
     api.me(token)
       .then((profile) => {
         setUserProfile(profile);
-        setCreditBalance(profile.credit_balance);
       })
       .catch(() => {});
-  }, [token, creditBalance, setCreditBalance, userProfile]);
+  }, [token, userProfile]);
 
   useEffect(() => {
     if (!token || !gameState || !selectedModelId || gameState.game_mode !== "vs_ai") return;
@@ -1042,19 +988,12 @@ export default function GamePage() {
       const doneData = last?.kind === "done" ? last.data : null;
 
       if (doneData) {
-        const billing = (doneData as unknown as MoveResult).billing;
-        if (billing?.remaining_credits) {
-          setCreditBalance(billing.remaining_credits);
-        }
         const action = doneData.action as string;
         if (action === "pass") {
           showToast({
             id: `pass-${Date.now()}`,
             type: "ai_pass",
             message: "AI passes",
-            chargedCredits: billing?.charged_credits,
-            chargedUsd: billing?.charged_usd,
-            remainingCredits: billing?.remaining_credits,
           });
         } else if (action === "place") {
           const bestWord = doneData.best_word as string | undefined;
@@ -1066,18 +1005,12 @@ export default function GamePage() {
             message: `AI played ${bestWord ?? "a word"}`,
             words: words?.map((w) => w.word) ?? (bestWord ? [bestWord] : []),
             score: bestScore ?? (doneData.points as number | undefined) ?? 0,
-            chargedCredits: billing?.charged_credits,
-            chargedUsd: billing?.charged_usd,
-            remainingCredits: billing?.remaining_credits,
           });
         } else if (action === "exchange") {
           showToast({
             id: `exchange-${Date.now()}`,
             type: "ai_pass",
             message: "AI exchanged tiles",
-            chargedCredits: billing?.charged_credits,
-            chargedUsd: billing?.charged_usd,
-            remainingCredits: billing?.remaining_credits,
           });
         }
       } else if (
@@ -1110,14 +1043,6 @@ export default function GamePage() {
         setAiError(message);
       }
 
-      if (token) {
-        api.me(token)
-          .then((profile) => {
-            setCreditBalance(profile.credit_balance);
-          })
-          .catch(() => {});
-      }
-
       const latest = await syncState((doneData as unknown as MoveResult | null)?.state);
       if (latest?.game_over && latest.winner_slot === latest.my_slot) {
         confetti({ particleCount: 200, spread: 100, origin: { y: 0.6 } });
@@ -1135,7 +1060,7 @@ export default function GamePage() {
     }
   }, [
     token, gameState, gameId, selectedModelId, aiTimeout, aiMaxSteps, aiSlotNumber,
-    setCreditBalance, setAIThinking, setLastMoveResult, setGameState, setAIStatusMessage, syncState,
+    setAIThinking, setLastMoveResult, setGameState, setAIStatusMessage, syncState,
     clearAICandidates, addAICandidate, startCountdown, stopCountdown, showToast,
   ]);
 
@@ -1586,7 +1511,6 @@ export default function GamePage() {
             showRivalPicker={gameState?.game_mode === "vs_ai"}
             showPromptPicker={gameState?.game_mode === "vs_ai"}
             promptLabel={activePromptLabel}
-            creditBalance={creditBalance}
             frameBorderColor={frameBorderColor}
             onBack={() => router.push("/play")}
             onOpenRivalPicker={() => router.push("/settings?focus=rival")}

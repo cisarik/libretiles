@@ -22,8 +22,6 @@ interface GameStore {
   refreshToken: string | null;
   setRefreshToken: (token: string | null) => void;
   clearAuth: () => void;
-  creditBalance: string | null;
-  setCreditBalance: (balance: string | null) => void;
 
   // AI model selection
   selectedModelId: string;
@@ -107,9 +105,7 @@ export const useGameStore = create<GameStore>()(
       setToken: (token) => set({ token }),
       refreshToken: null,
       setRefreshToken: (refreshToken) => set({ refreshToken }),
-      clearAuth: () => set({ token: null, refreshToken: null, creditBalance: null }),
-      creditBalance: null,
-      setCreditBalance: (creditBalance) => set({ creditBalance }),
+      clearAuth: () => set({ token: null, refreshToken: null }),
 
       selectedModelId: DEFAULT_FREE_MODEL_ID,
       setSelectedModelId: (selectedModelId) => set({ selectedModelId }),

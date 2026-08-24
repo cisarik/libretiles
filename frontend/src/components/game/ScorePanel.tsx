@@ -18,13 +18,6 @@ const LOGO_TILES = [
   { letter: "S", points: 1 },
 ];
 
-function formatCreditBalance(value?: string | null) {
-  if (value == null || value === "") return "$--.--";
-  const numeric = Number.parseFloat(value);
-  if (!Number.isFinite(numeric)) return "$--.--";
-  return `$${numeric.toFixed(2)}`;
-}
-
 function IconTooltip({
   label,
   align = "center",
@@ -209,19 +202,6 @@ function SettingsButton({
   );
 }
 
-function CreditReadout({ balance, className }: { balance?: string | null; className?: string }) {
-  return (
-    <div className={`inline-flex shrink-0 items-baseline justify-center gap-2 ${className ?? ""}`}>
-      <span className="text-[0.98rem] font-semibold leading-none text-white/86 sm:text-[1.04rem]">
-        Balance:
-      </span>
-      <span className="font-gold-money text-[1.28rem] font-black leading-none sm:text-[1.4rem]">
-        {formatCreditBalance(balance)}
-      </span>
-    </div>
-  );
-}
-
 function HeaderMiniButton({
   onClick,
   label,
@@ -280,7 +260,6 @@ interface ScorePanelProps {
   showRivalPicker?: boolean;
   showPromptPicker?: boolean;
   promptLabel?: string | null;
-  creditBalance?: string | null;
   frameBorderColor?: string;
   onBack: () => void;
   onOpenRivalPicker: () => void;
@@ -302,7 +281,6 @@ export function ScorePanel({
   showRivalPicker = false,
   showPromptPicker = false,
   promptLabel,
-  creditBalance,
   frameBorderColor,
   onBack,
   onOpenRivalPicker,
@@ -394,7 +372,6 @@ export function ScorePanel({
               iconOnly
               tooltipAlign="right"
             />
-            <CreditReadout balance={creditBalance} />
           </div>
         </div>
 
@@ -461,10 +438,6 @@ export function ScorePanel({
               onClick={onOpenSettings}
               className="inline-flex xl:hidden"
               iconOnly
-            />
-            <CreditReadout
-              balance={creditBalance}
-              className="hidden sm:inline-flex xl:hidden"
             />
             <SettingsButton
               onClick={onOpenSettings}

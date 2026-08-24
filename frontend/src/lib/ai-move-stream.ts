@@ -14,13 +14,11 @@ export type AiMoveStreamTerminal =
       kind: "coded_provider_error";
       code: CodedProviderErrorCode;
       message: string;
-      creditBalance?: string | null;
     }
   | {
       kind: "generic_error";
       message: string;
       code?: string;
-      creditBalance?: string | null;
     }
   | { kind: "no_terminal" };
 
@@ -39,12 +37,10 @@ function recordErrorEvent(
 ): Exclude<AiMoveStreamTerminal, { kind: "done" } | { kind: "no_terminal" }> {
   const message = typeof json.error === "string" ? json.error : "AI error";
   const code = typeof json.code === "string" ? json.code : undefined;
-  const creditBalance =
-    typeof json.credit_balance === "string" ? json.credit_balance : null;
   if (code && isCodedProviderErrorCode(code)) {
-    return { kind: "coded_provider_error", code, message, creditBalance };
+    return { kind: "coded_provider_error", code, message };
   }
-  return { kind: "generic_error", message, code, creditBalance };
+  return { kind: "generic_error", message, code };
 }
 
 function applySseEvent(

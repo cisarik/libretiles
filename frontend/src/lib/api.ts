@@ -313,10 +313,4 @@ export const api = {
       token,
     }),
 
-  chargeAITurn: (token: string, gameId: string, ai_metadata?: Record<string, unknown>) =>
-    request("/api/billing/charge-ai-turn/", {
-      method: "POST",
-      body: { game_id: gameId, ai_metadata },
-      token,
-    }),
 };

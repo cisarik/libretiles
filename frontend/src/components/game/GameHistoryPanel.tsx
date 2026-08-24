@@ -77,13 +77,6 @@ function formatMode(mode: GameHistoryItem["game_mode"]): string {
   return mode === "vs_ai" ? "AI duel" : "Human duel";
 }
 
-function formatUsd(value?: string | null): string {
-  if (!value) return "$0.00";
-  const numeric = Number.parseFloat(value);
-  if (!Number.isFinite(numeric)) return "$0.00";
-  return `$${numeric.toFixed(2)}`;
-}
-
 function OutcomeBadge({ outcome }: { outcome: GameHistoryOutcome }) {
   const meta = OUTCOME_META[outcome];
   return (
@@ -199,7 +192,6 @@ export function GameHistoryPanel({
         <div className="flex items-center gap-2 rounded-full border border-white/8 bg-black/18 px-2 py-1 shadow-[0_10px_22px_rgba(0,0,0,0.12)]">
           {[
             { value: "updated", label: "Recent" },
-            { value: "cost_desc", label: "Highest spend" },
           ].map((option) => {
             const active = sort === option.value;
             return (
@@ -267,7 +259,6 @@ export function GameHistoryPanel({
                   <th className="px-4 py-3">Mode</th>
                   <th className="px-4 py-3">Result</th>
                   <th className="px-4 py-3">Score</th>
-                  <th className="px-4 py-3">Spend</th>
                   <th className="px-4 py-3">Moves</th>
                   <th className="px-4 py-3">Updated</th>
                   <th className="px-4 py-3 text-right">Open</th>
@@ -296,9 +287,6 @@ export function GameHistoryPanel({
                         <span className="px-1.5 text-white/56">:</span>
                         {item.opponent_score}
                       </div>
-                    </td>
-                    <td className="px-4 py-3.5 text-sm text-stone-200">
-                      {formatUsd(item.total_cost_usd)}
                     </td>
                     <td className="px-4 py-3.5 text-sm text-stone-200">
                       {item.move_count}
@@ -336,7 +324,7 @@ export function GameHistoryPanel({
                   <OutcomeBadge outcome={item.outcome} />
                 </div>
 
-                <div className="mt-3 grid grid-cols-3 gap-3 text-sm">
+                <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
                   <div>
                     <div className="text-[0.68rem] uppercase tracking-[0.2em] text-stone-500">Score</div>
                     <div className="mt-1 font-gold-shiny text-[1.08rem] font-black leading-none">
@@ -344,10 +332,6 @@ export function GameHistoryPanel({
                       <span className="px-1 text-white/56">:</span>
                       {item.opponent_score}
                     </div>
-                  </div>
-                  <div>
-                    <div className="text-[0.68rem] uppercase tracking-[0.2em] text-stone-500">Spend</div>
-                    <div className="mt-1 text-stone-200">{formatUsd(item.total_cost_usd)}</div>
                   </div>
                   <div>
                     <div className="text-[0.68rem] uppercase tracking-[0.2em] text-stone-500">Moves</div>

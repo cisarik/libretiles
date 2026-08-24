@@ -15,13 +15,6 @@ const MODAL_TRANSITION = {
   ease: [0.22, 1, 0.36, 1] as const,
 };
 
-function formatBalanceUsd(value?: string | null): string {
-  if (!value) return "$--.--";
-  const numeric = Number.parseFloat(value);
-  if (!Number.isFinite(numeric)) return "$--.--";
-  return `$${numeric.toFixed(2)}`;
-}
-
 function formatJoinedDate(value?: string | null): string {
   if (!value) return "Unknown";
   const date = new Date(value);
@@ -64,7 +57,6 @@ export function ProfileModal({
   const premiumLookEnabled = useGameStore((s) => s.premiumLookEnabled);
 
   const memberSince = useMemo(() => formatJoinedDate(profile?.date_joined), [profile?.date_joined]);
-  const balance = useMemo(() => formatBalanceUsd(profile?.credit_balance), [profile?.credit_balance]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -192,22 +184,12 @@ export function ProfileModal({
                       {profile?.email || "No email set"}
                     </div>
                   </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="rounded-[1.2rem] border border-white/8 bg-black/16 px-4 py-3">
-                      <div className="text-[0.7rem] uppercase tracking-[0.22em] text-stone-500">
-                        Member since
-                      </div>
-                      <div className="mt-2 text-sm font-semibold text-stone-200">
-                        {memberSince}
-                      </div>
+                  <div className="rounded-[1.2rem] border border-white/8 bg-black/16 px-4 py-3">
+                    <div className="text-[0.7rem] uppercase tracking-[0.22em] text-stone-500">
+                      Member since
                     </div>
-                    <div className="rounded-[1.2rem] border border-white/8 bg-black/16 px-4 py-3">
-                      <div className="text-[0.7rem] uppercase tracking-[0.22em] text-stone-500">
-                        Balance
-                      </div>
-                      <div className="font-gold-shiny mt-2 text-[1.3rem] font-black leading-none">
-                        {balance}
-                      </div>
+                    <div className="mt-2 text-sm font-semibold text-stone-200">
+                      {memberSince}
                     </div>
                   </div>
                 </div>

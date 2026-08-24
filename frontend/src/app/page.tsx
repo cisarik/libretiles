@@ -26,7 +26,6 @@ export default function Home() {
   const setRefreshToken = useGameStore((s) => s.setRefreshToken);
   const selectedModelId = useGameStore((s) => s.selectedModelId);
   const setSelectedModelId = useGameStore((s) => s.setSelectedModelId);
-  const setCreditBalance = useGameStore((s) => s.setCreditBalance);
   const resetGameUi = useGameStore((s) => s.resetGameUi);
   const premiumLookEnabled = useGameStore((s) => s.premiumLookEnabled);
   const premiumTitleClass = premiumLookEnabled ? PREMIUM_GOLD_TEXT_SHADOW_CLASS : "";
@@ -49,7 +48,6 @@ export default function Home() {
         api.me(access),
         api.getModels().catch((): AIModel[] => []),
       ]);
-      setCreditBalance(profile.credit_balance);
       const eligibleIds = catalog.map((model) => model.model_id);
       const preferredId = profile.preferred_ai_model_id ?? "";
       const resolvedSelection =

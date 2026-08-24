@@ -98,18 +98,6 @@ async function backendPatch(path: string, body: unknown, token: string) {
   return backendRequest(path, token, { method: "PATCH", body });
 }
 
-async function chargeAITurn(
-  gameId: string,
-  token: string,
-  aiMetadata: Record<string, unknown>,
-) {
-  return backendPost(
-    "/api/billing/charge-ai-turn/",
-    { game_id: gameId, ai_metadata: aiMetadata },
-    token,
-  );
-}
-
 const placementSchema = z.object({
   row: z.number().min(0).max(14).describe("Row index (0-14)"),
   col: z.number().min(0).max(14).describe("Column index (0-14)"),
@@ -925,12 +913,10 @@ export async function POST(req: NextRequest) {
             closeStream();
             return;
           }
-          const billing = await chargeAITurn(game_id, token, aiMeta);
           emit({
             type: "done",
             action: "exchange",
             ...exchangeResult,
-            billing,
             requested_model: requestedModelId,
             session_model: sessionModelId,
             response_model: aiResult?.response?.modelId,
@@ -955,12 +941,10 @@ export async function POST(req: NextRequest) {
             closeStream();
             return;
           }
-          const billing = await chargeAITurn(game_id, token, aiMeta);
           emit({
             type: "done",
             action: "pass",
             ...passResult,
-            billing,
             requested_model: requestedModelId,
             session_model: sessionModelId,
             response_model: aiResult?.response?.modelId,
@@ -1007,15 +991,10 @@ export async function POST(req: NextRequest) {
             closeStream();
             return;
           }
-          const billing = await chargeAITurn(game_id, token, {
-            ...aiMeta,
-            fallback: true,
-          });
           emit({
             type: "done",
             action: "pass",
             ...passResult,
-            billing,
             reason: "no valid move accepted",
             requested_model: requestedModelId,
             session_model: sessionModelId,

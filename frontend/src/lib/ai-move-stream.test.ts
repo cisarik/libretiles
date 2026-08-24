@@ -94,7 +94,26 @@ describe("consumeAIStream terminals", () => {
     expect(terminal.kind).toBe("coded_provider_error");
     if (terminal.kind === "coded_provider_error") {
       expect(terminal.code).toBe("provider_auth_failed");
+      expect(terminal).not.toHaveProperty("creditBalance");
     }
+  });
+
+  it("does not carry legacy credit fields into an error terminal", async () => {
+    const { terminal } = await collect(
+      sseResponse([
+        eventLine({
+          type: "error",
+          code: "backend_failed",
+          error: "Django rejected the move",
+          credit_balance: "12.34",
+        }),
+      ]),
+    );
+    expect(terminal).toEqual({
+      kind: "generic_error",
+      code: "backend_failed",
+      message: "Django rejected the move",
+    });
   });
 
   it("returns coded provider_rate_limited from a nested-style SSE error", async () => {

@@ -37,7 +37,6 @@ export interface MoveHistoryItem {
   placements: Placement[];
   words: WordResult[];
   points: number;
-  billing?: BillingSummary | null;
   created_at: string;
 }
 
@@ -55,7 +54,6 @@ export interface GameState {
   game_end_reason: string;
   winner_slot: number | null;
   my_slot: number;
-  total_cost_usd: string;
   ai_model_id: string | null;
   ai_model_display_name?: string | null;
   ai_prompt_id?: number | null;
@@ -70,7 +68,6 @@ export interface GameState {
   last_move_points?: number;
   last_move_words?: WordResult[];
   last_move_player_slot?: number | null;
-  last_move_billing?: BillingSummary | null;
 }
 
 export interface StartingDraw {
@@ -103,19 +100,8 @@ export interface WSTicketResponse {
   expires_in: number;
 }
 
-export interface BillingSummary {
-  charged_credits: string;
-  remaining_credits: string;
-  charged_usd: string;
-  charge_source: string;
-  model_id: string | null;
-  input_tokens: number;
-  output_tokens: number;
-  total_tokens: number;
-}
-
 export type GameHistoryFilter = "all" | "vs_ai" | "vs_human";
-export type GameHistorySort = "updated" | "cost_desc";
+export type GameHistorySort = "updated";
 export type GameHistoryOutcome =
   | "waiting"
   | "in_progress"
@@ -133,7 +119,6 @@ export interface GameHistoryItem {
   ai_model_display_name?: string | null;
   my_score: number;
   opponent_score: number;
-  total_cost_usd: string;
   move_count: number;
   is_my_turn: boolean;
   winner_slot: number | null;
@@ -171,7 +156,6 @@ export interface MoveResult {
   leftover_points?: Record<string, number>;
   winner_slot?: number | null;
   action?: string;
-  billing?: BillingSummary;
   state?: GameState;
 }
 
@@ -190,15 +174,8 @@ export interface AIModel {
   display_name: string;
   description: string;
   quality_tier: "basic" | "standard" | "premium" | "elite";
-  cost_per_game: string;
-  pricing: Record<string, unknown>;
   context_window?: number | null;
   max_tokens?: number | null;
-  input_cost_per_million: string;
-  output_cost_per_million: string;
-  cache_read_cost_per_million: string;
-  cache_write_cost_per_million: string;
-  combined_cost_per_million: string;
   is_flagship: boolean;
 }
 
@@ -214,8 +191,6 @@ export interface UserProfile {
   username: string;
   email: string;
   preferred_ai_model_id: string;
-  credit_balance: string;
-  credit_updated_at?: string | null;
   date_joined: string;
 }
 

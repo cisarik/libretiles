@@ -74,25 +74,12 @@ function getDistance(a: BoardPoint, b: BoardPoint): number {
   return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
-function formatMoveCostValue(chargedUsd?: string | null): string {
-  const normalizedUsd = chargedUsd?.trim();
-  if (normalizedUsd && /^\d+(?:\.\d+)?$/.test(normalizedUsd)) {
-    const numericUsd = Number.parseFloat(normalizedUsd);
-    if (Number.isFinite(numericUsd)) {
-      return `$${numericUsd.toFixed(4).replace(/0+$/, "").replace(/\.$/, ".00")}`;
-    }
-  }
-
-  return "$0.00";
-}
-
 export function Board({
   dragPreview,
   isDraggingTile,
   onPlaceTile,
 }: BoardProps) {
   const gameState = useGameStore((s) => s.gameState);
-  const lastMoveResultBilling = useGameStore((s) => s.lastMoveResult?.billing);
   const pendingTiles = useGameStore((s) => s.pendingTiles);
   const removePendingTile = useGameStore((s) => s.removePendingTile);
   const boardTheme = useGameStore((s) => s.boardTheme);
@@ -134,7 +121,6 @@ export function Board({
   const lastMoveCells = gameState?.last_move_cells ?? [];
   const lastMoveWords = gameState?.last_move_words ?? [];
   const primaryWordCoords = lastMoveWords[0]?.coords ?? lastMoveCells;
-  const lastMoveBilling = gameState?.last_move_billing ?? lastMoveResultBilling ?? null;
   const pendingSet = new Map(
     pendingTiles.map((t) => [`${t.row}-${t.col}`, t]),
   );
@@ -171,9 +157,6 @@ export function Board({
     : `calc(${((maxRow + 1) / BOARD_SIZE) * 100}% + 12px)`;
   const selectedWordLabel = selectedWords.map((word) => word.word).join(" • ");
   const selectedPoints = selectedMove?.points ?? gameState?.last_move_points ?? 0;
-  const selectedMoveCostValue = formatMoveCostValue(
-    selectedMove?.billing?.charged_usd ?? lastMoveBilling?.charged_usd,
-  );
 
   const clampBoardOffset = useCallback((scale: number, x: number, y: number) => {
     const shell = boardRef.current;
@@ -662,13 +645,6 @@ export function Board({
                     </span>
                     <span className="text-[0.96rem] font-black uppercase leading-none tracking-[0.12em] text-white sm:text-[1rem]">
                       PTS
-                    </span>
-                    <span className="mx-2 text-white/42">•</span>
-                    <span className="text-[0.92rem] font-black uppercase leading-none tracking-[0.12em] text-white sm:text-[0.98rem]">
-                      COST:
-                    </span>
-                    <span className="font-gold-shiny text-[0.92rem] font-black leading-none tracking-[0.04em] sm:text-[0.98rem]">
-                      {selectedMoveCostValue}
                     </span>
                   </div>
                 </div>
