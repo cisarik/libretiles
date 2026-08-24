@@ -16,7 +16,7 @@ Open-source web Libre Tiles game with AI opponents, live human-vs-human multipla
 - Animated tile drawing, scoring, and game-end effects (Framer Motion, confetti)
 - Django Admin for configuration (AI model catalog, games)
 - Settings page with the five-card provider-diverse free shortlist
-- This cut charges zero app credits for these rivals (`free_rival` / dormant); external NVIDIA trial/quota terms can change and are not app credits. Stripe top-up is unfinished
+- Free-only play: the product does not handle money, app credits, USD balances, token prices, or per-game charges. Play is the five curated free rivals; Judge is a free rival. Provider quotas or trial terms are external and may change — they are not Libre Tiles credits or charges. Stripe is rejected for this product direction.
 - Responsive design (desktop, tablet, mobile)
 - 3-tier word validation: local Collins 2019, online API (optional), AI judge
 
@@ -98,7 +98,7 @@ Five curated `(provider, model_id)` pairs (native IDs, never `openrouter/google/
 4. `openrouter` — `z-ai/glm-5.2:free`
 5. `openrouter` — `google/gemma-4-26b-a4b-it:free`
 
-Django Admin remains catalog authority; deactivating the NIM row is the operational kill switch. One AI turn may try at most three sequential `/api/ai/move` streams; preference `model_id` is unchanged and `runtime_model_id` is the attempt. Collins 2019 on Django remains the move validator. LM Studio, Vercel AI Gateway, Stripe completion, Slovak dictionary, and push/deploy are still out of this cut.
+Django Admin remains catalog authority; deactivating the NIM row is the operational kill switch. One AI turn may try at most three sequential `/api/ai/move` streams; preference `model_id` is unchanged and `runtime_model_id` is the attempt. Collins 2019 on Django remains the move validator. Stripe is rejected for this product direction. LM Studio, Vercel AI Gateway, Slovak dictionary, and push/deploy remain out of this cut.
 
 ### Docker (optional PostgreSQL + Redis)
 
@@ -197,7 +197,7 @@ libretiles/
 │   ├── catalog/         # AI model catalog (seed_models + optional OpenRouter sync; NIM is Admin-seeded)
 │   │   └── management/commands/
 │   ├── game/            # Game sessions, moves, validation, AI tools
-│   ├── billing/         # Credits + transactions (v2)
+│   ├── billing/         # inert migration tombstone only; not a live Django app
 │   ├── assets/          # Collins 2019 dictionary, premiums.json, variant data
 │   └── tests/
 ├── frontend/

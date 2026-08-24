@@ -49,7 +49,7 @@ From `backend/`:
 
 ```bash
 poetry run ruff check .
-poetry run mypy config game gamecore accounts catalog billing
+poetry run mypy config game gamecore accounts catalog
 poetry run pytest
 ```
 
@@ -98,7 +98,7 @@ npm run build
   - shared pointer-reactive gold/black chrome in `frontend/src/lib/premiumSurface.ts`
   - used by settings plus the game header/footer
   - controlled by the persisted `premiumLookEnabled` store flag
-- Credits remain in the product as a dormant USD balance (`1 credit = $1`). This cut charges **zero app credits** for these rivals (`free_rival` / dormant). External NVIDIA trial/quota terms can change and are not the same as app credits. Stripe top-up is unfinished.
+- Libre Tiles is a **free-only** product: it does not handle money, app credits, USD balances, token prices, or per-game charges. Play uses the five curated free rivals only. Judge uses a free rival. Provider quotas or trial terms are external and may change; they are not Libre Tiles credits or charges. Stripe is rejected for this product direction.
 
 ## Word validation (important)
 
@@ -128,8 +128,7 @@ npm run build
 
 ## Not done yet (typical next steps)
 
-- Stripe / billing completion.
-- LM Studio, Vercel AI Gateway, Slovak dictionary, and push/deploy are out of this cut.
+- LM Studio, Vercel AI Gateway, Slovak dictionary, and push/deploy are out of this cut. Stripe is rejected, not unfinished work.
 - Tier 2 / 3 dictionary (optional API, AI judge) — see PRD and `docs/architecture.md`.
 - Stronger AI search / candidate generation beyond prompt-only improvements.
 

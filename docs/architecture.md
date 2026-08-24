@@ -60,9 +60,9 @@ AI turns use five curated **provider-diverse free rivals**. Next.js `/api/ai/mov
 │                                              │
 │  ┌────────────────────────┐                  │
 │  │  Django Admin (/admin) │                  │
-│  │  - AI models + pricing │                  │
+│  │  - AI model catalog    │                  │
 │  │  - Game sessions       │                  │
-│  │  - Users + billing     │                  │
+│  │  - Users               │                  │
 │  └────────────────────────┘                  │
 │                                              │
 │  Database: PostgreSQL (prod) / SQLite (dev)  │
@@ -182,7 +182,7 @@ Frontend Settings ──► create game request (`ai_model_model_id`)
 - **Catalog seed**: `python manage.py seed_models` writes the five-pair offline shortlist and is required for local boot.
 - **Catalog sync** (optional, later): `python manage.py sync_openrouter_models` is an unauthenticated public GET. It must not own or disable the NIM row. There is no NIM catalog discovery. An unavailable catalog must not block boot.
 - **Kill switch**: Django Admin remains catalog authority; deactivating the NIM row removes it from Settings and fallback queues.
-- **Credits**: these rivals charge zero app credits (`free_rival` / dormant). External NVIDIA trial/quota terms can change and are not app credits.
+- **Free-only play**: the product does not handle money, app credits, USD balances, token prices, or per-game charges. Play uses the five curated free rivals only. Judge uses a free rival (no fallback loop). Provider quotas or trial terms are external and may change; they are not Libre Tiles credits or charges. Stripe is rejected for this product direction.
 
 ## Word Validation Pipeline
 
@@ -245,7 +245,6 @@ Human-vs-human multiplayer reuses the same `GameSession`, `PlayerSlot`, `Move`, 
 - **PlayerSlot** (game) -- links users (or AI) to game positions with rack + score
 - **Move** (game) -- move history with placements, words, score, AI metadata
 - **ChatMessage** (game) -- compact persisted in-game chat entries for human sessions
-- **CreditBalance / Transaction** (billing) -- dormant per-user credits; this cut charges zero app credits for AI turns
 
 ### State persistence
 
@@ -286,7 +285,7 @@ Game state is stored in `GameSession.state_json` as a JSON blob managed by `game
 
 ## Handoff Notes (March 2026)
 
-These notes are for the next Codex agent continuing AI gameplay and billing work.
+These notes are for the next Codex agent continuing AI gameplay work.
 
 ### Current AI routing state
 
@@ -312,7 +311,7 @@ These notes are for the next Codex agent continuing AI gameplay and billing work
   - `openrouter` — `nvidia/nemotron-3-super-120b-a12b:free`
   - `openrouter` — `z-ai/glm-5.2:free`
   - `openrouter` — `google/gemma-4-26b-a4b-it:free`
-  - shortlist membership, active/available, explicit free pricing, and tools
+  - exact `(provider, model_id)` membership, `is_active`, `model_type="language"`, tools, and OpenRouter availability (NIM does not require `openrouter_available`)
 - `seed_models` is the boot path. `sync_openrouter_models` is optional, non-blocking, and must not own or disable the NIM row.
 - Relevant files:
   - `frontend/src/lib/free-rivals.ts`
@@ -332,31 +331,20 @@ These notes are for the next Codex agent continuing AI gameplay and billing work
   - `frontend/src/components/game/AIThinkingOverlay.tsx`
   - `frontend/src/lib/prompts.ts`
 
-### Current billing / insufficient funds behavior
-
-- This cut charges **zero app credits** for AI turns. Frontend empty-credit gates are gone.
-- Credits UX remains in the product as a dormant USD balance. Stripe top-up is unfinished; do not document a top-up flow.
-- Relevant files:
-  - `frontend/src/app/api/ai/move/route.ts`
-  - `frontend/src/app/game/[id]/page.tsx`
-  - `backend/accounts/views.py`
-
 ### Current admin operations surface
 
-- Django admin now has a real operations dashboard with:
+- Django admin has an operations dashboard with:
   - global game counts
-  - aggregate token usage
-  - AI spend totals
+  - aggregate token usage (non-monetary diagnostics)
   - recent games
   - recent AI turns
-  - top models by spend
-- AI models admin now includes a dedicated sync page with a button that calls the optional `sync_openrouter_models` management command.
-- User credit can now be edited directly in admin from the user detail page or from the credit balance list.
+  - top models by token usage
+- AI models admin includes a dedicated sync page with a button that calls the optional `sync_openrouter_models` management command.
+- There is no credit-balance editor, spend total, Stripe/top-up control, or installed billing app. Historical `backend/billing/migrations/` files are an inert tombstone only.
 - Relevant files:
   - `backend/game/admin.py`
   - `backend/catalog/admin.py`
   - `backend/accounts/admin.py`
-  - `backend/billing/admin.py`
 
 ### Current game UI / account surface
 
@@ -382,14 +370,10 @@ These notes are for the next Codex agent continuing AI gameplay and billing work
 1. Replace prompt-only strengthening with stronger search:
    - add anchor enumeration and lane generation before model tool calls
    - rank candidates by board anchor quality, rack leave, and premium access
-2. Finish the real top-up flow:
-   - Stripe / checkout
-   - server-side hard credit floor enforcement before charging
-   - better transaction history UI
-3. Persist AI move diagnostics:
+2. Persist AI move diagnostics:
    - structured reject reasons
    - per-turn candidate summaries
    - explicit fallback/pass reasons in the move history
-4. Tighten the first-move and opening game UX:
+3. Tighten the first-move and opening game UX:
    - cleaner start-of-game rack transition
-   - optional move history strip with model + token spend
+   - optional move history strip with model + token usage

@@ -89,8 +89,7 @@ Backend (Django)           Frontend (Next.js)          AI Models
 │ gamecore/    │◄─────────│ /api/ai/move     │──────►│ OpenRouter  │
 │ game/        │ validate │ /api/ai/judge    │       │ + NVIDIA NIM│
 │ accounts/    │ + score  │ /api/models      │       │ free rivals │
-│ catalog/     │          │                  │       └─────────────┘
-│ billing/     │          │ React UI         │
+│ catalog/     │          │ React UI         │       └─────────────┘
 │ config/      │          │ Zustand store    │
 └──────────────┘          └──────────────────┘
 ```
@@ -102,6 +101,7 @@ Backend (Django)           Frontend (Next.js)          AI Models
 3. **Next.js API routes handle AI** -- the AI agent runs in Next.js, calls Django for validation.
 4. **Admin-first catalog** -- the five curated pairs are seeded by `seed_models`; optional later OpenRouter sync is `sync_openrouter_models` and must not own or disable the NIM row. Deactivating the NIM row in Django Admin is the operational kill switch.
 5. **AI plays with tools** -- the AI model uses tool calling to validate its own moves.
+6. **Free-only play** -- the product does not handle money. Historical `backend/billing/migrations/` files are an inert, uninstalled tombstone, not a live Django app or a credits feature.
 
 ### Where to find things
 
@@ -132,7 +132,7 @@ Backend (Django)           Frontend (Next.js)          AI Models
 
 ### Changing the free-rival shortlist
 
-This cut ships five curated `(provider, model_id)` pairs (OpenRouter plus NVIDIA NIM). LM Studio, Vercel AI Gateway, Stripe completion, Slovak dictionary, and push/deploy remain out of this cut. Changing the shortlist is a separate product change in `frontend/src/lib/free-rivals.ts`, `backend/catalog/selection.py`, and `seed_models.py`. Use native IDs (never `openrouter/google/...`). The NIM id has no `:free` suffix.
+This cut ships five curated `(provider, model_id)` pairs (OpenRouter plus NVIDIA NIM). Stripe is rejected for this product direction. LM Studio, Vercel AI Gateway, Slovak dictionary, and push/deploy remain out of this cut. Changing the shortlist is a separate product change in `frontend/src/lib/free-rivals.ts`, `backend/catalog/selection.py`, and `seed_models.py`. Use native IDs (never `openrouter/google/...`). The NIM id has no `:free` suffix.
 
 ### Modifying game rules
 

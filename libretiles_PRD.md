@@ -9,8 +9,8 @@ Libre Tiles is an open-source web-based Libre Tiles game with an eye-candy anima
 ## 2. Product Goals
 
 1. Deliver a visually stunning, native-feeling Libre Tiles experience in the browser (desktop + mobile).
-2. Let users choose which of the five curated `(provider, model_id)` free rivals to play against. This cut charges zero app credits per AI turn (`free_rival` / dormant); Stripe remains unfinished. External NVIDIA trial/quota terms can change and are not app credits.
-3. Provide a Django Admin-first configuration model: all game settings, AI models, and pricing managed through /admin/.
+2. Let users choose which of the five curated `(provider, model_id)` free rivals to play against. The product does not handle money; play is free rivals only; Judge is a free rival. Provider quotas or trial terms are external and may change — they are not Libre Tiles credits or charges. Stripe is rejected for this product direction.
+3. Provide a Django Admin-first configuration model: all game settings and AI model catalog activation/availability managed through /admin/. Catalog Admin does not manage token or per-game prices.
 4. Prepare architecture for human-vs-human multiplayer (v2).
 5. Maintain open-source quality: tests, documentation, clean architecture, GitHub-ready.
 
@@ -56,14 +56,14 @@ Libre Tiles is an open-source web-based Libre Tiles game with an eye-candy anima
 - User selects preferred rival in Settings (`model_id` preference). One AI turn may try at most three sequential `/api/ai/move` streams; `runtime_model_id` is the attempt only.
 - AI move generation through Next.js API route (/api/ai/move) using Vercel AI SDK against the selected provider runtime.
 - AI uses tool calling: validate moves, check words, score moves via Django API endpoints. Collins 2019 on Django remains the move validator.
-- AI judge fallback for word validation (Tier 3) via /api/ai/judge (no fallback loop).
+- AI judge fallback for word validation (Tier 3) via /api/ai/judge: one selected free rival, no fallback loop.
 - AI prompt ported from desktop scrabgpt: strategic priorities, blank policy, anti-blunder rules.
 - Status: **Implemented** (frontend/src/app/api/ai/, frontend/src/lib/prompts.ts, openrouter.ts, nvidia-nim.ts, ai-runtimes.ts, ai-fallback.ts, free-rivals.ts).
 
 ### FR-05: 3-Tier Word Validation
 - Tier 1: Local SOWPODS dictionary (in-memory frozenset, O(1) lookup).
 - Tier 2: Online dictionary API for words not in SOWPODS (optional, SOWPODS is comprehensive).
-- Tier 3: AI Judge via OpenRouter for ambiguous cases.
+- Tier 3: AI Judge via one selected free rival for ambiguous cases.
 - Status: **Tier 1 + 3 implemented**, Tier 2 optional.
 
 ### FR-06: Eye-Candy Frontend
@@ -89,19 +89,18 @@ Libre Tiles is an open-source web-based Libre Tiles game with an eye-candy anima
 - Status: **Implemented** (frontend/src/app/settings/page.tsx).
 
 ### FR-08: Django Admin Configuration
-- AIModel: add/remove/toggle models, set pricing, set quality tier.
+- AIModel: add/remove/toggle models, set quality tier; catalog activation and availability. No token or per-game prices.
 - GameSession: inspect active/finished games, view board state, moves.
 - Move: audit trail with AI metadata.
 - User: manage accounts, view preferred models.
-- CreditBalance + Transaction: billing oversight.
-- Status: **Implemented** (admin.py in each app).
+- Status: **Implemented** (admin.py in each live app; billing is not an installed Django app).
 
-### FR-09: Billing (Credits System)
-- This cut charges **zero app credits** for these rivals (`free_rival` / dormant).
-- Stripe Checkout / credit purchase remains unfinished; do not document a top-up flow.
-- Human vs human games are free.
-- Billing models remain in Django Admin as dormant compatibility surfaces.
-- Status: **Partial** — zero-charge AI cut shipped; Stripe planned.
+### FR-09: Free-only play (no application money)
+- The product does not handle money: no app credits, USD balances, token prices, per-game charges, Stripe, or top-up UX.
+- Play uses the five curated free rivals only. Judge uses a free rival (no fallback loop).
+- Provider quotas or trial terms are external and may change; they are not Libre Tiles credits or charges.
+- Stripe is rejected for this product direction, not unfinished work.
+- Status: **Implemented**.
 
 ### FR-10: Human vs Human Multiplayer (v2 Preparation)
 - Data model supports 2-player games (PlayerSlot with user FK).
@@ -140,7 +139,6 @@ Libre Tiles is an open-source web-based Libre Tiles game with an eye-candy anima
 
 ## 8. Known Gaps
 
-- Stripe billing not yet integrated (Phase 6).
 - Human vs human multiplayer deferred to v2.
 - Online dictionary API (Tier 2) may not be needed if SOWPODS is sufficient.
 - Starting draw animation not yet eye-candy (basic flow implemented).
@@ -150,10 +148,10 @@ Libre Tiles is an open-source web-based Libre Tiles game with an eye-candy anima
 ## 9. Roadmap
 
 1. **Phase 1** (done): Scaffolding, gamecore extraction, Django project, assets, tests.
-2. **Phase 2** (done): Django apps (accounts, catalog, game, billing), REST API, admin.
+2. **Phase 2** (done): Django apps (accounts, catalog, game), REST API, admin. Historical `backend/billing/` remains an inert migration tombstone, not a live app.
 3. **Phase 3** (done): OpenRouter free-rival tool-calling (Next.js API routes, agent, prompts). Historical Gateway/direct-OpenAI/LM Studio paths remain out of this cut.
 4. **Phase 4** (done): Eye-candy frontend (board, tiles, DnD, animations, settings, game flow).
 5. **Phase 5**: Polish -- mobile UX, move history timeline, starting draw animation, AI thinking particles.
 6. **Phase 6**: Human vs human multiplayer (WebSocket, lobby, invites).
-7. **Phase 7**: Billing (Stripe) + deployment (Vercel + VPS).
+7. **Phase 7**: Deployment (Vercel + VPS). Stripe is rejected for this product direction.
 8. **Phase 8**: CI/CD (GitHub Actions), E2E tests (Playwright), performance optimization.
