@@ -25,7 +25,7 @@ import type {
 } from "@/lib/types";
 
 const CATALOG_EMPTY_MESSAGE =
-  "The rival catalog is empty. Seed the four free rivals to play AI matches.";
+  "The rival catalog is empty. Seed the five curated free rivals to play AI matches.";
 
 function resolveEligibleModelId(
   eligibleIds: string[],

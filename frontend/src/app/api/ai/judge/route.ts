@@ -8,7 +8,7 @@
  * Validation pipeline:
  *   Tier 1: Local Collins 2019 dictionary (279,496 words, O(1) lookup) — Django
  *   Tier 2: Online dictionary API (optional) — Django
- *   Tier 3: AI Judge (this route) — OpenRouter
+ *   Tier 3: AI Judge (this route) — free-rival dispatch (OpenRouter or NVIDIA NIM via `ai-runtimes`)
  *
  * See: scrabgpt/ai/client.py build_judge_prompt() for the original desktop version.
  */
