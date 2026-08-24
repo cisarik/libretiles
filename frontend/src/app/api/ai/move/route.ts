@@ -23,10 +23,16 @@ import { generateText, tool, stepCountIs } from "ai";
 import { z } from "zod";
 import {
   DEFAULT_FREE_MODEL_ID,
-  isFreeRivalId,
   resolveFreeRivalId,
 } from "@/lib/free-rivals";
-import { getOpenRouterModel } from "@/lib/openrouter";
+import {
+  findCuratedPair,
+  getLanguageModel,
+  isLegalBackendTerminal,
+  normalizeProviderError,
+  parseCatalogModelRows,
+  revalidateRuntimePair,
+} from "@/lib/ai-runtimes";
 import {
   MOVE_SYSTEM_PROMPT,
   buildMoveUserPrompt,
@@ -140,69 +146,22 @@ type UsageLike = {
   raw?: unknown;
 };
 
-type NormalizedRouteError = {
-  code:
-    | "provider_auth_failed"
-    | "provider_rate_limited"
-    | "provider_unavailable";
-  message: string;
-};
-
 function sseEvent(data: Record<string, unknown>): string {
   return `data: ${JSON.stringify(data)}\n\n`;
 }
 
-function normalizeRouteError(error: unknown): NormalizedRouteError | null {
-  const message = error instanceof Error ? error.message : String(error);
-  const normalized = message.toLowerCase();
-
-  if (
-    normalized.includes("401") ||
-    normalized.includes("unauthorized") ||
-    normalized.includes("authentication failed") ||
-    normalized.includes("invalid api key") ||
-    normalized.includes("invalid key") ||
-    normalized.includes("missing or invalid api key")
-  ) {
-    return {
-      code: "provider_auth_failed",
-      message:
-        "This free rival could not authenticate. Switch to another free rival or retry later.",
-    };
+async function fetchCatalogModelRows() {
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/catalog/models/`, {
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    const data: unknown = await res.json();
+    if (!Array.isArray(data)) return null;
+    return parseCatalogModelRows(data);
+  } catch {
+    return null;
   }
-
-  if (
-    normalized.includes("429") ||
-    normalized.includes("rate limit") ||
-    normalized.includes("too many requests")
-  ) {
-    return {
-      code: "provider_rate_limited",
-      message:
-        "This free rival is rate limited. Switch to another free rival or retry later.",
-    };
-  }
-
-  if (
-    normalized.includes("insufficient funds") ||
-    normalized.includes("payment required") ||
-    normalized.includes("402") ||
-    normalized.includes("503") ||
-    normalized.includes("502") ||
-    normalized.includes("504") ||
-    normalized.includes("overloaded") ||
-    normalized.includes("temporarily unavailable") ||
-    normalized.includes("provider unavailable") ||
-    normalized.includes("service unavailable")
-  ) {
-    return {
-      code: "provider_unavailable",
-      message:
-        "This free rival is temporarily unavailable. Switch to another free rival or retry later.",
-    };
-  }
-
-  return null;
 }
 
 function normalizeUsage(usage?: UsageLike | null) {
@@ -391,10 +350,11 @@ function extractJsonObject(text: string, requireAction: boolean): unknown | null
 
 export async function POST(req: NextRequest) {
   const body = await req.json();
-  const { game_id, token, model_id, timeout } = body as {
+  const { game_id, token, model_id, runtime_model_id, timeout } = body as {
     game_id: string;
     token: string;
     model_id?: string;
+    runtime_model_id?: string;
     timeout?: number;
     max_steps?: number;
   };
@@ -408,7 +368,11 @@ export async function POST(req: NextRequest) {
     ),
   );
   const startTime = Date.now();
-  const requestedModelId = model_id || null;
+  const requestedModelId = typeof model_id === "string" && model_id ? model_id : null;
+  const requestedRuntimeModelId =
+    typeof runtime_model_id === "string" && runtime_model_id
+      ? runtime_model_id
+      : requestedModelId;
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -433,6 +397,9 @@ export async function POST(req: NextRequest) {
           // already closed
         }
       }
+
+      let providerPath = "";
+      let runtimeModelId = requestedRuntimeModelId || requestedModelId || "";
 
       // Track candidates across all tool calls
       const candidates: Candidate[] = [];
@@ -497,6 +464,8 @@ export async function POST(req: NextRequest) {
               message: `Found ${best.word} for ${best.score} points. Checking a few last alternatives...`,
               auto_finalize_ms: autoFinalizeGraceMs,
               valid_candidates: validCount,
+              provider_path: providerPath,
+              runtime_model: runtimeModelId,
             });
 
             if (validCount >= autoFinalizeValidCap) {
@@ -530,23 +499,21 @@ export async function POST(req: NextRequest) {
       }
 
       try {
-        if (requestedModelId) {
-          const updateResult = await backendPatch(
-            `/api/game/${game_id}/ai-model/`,
-            { ai_model_model_id: requestedModelId },
-            token,
-          );
-          if (updateResult.ok === false) {
-            emit({
-              type: "error",
-              error: updateResult.error ?? "Could not switch AI model",
-            });
-            closeStream();
-            return;
-          }
+        const catalogRows = await fetchCatalogModelRows();
+        if (catalogRows === null) {
+          emit({
+            type: "error",
+            code: "provider_unavailable",
+            error:
+              "This free rival is temporarily unavailable. Switch to another free rival or retry later.",
+            provider_path: providerPath,
+            runtime_model: runtimeModelId,
+          });
+          closeStream();
+          return;
         }
 
-        // 1. Fetch game context
+        // 1. Fetch game context before any preference PATCH.
         const context = await backendGet(
           `/api/game/${game_id}/ai-context/`,
           token,
@@ -560,6 +527,24 @@ export async function POST(req: NextRequest) {
 
         const sessionModelId =
           typeof context.ai_model_id === "string" ? context.ai_model_id : null;
+
+        if (requestedModelId && requestedModelId !== sessionModelId) {
+          const updateResult = await backendPatch(
+            `/api/game/${game_id}/ai-model/`,
+            { ai_model_model_id: requestedModelId },
+            token,
+          );
+          if (updateResult.ok === false) {
+            emit({
+              type: "error",
+              error: updateResult.error ?? "Could not switch AI model",
+              provider_path: providerPath,
+              runtime_model: runtimeModelId,
+            });
+            closeStream();
+            return;
+          }
+        }
         const backendMaxOutputTokens =
           typeof context.ai_move_max_output_tokens === "number"
             ? context.ai_move_max_output_tokens
@@ -577,16 +562,30 @@ export async function POST(req: NextRequest) {
             process.env.NEXT_PUBLIC_DEFAULT_MODEL ||
             DEFAULT_FREE_MODEL_ID,
         );
-        if (!isFreeRivalId(resolvedModelId)) {
+        runtimeModelId =
+          requestedRuntimeModelId ||
+          resolvedModelId;
+        const runtimePair = findCuratedPair(runtimeModelId);
+        if (
+          !runtimePair ||
+          !revalidateRuntimePair(
+            runtimePair.provider,
+            runtimePair.modelId,
+            catalogRows,
+          )
+        ) {
           emit({
             type: "error",
             code: "provider_unavailable",
             error:
-              "This rival is not on the free shortlist. Switch to another free rival or retry later.",
+              "This free rival is temporarily unavailable. Switch to another free rival or retry later.",
+            provider_path: providerPath,
+            runtime_model: runtimeModelId,
           });
           closeStream();
           return;
         }
+        providerPath = runtimePair.provider;
         const maxOutputTokens = requestedMaxOutputTokens;
         const useExtendedSearchBudget = timeoutS >= 90 || maxSteps >= 45;
         autoFinalizeGraceMs = useExtendedSearchBudget
@@ -600,13 +599,11 @@ export async function POST(req: NextRequest) {
           typeof context.ai_prompt_text === "string" && context.ai_prompt_text.trim().length > 0
             ? context.ai_prompt_text
             : MOVE_SYSTEM_PROMPT;
-        const runtimeModelId = resolvedModelId;
-
         let model;
         try {
-          model = getOpenRouterModel(resolvedModelId);
+          model = getLanguageModel(runtimePair.provider, runtimePair.modelId);
         } catch (err) {
-          const normalizedError = normalizeRouteError(err) ?? {
+          const normalizedError = normalizeProviderError(err) ?? {
             code: "provider_auth_failed" as const,
             message:
               "This free rival could not authenticate. Switch to another free rival or retry later.",
@@ -615,11 +612,12 @@ export async function POST(req: NextRequest) {
             type: "error",
             code: normalizedError.code,
             error: normalizedError.message,
+            provider_path: providerPath,
+            runtime_model: runtimeModelId,
           });
           closeStream();
           return;
         }
-        const providerPath = "openrouter";
 
         emit({
           type: "thinking",
@@ -635,9 +633,11 @@ export async function POST(req: NextRequest) {
           type: "thinking",
           status: "searching",
           message: "Exploring legal words and validating the board...",
+          provider_path: providerPath,
+          runtime_model: runtimeModelId,
         });
 
-        const runGeneration = (activeModel: ReturnType<typeof getOpenRouterModel>) =>
+        const runGeneration = (activeModel: ReturnType<typeof getLanguageModel>) =>
           Promise.race([
             generateText({
               model: activeModel,
@@ -901,12 +901,30 @@ export async function POST(req: NextRequest) {
         };
 
         // 4. Apply the final move
+        const runtimeFields = {
+          provider_path: providerPath,
+          runtime_model: runtimeModelId,
+        };
+
+        function emitUnacceptedAction() {
+          emit({
+            type: "error",
+            error: "The AI action was not accepted.",
+            ...runtimeFields,
+          });
+        }
+
         if (finalAction === "exchange" && exchangeLetters.length > 0) {
           const exchangeResult = await backendPost(
             `/api/game/${game_id}/ai-exchange/`,
             { letters: exchangeLetters },
             token,
           );
+          if (!isLegalBackendTerminal(exchangeResult)) {
+            emitUnacceptedAction();
+            closeStream();
+            return;
+          }
           const billing = await chargeAITurn(game_id, token, aiMeta);
           emit({
             type: "done",
@@ -920,6 +938,7 @@ export async function POST(req: NextRequest) {
             candidates_found: candidates.length,
             timed_out: timedOut,
             auto_finalized: autoFinalized,
+            ...runtimeFields,
           });
           closeStream();
           return;
@@ -931,6 +950,11 @@ export async function POST(req: NextRequest) {
             {},
             token,
           );
+          if (!isLegalBackendTerminal(passResult)) {
+            emitUnacceptedAction();
+            closeStream();
+            return;
+          }
           const billing = await chargeAITurn(game_id, token, aiMeta);
           emit({
             type: "done",
@@ -944,6 +968,7 @@ export async function POST(req: NextRequest) {
             candidates_found: candidates.length,
             timed_out: timedOut,
             auto_finalized: autoFinalized,
+            ...runtimeFields,
           });
           closeStream();
           return;
@@ -956,7 +981,7 @@ export async function POST(req: NextRequest) {
           token,
         );
 
-        if (!moveResult.ok) {
+        if (!isLegalBackendTerminal(moveResult)) {
           const sortedValid = candidates
             .filter((c) => c.valid)
             .sort((a, b) => b.score - a.score);
@@ -967,16 +992,21 @@ export async function POST(req: NextRequest) {
               { placements: alt.placements, ai_metadata: { ...aiMeta, fallback: true } },
               token,
             );
-            if (moveResult.ok) break;
+            if (isLegalBackendTerminal(moveResult)) break;
           }
         }
 
-        if (!moveResult.ok) {
+        if (!isLegalBackendTerminal(moveResult)) {
           const passResult = await backendPost(
             `/api/game/${game_id}/ai-pass/`,
             {},
             token,
           );
+          if (!isLegalBackendTerminal(passResult)) {
+            emitUnacceptedAction();
+            closeStream();
+            return;
+          }
           const billing = await chargeAITurn(game_id, token, {
             ...aiMeta,
             fallback: true,
@@ -993,6 +1023,7 @@ export async function POST(req: NextRequest) {
             elapsed_ms: elapsedMs,
             candidates_found: candidates.length,
             auto_finalized: autoFinalized,
+            ...runtimeFields,
           });
           closeStream();
           return;
@@ -1017,22 +1048,22 @@ export async function POST(req: NextRequest) {
           candidates_found: candidates.length,
           timed_out: timedOut,
           auto_finalized: autoFinalized,
+          ...runtimeFields,
         });
       } catch (error) {
-        const normalizedError = normalizeRouteError(error);
+        const normalizedError = normalizeProviderError(error);
         if (normalizedError) {
           emit({
             type: "error",
             code: normalizedError.code,
             error: normalizedError.message,
+            provider_path: providerPath,
+            runtime_model: runtimeModelId,
           });
           closeStream();
           return;
         }
 
-        console.error("AI move SSE error:", error);
-
-        // Try to use best candidate even on error
         const best = candidates.filter((c) => c.valid).sort((a, b) => b.score - a.score)[0];
         if (best) {
           try {
@@ -1041,30 +1072,42 @@ export async function POST(req: NextRequest) {
               { placements: best.placements, ai_metadata: { fallback: true } },
               token,
             );
-            const appliedWords = Array.isArray(moveResult.words)
-              ? (moveResult.words as Array<{ word?: string; score?: number }>)
-              : [];
-            emit({
-              type: "done",
-              action: "place",
-              ...moveResult,
-              best_word: appliedWords[0]?.word ?? best.word,
-              best_score: moveResult.points ?? appliedWords[0]?.score ?? best.score,
-              fallback: true,
-            });
+            if (!isLegalBackendTerminal(moveResult)) {
+              emit({
+                type: "error",
+                error: "The AI action was not accepted.",
+                provider_path: providerPath,
+                runtime_model: runtimeModelId,
+              });
+            } else {
+              const appliedWords = Array.isArray(moveResult.words)
+                ? (moveResult.words as Array<{ word?: string; score?: number }>)
+                : [];
+              emit({
+                type: "done",
+                action: "place",
+                ...moveResult,
+                best_word: appliedWords[0]?.word ?? best.word,
+                best_score: moveResult.points ?? appliedWords[0]?.score ?? best.score,
+                fallback: true,
+                provider_path: providerPath,
+                runtime_model: runtimeModelId,
+              });
+            }
           } catch {
             emit({
               type: "error",
-              error: error instanceof Error ? error.message : "AI move failed",
+              error: "AI move failed",
+              provider_path: providerPath,
+              runtime_model: runtimeModelId,
             });
           }
         } else {
           emit({
             type: "error",
-            error:
-              error instanceof Error
-                ? error.message
-                : "AI move failed",
+            error: "AI move failed",
+            provider_path: providerPath,
+            runtime_model: runtimeModelId,
           });
         }
       } finally {

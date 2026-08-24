@@ -16,7 +16,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { generateText } from "ai";
 import { resolveFreeRivalId } from "@/lib/free-rivals";
-import { getOpenRouterModel } from "@/lib/openrouter";
+import { findCuratedPair, getLanguageModel } from "@/lib/ai-runtimes";
 import { JUDGE_SYSTEM_PROMPT } from "@/lib/prompts";
 
 export async function POST(req: NextRequest) {
@@ -33,7 +33,12 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const model = getOpenRouterModel(resolveFreeRivalId(model_id));
+    const modelId = resolveFreeRivalId(model_id);
+    const pair = findCuratedPair(modelId);
+    if (!pair) {
+      return NextResponse.json({ error: "AI judge failed" }, { status: 500 });
+    }
+    const model = getLanguageModel(pair.provider, pair.modelId);
 
     const result = await generateText({
       model,

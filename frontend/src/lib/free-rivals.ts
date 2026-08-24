@@ -2,6 +2,7 @@ export const DEFAULT_FREE_MODEL_ID = "google/gemma-4-31b-it:free" as const;
 
 export const FREE_RIVAL_IDS = [
   "google/gemma-4-31b-it:free",
+  "nvidia/nemotron-3-super-120b-a12b",
   "nvidia/nemotron-3-super-120b-a12b:free",
   "z-ai/glm-5.2:free",
   "google/gemma-4-26b-a4b-it:free",
