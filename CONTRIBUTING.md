@@ -99,8 +99,8 @@ Backend (Django)           Frontend (Next.js)          AI Models
 1. **gamecore/ is pure Python** -- no Django imports, no network calls. It's the game engine.
 2. **Django handles state + validation** -- all game logic goes through `game/services.py`.
 3. **Next.js API routes handle AI** -- the AI agent runs in Next.js, calls Django for validation.
-4. **Admin-first catalog** -- the five curated pairs are seeded by `seed_models`; optional later OpenRouter sync is `sync_openrouter_models` and must not own or disable the NIM row. Deactivating the NIM row in Django Admin is the operational kill switch.
-5. **AI plays with tools** -- the AI model uses tool calling to validate its own moves.
+4. **Admin-first catalog** -- `seed_models` writes the five curated bootstrap pairs. Optional later OpenRouter sync is `sync_openrouter_models` and must not own or disable the NIM row. `DYNAMIC_FREE_MODEL_CATALOG_ENABLED` (default false) selects bootstrap pairs vs the four newest eligible OpenRouter models plus seeded NIM. Django Admin `is_active` is the operational kill switch.
+5. **AI plays with tools** -- the AI model uses tool calling to validate its own moves. Play and Judge share one preference-first fallback queue capped at three distinct pairs.
 6. **Free-only play** -- the product does not handle money. Historical `backend/billing/migrations/` files are an inert, uninstalled tombstone, not a live Django app or a credits feature.
 
 ### Where to find things
@@ -116,8 +116,9 @@ Backend (Django)           Frontend (Next.js)          AI Models
 | OpenRouter client | `frontend/src/lib/openrouter.ts` |
 | NVIDIA NIM client | `frontend/src/lib/nvidia-nim.ts` |
 | Runtime dispatch | `frontend/src/lib/ai-runtimes.ts` |
-| Per-turn fallback | `frontend/src/lib/ai-fallback.ts` |
-| Free-rival IDs | `frontend/src/lib/free-rivals.ts` |
+| Catalog pair resolution | `frontend/src/lib/model-catalog.ts` |
+| Per-turn fallback (Play + Judge) | `frontend/src/lib/ai-fallback.ts` |
+| Catalog selection / flag | `backend/catalog/selection.py` |
 | Game UI components | `frontend/src/components/` |
 | Client state | `frontend/src/hooks/useGameStore.ts` |
 
@@ -132,7 +133,9 @@ Backend (Django)           Frontend (Next.js)          AI Models
 
 ### Changing the free-rival shortlist
 
-This cut ships five curated `(provider, model_id)` pairs (OpenRouter plus NVIDIA NIM). Stripe is rejected for this product direction. LM Studio, Vercel AI Gateway, Slovak dictionary, and push/deploy remain out of this cut. Changing the shortlist is a separate product change in `frontend/src/lib/free-rivals.ts`, `backend/catalog/selection.py`, and `seed_models.py`. Use native IDs (never `openrouter/google/...`). The NIM id has no `:free` suffix.
+Flag-off (default) ships five curated bootstrap `(provider, model_id)` pairs (OpenRouter plus NVIDIA NIM) from `backend/catalog/selection.py` `FREE_RIVAL_PAIRS`. Flag-on ranks the four newest eligible OpenRouter models plus the seeded NIM tuple. Stripe is rejected for this product direction. LM Studio and Vercel AI Gateway remain historical rejections, not live routing. Slovak dictionary and push/deploy remain out of this cut.
+
+Bootstrap membership is `backend/catalog/selection.py` plus `seed_models.py`. Runtime validation lives in `frontend/src/lib/model-catalog.ts` (no static frontend ID allowlist). Use native IDs (never `openrouter/google/...`). The NIM id has no `:free` suffix. Production catalog refresh is the documented schedule `libretiles-openrouter-catalog-refresh` (daily 03:17 UTC); do not configure that host schedule from a contribution unless a separate production task grants it.
 
 ### Modifying game rules
 

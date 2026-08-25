@@ -34,6 +34,8 @@ required unless you are testing human-vs-human websockets.
 - **AI**: Vercel AI SDK v6 via OpenRouter or NVIDIA NIM (OpenAI-compatible adapters)
 - **Animations**: Framer Motion, canvas-confetti
 
+During an AI turn, `AIThinkingOverlay` shows ordered fallback-rival pills bound to attempt lifecycle. The active attempt mounts a gold/black ping-pong tile (`src/lib/premiumSurface.ts`: `delay: 0`, static under reduced motion, flat amber when Premium Look is off).
+
 ## Project Structure
 
 ```
@@ -49,7 +51,7 @@ src/
 │   ├── game/         # AIThinkingOverlay, GameControls, ScorePanel, BlankPicker
 │   └── tiles/        # Tile, TileRack
 ├── hooks/            # Zustand store
-└── lib/              # Types, constants, API client, OpenRouter, NVIDIA NIM, free-rivals, prompts
+└── lib/              # Types, constants, API client, OpenRouter, NVIDIA NIM, model-catalog, prompts
 ```
 
 ## Environment Variables
@@ -63,6 +65,5 @@ See [.env.local.example](.env.local.example) for all available variables.
 | `NEXT_PUBLIC_API_URL` | Yes | Django backend URL for browser-side requests |
 | `BACKEND_URL` | Yes | Django backend URL for Next.js server-side routes |
 | `NEXT_DEV_ALLOWED_ORIGINS` | No | Extra hostnames/IPs allowed to load Next.js dev assets |
-| `NEXT_PUBLIC_DEFAULT_MODEL` | No | Optional move/judge fallback (`google/gemma-4-31b-it:free`). Store default is `DEFAULT_FREE_MODEL_ID`. |
 
-*Both keys are server-only. The UI boots if either is missing or a placeholder; AI turns fail only when neither credential is usable. Bases are hardcoded: OpenRouter `https://openrouter.ai/api/v1` in `src/lib/openrouter.ts`, NVIDIA NIM `https://integrate.api.nvidia.com/v1` in `src/lib/nvidia-nim.ts`. Do not add a base-URL env var. Transitive `@ai-sdk/gateway` in the lockfile is unused.
+*Both keys are server-only. The UI boots if either is missing or a placeholder; AI turns fail only when neither credential is usable. Bases are hardcoded: OpenRouter `https://openrouter.ai/api/v1` in `src/lib/openrouter.ts`, NVIDIA NIM `https://integrate.api.nvidia.com/v1` in `src/lib/nvidia-nim.ts`. Do not add a base-URL env var. There is no `NEXT_PUBLIC_DEFAULT_MODEL`; empty Zustand `selectedModelId` resolves to catalog row 1. Transitive `@ai-sdk/gateway` in the lockfile is unused (Vercel AI Gateway remains a historical rejection, not live routing).

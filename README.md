@@ -9,14 +9,15 @@ Open-source web Libre Tiles game with AI opponents, live human-vs-human multipla
 ## Features
 
 - Full Libre Tiles game engine (English variant, Collins 2019 dictionary ~279k words, Tier-1 strict validation in Django)
-- AI opponents via five curated `(provider, model_id)` free rivals with tool calling (OpenRouter + NVIDIA NIM)
+- AI opponents via provider-diverse free rivals with tool calling (OpenRouter + NVIDIA NIM). Flag-off (default) uses five curated bootstrap pairs; flag-on uses the four newest eligible OpenRouter models plus the seeded NIM tuple
 - Live human-vs-human multiplayer with waiting-room matchmaking, realtime board sync, and in-game chat
 - AI plays as a tool-calling agent: validates moves, checks words, calculates scores
+- Play and Judge share one preference-first fallback queue (at most three distinct pairs, one whole-turn provider-call budget)
 - Advanced drag-and-drop with touch/mobile support (@dnd-kit)
 - Animated tile drawing, scoring, and game-end effects (Framer Motion, confetti)
 - Django Admin for configuration (AI model catalog, games)
-- Settings page with the five-card provider-diverse free shortlist
-- Free-only play: the product does not handle money, app credits, USD balances, token prices, or per-game charges. Play is the five curated free rivals; Judge is a free rival. Provider quotas or trial terms are external and may change — they are not Libre Tiles credits or charges. Stripe is rejected for this product direction.
+- Settings page with the selectable free-rival shortlist from `GET /api/catalog/models/`
+- Free-only play: the product does not handle money, app credits, USD balances, token prices, or per-game charges. Play and Judge use the selectable free-rival catalog only. Provider quotas or trial terms are external and may change — they are not Libre Tiles credits or charges. Stripe is rejected for this product direction.
 - Responsive design (desktop, tablet, mobile)
 - 3-tier word validation: local Collins 2019, online API (optional), AI judge
 
@@ -52,7 +53,7 @@ poetry run python manage.py runserver 0.0.0.0:8000
 
 Backend runs at http://localhost:8000. Django Admin at http://localhost:8000/admin/.
 
-Do **not** require `sync_openrouter_models` to start. That optional command later fetches the public OpenRouter catalog (`GET https://openrouter.ai/api/v1/models`, unauthenticated). It must not own or disable the NIM row. There is no NIM catalog discovery. An unavailable catalog must not block boot.
+Do **not** require `sync_openrouter_models` to start. That optional command later fetches the public OpenRouter catalog (`GET https://openrouter.ai/api/v1/models`, unauthenticated, 20-second timeout, no retries). It must not own or disable the NIM row. There is no NIM catalog discovery. An unavailable catalog must not block boot. Leave `DYNAMIC_FREE_MODEL_CATALOG_ENABLED` false unless a later task enables newest-first selection.
 
 Redis is required only for websocket matchmaking, realtime sync, and chat. The default local URL is `redis://127.0.0.1:6379/0`.
 
@@ -66,7 +67,7 @@ npm install                                       # install JS dependencies
 npm run dev                                       # start dev server at :3000
 ```
 
-Open http://localhost:3000, register, choose a mode, and play. Both keys live on the Next.js server. The UI still boots if either is missing or a placeholder; AI turns fail only when neither credential is usable. Bases are hardcoded: OpenRouter `https://openrouter.ai/api/v1` and NVIDIA NIM `https://integrate.api.nvidia.com/v1`; do not add base-URL env vars.
+Open http://localhost:3000, register, choose a mode, and play. Both keys live on the Next.js server. The UI still boots if either is missing or a placeholder; AI turns fail only when neither credential is usable. Bases are hardcoded: OpenRouter `https://openrouter.ai/api/v1` and NVIDIA NIM `https://integrate.api.nvidia.com/v1`; do not add base-URL env vars. There is no `NEXT_PUBLIC_DEFAULT_MODEL`; an empty stored selection resolves to catalog row 1.
 
 ### Environment Variables
 
@@ -79,6 +80,7 @@ Open http://localhost:3000, register, choose a mode, and play. Both keys live on
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:3000` | Frontend origin(s) |
 | `REDIS_URL` | `redis://127.0.0.1:6379/0` | Redis connection used by Django Channels |
 | `GAME_WS_TICKET_MAX_AGE_SECONDS` | `60` | Max age for signed websocket tickets |
+| `DYNAMIC_FREE_MODEL_CATALOG_ENABLED` | `false` | `false` = curated bootstrap pairs only; `true` = four newest eligible OpenRouter models plus seeded NIM. Must match `backend/config/settings.py`. |
 
 **Frontend** (`frontend/.env.local`):
 | Variable | Default | Description |
@@ -88,17 +90,20 @@ Open http://localhost:3000, register, choose a mode, and play. Both keys live on
 | `NEXT_DEV_ALLOWED_ORIGINS` | unset | Optional extra hosts allowed to load Next.js dev assets |
 | `OPENROUTER_API_KEY` | `your-openrouter-api-key` | Server-only OpenRouter key from https://openrouter.ai/keys |
 | `NVIDIA_API_KEY` | `your-nvidia-api-key` | Server-only NVIDIA NIM key from https://build.nvidia.com |
-| `NEXT_PUBLIC_DEFAULT_MODEL` | `google/gemma-4-31b-it:free` | Optional move/judge fallback. Store default is `DEFAULT_FREE_MODEL_ID`. |
 
-Five curated `(provider, model_id)` pairs (native IDs, never `openrouter/google/...`). Default remains OpenRouter Gemma. The NIM id has no `:free` suffix and is not the FrameNest Omni/VLM:
+Native IDs only (never `openrouter/google/...`). The NIM id has no `:free` suffix and is not the FrameNest Omni/VLM.
 
-1. `openrouter` — `google/gemma-4-31b-it:free` (default)
+**Flag-off legacy path** (`DYNAMIC_FREE_MODEL_CATALOG_ENABLED=false`, the default): five curated bootstrap pairs. Catalog row 1 is OpenRouter Gemma:
+
+1. `openrouter` — `google/gemma-4-31b-it:free`
 2. `nvidia-nim` — `nvidia/nemotron-3-super-120b-a12b`
 3. `openrouter` — `nvidia/nemotron-3-super-120b-a12b:free`
 4. `openrouter` — `z-ai/glm-5.2:free`
 5. `openrouter` — `google/gemma-4-26b-a4b-it:free`
 
-Django Admin remains catalog authority; deactivating the NIM row is the operational kill switch. One AI turn may try at most three sequential `/api/ai/move` streams; preference `model_id` is unchanged and `runtime_model_id` is the attempt. Collins 2019 on Django remains the move validator. Stripe is rejected for this product direction. LM Studio, Vercel AI Gateway, Slovak dictionary, and push/deploy remain out of this cut.
+**Flag-on**: the four newest eligible OpenRouter `:free` models plus the seeded NIM tuple last. A valid user preference remains attempt 1; remaining attempts follow untouched catalog order. New users receive catalog row 1 (newest when the flag is on).
+
+Django Admin remains catalog authority; `is_active` (including deactivating the NIM row) is the operational kill switch. Play and Judge share one preference-first fallback queue capped at three distinct pairs. Play reports `provider_requests_used` in terminal SSE metadata and treats `max_steps` as the remaining whole-turn provider-call budget. Judge tries up to three sequential attempts (`maxRetries: 0`, 10 s each, 30 s overall) and returns HTTP 503 on exhaustion without synthesizing false invalid verdicts. Collins 2019 on Django remains the persisted-move validator. Stripe is rejected for this product direction. LM Studio, Vercel AI Gateway, Slovak dictionary, and push/deploy remain out of this cut.
 
 ### Docker (optional PostgreSQL + Redis)
 
@@ -154,8 +159,8 @@ See [docs/architecture.md](docs/architecture.md) for full technical documentatio
   Browser (Next.js)                   OpenRouter / NVIDIA NIM
   ┌─────────────────┐                ┌──────────────────┐
   │ React UI        │                │ Free rivals      │
-  │ @dnd-kit + FM   │◄──────────────►│ gemma-4-31b, …   │
-  │ Zustand store   │  /api/ai/move  └──────────────────┘
+  │ @dnd-kit + FM   │◄──────────────►│ newest-first /   │
+  │ Zustand store   │  /api/ai/move  │ bootstrap pairs  │
   │                 │  /api/ai/judge          │
   │ Settings page   │        ▲                │ generateText()
   └────────┬────────┘        │                │ + tool calling
@@ -178,13 +183,15 @@ See [docs/architecture.md](docs/architecture.md) for full technical documentatio
 The AI opponent plays as a tool-calling agent (mirroring the desktop `scrabgpt` approach):
 
 1. AI receives board state, rack, scores, tile values, premium legend
-2. AI proposes candidate moves using tools:
+2. AI searches from board anchors and proposes candidate moves using tools:
    - `validateMove` -- checks placement legality, returns all formed words + scores
    - `validateWords` -- checks words against Collins 2019 (~279k words, O(1) lookup)
-3. AI iterates 2-3+ candidates, picks the highest-scoring legal move
-4. Move is applied server-side via Django `/api/game/{id}/ai-move/`
+3. AI secures an early backend-validated scoring floor, then explores diverse families only while the shared step budget remains
+4. Move is applied server-side via Django `/api/game/{id}/ai-move/` and re-validated against Collins 2019
 
-The prompt is ported from the desktop app's unified move template with strategic priorities, blank policy, anti-blunder rules, and no-scoring fallback logic.
+The move prompt (`frontend/src/lib/prompts.ts`) is legality-first: anchor search, early validated scoring floor, budget-bounded diversity, absolute backend authority, and strict JSON. The judge prompt is Collins-2019-only with no natural-usage override.
+
+During a turn the thinking overlay shows ordered rival pills bound to the attempt lifecycle, with a purely visual gold/black ping-pong tile on the active attempt (zero artificial delay, reduced-motion safe, readable without Premium Look).
 
 ## Project Structure
 
@@ -205,7 +212,7 @@ libretiles/
 │   │   ├── app/         # Next.js pages (landing, game, settings, API routes)
 │   │   ├── components/  # Board, Tile, TileRack, ScorePanel, GameControls...
 │   │   ├── hooks/       # Zustand store (useGameStore)
-│   │   └── lib/         # Types, API client, OpenRouter, NIM, free-rivals, prompts, constants
+│   │   └── lib/         # Types, API client, OpenRouter, NIM, model-catalog, prompts, constants
 │   └── package.json
 ├── docs/                # Technical architecture docs
 ├── docker-compose.yml
@@ -225,7 +232,7 @@ libretiles/
 - `POST /api/auth/change-password/` -- Change password for the authenticated user
 
 ### Catalog
-- `GET /api/catalog/models/` -- List the curated provider-diverse free-rival shortlist
+- `GET /api/catalog/models/` -- List selectable free rivals in canonical order (flag-off bootstrap pairs, or flag-on newest-four-plus-NIM). Row 1 is `is_flagship` / `recommended`. Exposes `released_at`; no money fields.
 
 ### Game
 - `POST /api/game/create/` -- Start new AI game
@@ -247,9 +254,15 @@ libretiles/
 - `POST /api/game/{id}/ai-move/` -- Apply AI-proposed move (re-validates server-side)
 
 ### Frontend API Routes (Next.js)
-- `POST /api/ai/move` -- AI move generation (tool-calling agent)
-- `POST /api/ai/judge` -- AI word judge (Tier 3 validation)
+- `POST /api/ai/move` -- AI move generation (tool-calling agent; sequential fallback)
+- `POST /api/ai/judge` -- AI word judge (Tier 3; same queue, up to three attempts, HTTP 503 on exhaustion)
 - `GET /api/models` -- Proxy for Django catalog
+
+## Operations (catalog refresh)
+
+The documented production schedule is `libretiles-openrouter-catalog-refresh`, daily at 03:17 UTC, invoking `python manage.py sync_openrouter_models` under a non-overlapping platform lock. One scheduled run performs exactly one unauthenticated OpenRouter catalog GET with a 20-second timeout, no retries, no per-model probes, and no NVIDIA/NIM request. The scheduler itself is configured only under separate production authority — this repository documents it and does not install it.
+
+Rollout: deploy backend with the dynamic flag false → deploy the dynamic-capable frontend → run migrate/sync evidence → enable `DYNAMIC_FREE_MODEL_CATALOG_ENABLED`. Rollback: set the flag false and restart Django; pause the schedule and/or deactivate rows in Admin; roll backend selection back to curated-only before rolling back the dynamic-capable frontend.
 
 ## Testing
 
@@ -302,7 +315,8 @@ Conceptually aligned with the desktop `scrabgpt` engine; this tree ships its **o
 ## Troubleshooting
 
 - **Invalid word but the server “accepted” it** — Distinguish between an **AI overlay candidate** (may show `valid: false`) and a **saved move**. Word validity is always decided by Django (`submit_move` / `validate_move_for_ai`) using `backend/assets/dicts/collins2019.txt`. Regression tests: `tests/test_dictionary_validation.py`.
-- **Weak AI play** — Switch among the five curated free rivals, raise timeout / search steps in Settings, and tune `frontend/src/lib/prompts.ts` (see [AGENTS.md](AGENTS.md)). Do not buy a paid catalog tier for this cut.
+- **Weak AI play** — Switch among the selectable free rivals, raise timeout / search steps in Settings, and tune `frontend/src/lib/prompts.ts` (see [AGENTS.md](AGENTS.md)). Do not buy a paid catalog tier for this cut.
+- **Judge returned 503** — All fallback attempts failed or the catalog was empty. The route does not invent invalid verdicts from malformed output; retry or switch rivals.
 
 ## Contributing
 

@@ -1,6 +1,6 @@
 # Libre Tiles — Product Requirements Document
 
-Updated: March 20, 2026
+Updated: August 25, 2026
 
 ## 1. Product in One Sentence
 
@@ -9,7 +9,7 @@ Libre Tiles is an open-source web-based Libre Tiles game with an eye-candy anima
 ## 2. Product Goals
 
 1. Deliver a visually stunning, native-feeling Libre Tiles experience in the browser (desktop + mobile).
-2. Let users choose which of the five curated `(provider, model_id)` free rivals to play against. The product does not handle money; play is free rivals only; Judge is a free rival. Provider quotas or trial terms are external and may change — they are not Libre Tiles credits or charges. Stripe is rejected for this product direction.
+2. Let users choose a free rival from the selectable catalog. Flag-off (default) is five curated bootstrap pairs; flag-on is the four newest eligible OpenRouter models plus the seeded NIM tuple. The product does not handle money; play and Judge share one preference-first fallback queue. Provider quotas or trial terms are external and may change — they are not Libre Tiles credits or charges. Stripe is rejected for this product direction.
 3. Provide a Django Admin-first configuration model: all game settings and AI model catalog activation/availability managed through /admin/. Catalog Admin does not manage token or per-game prices.
 4. Prepare architecture for human-vs-human multiplayer (v2).
 5. Maintain open-source quality: tests, documentation, clean architecture, GitHub-ready.
@@ -23,7 +23,7 @@ Libre Tiles is an open-source web-based Libre Tiles game with an eye-candy anima
 ## 4. Architecture Overview
 
 - **Frontend**: Next.js 16 (React 19, TypeScript, Tailwind CSS 4, Framer Motion, @dnd-kit) deployed on **Vercel**.
-- **AI**: Next.js API routes using Vercel AI SDK as an OpenAI-compatible adapter against OpenRouter and NVIDIA NIM (`OPENROUTER_API_KEY` and `NVIDIA_API_KEY` on the Next.js server). Five curated pairs; hardcoded bases; no Vercel AI Gateway, LM Studio, or base-URL env vars.
+- **AI**: Next.js API routes using Vercel AI SDK as an OpenAI-compatible adapter against OpenRouter and NVIDIA NIM (`OPENROUTER_API_KEY` and `NVIDIA_API_KEY` on the Next.js server). Catalog gated by `DYNAMIC_FREE_MODEL_CATALOG_ENABLED` (default false = bootstrap pairs). Hardcoded bases; no Vercel AI Gateway, LM Studio, or base-URL env vars. There is no `NEXT_PUBLIC_DEFAULT_MODEL`.
 - **Backend**: Django 5.x + DRF on self-hosted VPS (game state, validation, auth, admin).
 - **Database**: PostgreSQL (production), SQLite (dev).
 - **Game Engine**: Pure Python `gamecore/` package ported from scrabgpt/core/ (zero UI dependencies).
@@ -51,19 +51,20 @@ Libre Tiles is an open-source web-based Libre Tiles game with an eye-candy anima
 - Status: **Implemented** (game/).
 
 ### FR-04: AI Opponent via Provider-Diverse Free Rivals
-- AI models configured in Django Admin; this cut exposes five curated `(provider, model_id)` pairs (default OpenRouter Gemma plus NVIDIA NIM Nemotron and three other OpenRouter rows). Deactivating the NIM row is the operational kill switch.
-- Frontend fetches available models from /api/catalog/models/.
-- User selects preferred rival in Settings (`model_id` preference). One AI turn may try at most three sequential `/api/ai/move` streams; `runtime_model_id` is the attempt only.
-- AI move generation through Next.js API route (/api/ai/move) using Vercel AI SDK against the selected provider runtime.
+- AI models configured in Django Admin. `DYNAMIC_FREE_MODEL_CATALOG_ENABLED` (default false) returns the five curated bootstrap pairs (OpenRouter Gemma, NVIDIA NIM Nemotron, and three other OpenRouter rows). When true, `/api/catalog/models/` returns the four newest eligible OpenRouter models plus the seeded NIM tuple, newest-first, with only row 1 marked flagship. Admin `is_active` is the operational kill switch.
+- Frontend fetches available models from /api/catalog/models/. There is no static frontend ID allowlist (`frontend/src/lib/model-catalog.ts`).
+- User selects preferred rival in Settings (`model_id` preference). A valid preference is attempt 1; remaining attempts follow untouched catalog order. New users receive catalog row 1. Play and Judge share `buildFallbackQueue`, capped at three distinct pairs.
+- AI move generation through Next.js API route (/api/ai/move) using Vercel AI SDK against the selected provider runtime. Terminal SSE metadata includes `provider_requests_used`; `max_steps` is the remaining whole-turn provider-call budget.
 - AI uses tool calling: validate moves, check words, score moves via Django API endpoints. Collins 2019 on Django remains the move validator.
-- AI judge fallback for word validation (Tier 3) via /api/ai/judge: one selected free rival, no fallback loop.
-- AI prompt ported from desktop scrabgpt: strategic priorities, blank policy, anti-blunder rules.
-- Status: **Implemented** (frontend/src/app/api/ai/, frontend/src/lib/prompts.ts, openrouter.ts, nvidia-nim.ts, ai-runtimes.ts, ai-fallback.ts, free-rivals.ts).
+- AI judge (Tier 3) via /api/ai/judge uses the same queue: up to three sequential attempts, `maxRetries: 0`, 10 s per attempt, 30 s overall, HTTP 503 on exhaustion, never synthesizing false invalid verdicts.
+- Move prompt: legality-first anchor search, early backend-validated scoring floor, budget-bounded diversity, strict JSON. Judge prompt: Collins-2019-only, no natural-usage override. Seeded Admin presets refresh only via reversible SHA-256 hash-gated migration `0010` (unmodified seed rows only).
+- Thinking overlay: ordered attempt pills with a lifecycle-bound gold/black ping-pong tile (zero artificial delay, reduced-motion safe, readable without Premium Look).
+- Status: **Implemented** (frontend/src/app/api/ai/, frontend/src/lib/prompts.ts, openrouter.ts, nvidia-nim.ts, ai-runtimes.ts, ai-fallback.ts, model-catalog.ts, AIThinkingOverlay.tsx).
 
 ### FR-05: 3-Tier Word Validation
 - Tier 1: Local SOWPODS dictionary (in-memory frozenset, O(1) lookup).
 - Tier 2: Online dictionary API for words not in SOWPODS (optional, SOWPODS is comprehensive).
-- Tier 3: AI Judge via one selected free rival for ambiguous cases.
+- Tier 3: AI Judge via the shared free-rival fallback queue (up to three attempts; HTTP 503 on exhaustion).
 - Status: **Tier 1 + 3 implemented**, Tier 2 optional.
 
 ### FR-06: Eye-Candy Frontend
@@ -74,7 +75,7 @@ Libre Tiles is an open-source web-based Libre Tiles game with an eye-candy anima
 - Tile exchange mode: tap to select tiles, confirm/cancel, fly-to-bag animation.
 - Blank tile letter picker: 26-letter grid modal.
 - Score display: animated slot-machine counters, "+N" popup, bingo explosion.
-- AI thinking: shimmer overlay with floating particles.
+- AI thinking: overlay with ordered fallback-rival pills and a lifecycle-bound ping-pong tile.
 - Game end: confetti explosion (victory), respectful "Game Over" (loss), score breakdown card.
 - Move history timeline with expandable word details.
 - Responsive: mobile bottom-sheet rack, pinch-zoom board, tap-to-place alternative.
@@ -83,7 +84,7 @@ Libre Tiles is an open-source web-based Libre Tiles game with an eye-candy anima
 - Status: **Core implemented** (Board, Tile, TileRack, ScorePanel, GameControls, BlankPicker, DnD, confetti). Premium animations in progress.
 
 ### FR-07: Settings (MVP)
-- AI model selection: the five curated provider-diverse free rivals (name, description, Free badge, provider badge, selected state).
+- AI model selection: selectable free rivals from the catalog API (name, description, Free badge, provider badge, selected state). Flag-off shows the five bootstrap pairs; flag-on shows newest-four-plus-NIM.
 - Fetched from Django catalog API.
 - Timeout and search-step controls remain.
 - Status: **Implemented** (frontend/src/app/settings/page.tsx).
@@ -97,7 +98,7 @@ Libre Tiles is an open-source web-based Libre Tiles game with an eye-candy anima
 
 ### FR-09: Free-only play (no application money)
 - The product does not handle money: no app credits, USD balances, token prices, per-game charges, Stripe, or top-up UX.
-- Play uses the five curated free rivals only. Judge uses a free rival (no fallback loop).
+- Play and Judge use the selectable free-rival catalog only (flag-off: five curated bootstrap pairs; flag-on: four newest eligible OpenRouter models plus seeded NIM). Judge uses the same fallback queue as Play.
 - Provider quotas or trial terms are external and may change; they are not Libre Tiles credits or charges.
 - Stripe is rejected for this product direction, not unfinished work.
 - Status: **Implemented**.
@@ -107,6 +108,12 @@ Libre Tiles is an open-source web-based Libre Tiles game with an eye-candy anima
 - Game lobby with invite links.
 - Real-time via WebSocket (Django Channels) or polling.
 - Status: **Data model ready**, implementation planned for v2.
+
+### FR-11: Catalog refresh, rollout, and rollback
+- Documented production schedule name: `libretiles-openrouter-catalog-refresh`, daily at 03:17 UTC, invoking `python manage.py sync_openrouter_models` under a non-overlapping platform lock. One run: exactly one unauthenticated OpenRouter catalog GET, 20-second timeout, no retries, no per-model probes, no NVIDIA/NIM request. Host configuration is separate production authority.
+- Rollout: deploy backend with `DYNAMIC_FREE_MODEL_CATALOG_ENABLED=false` → deploy the dynamic-capable frontend → run migrate/sync evidence → enable the flag.
+- Rollback: set the flag false and restart Django; pause the schedule and/or deactivate rows in Admin; roll backend selection to curated-only before rolling back the dynamic-capable frontend.
+- Status: **Documented**. Scheduler installation is not part of this cut.
 
 ## 6. Non-Functional Requirements
 

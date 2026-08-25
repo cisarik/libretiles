@@ -27,7 +27,9 @@ AI-only local play needs two terminals (Django + Next.js). Redis is required onl
    poetry run python manage.py runserver 0.0.0.0:8000
    ```
 
-   `seed_models` loads the offline five-pair shortlist (four OpenRouter rows plus one NVIDIA NIM row). Do not require `sync_openrouter_models` to start; that optional public catalog fetch is later and non-blocking. It must not own or disable the NIM row. There is no NIM catalog discovery.
+   `seed_models` loads the offline five-pair bootstrap shortlist (four OpenRouter rows plus one NVIDIA NIM row). Do not require `sync_openrouter_models` to start; that optional public catalog fetch is later and non-blocking. It must not own or disable the NIM row. There is no NIM catalog discovery.
+
+   Selection is gated by `DYNAMIC_FREE_MODEL_CATALOG_ENABLED` (default `false` in `backend/config/settings.py`). `false` returns only those curated bootstrap pairs. `true` returns the four newest eligible OpenRouter models plus the seeded NIM tuple. Leave the flag false for local boot unless a later task explicitly enables it.
 
 2. **Frontend**:
 
@@ -39,7 +41,7 @@ AI-only local play needs two terminals (Django + Next.js). Redis is required onl
    npm run dev
    ```
 
-   Both keys live on the Next.js server. The UI still boots if either is missing or a placeholder; AI turns fail only when neither credential is usable.
+   Both keys live on the Next.js server. The UI still boots if either is missing or a placeholder; AI turns fail only when neither credential is usable. There is no `NEXT_PUBLIC_DEFAULT_MODEL`; pages resolve an empty Zustand `selectedModelId` against catalog row 1.
 
 3. Or from the repo root: `./scripts/libretiles.sh` (see [README.md](README.md)). Scripts copy env examples only when the target file is absent.
 
@@ -73,16 +75,20 @@ npm run build
 | OpenRouter client | `frontend/src/lib/openrouter.ts` |
 | NVIDIA NIM client | `frontend/src/lib/nvidia-nim.ts` |
 | Runtime dispatch | `frontend/src/lib/ai-runtimes.ts` |
-| Per-turn fallback | `frontend/src/lib/ai-fallback.ts` |
-| Free-rival IDs | `frontend/src/lib/free-rivals.ts` |
+| Catalog pair resolution | `frontend/src/lib/model-catalog.ts` |
+| Shared Play/Judge fallback queue | `frontend/src/lib/ai-fallback.ts` |
+| SSE terminal + `provider_requests_used` | `frontend/src/lib/ai-move-stream.ts` |
 | Catalog seed | `backend/catalog/management/commands/seed_models.py` |
 | Optional catalog sync | `backend/catalog/management/commands/sync_openrouter_models.py` |
+| Catalog selection (flag + ranking) | `backend/catalog/selection.py` |
+| Seeded-prompt hash-gated refresh | `backend/catalog/migrations/0010_refresh_seeded_prompts.py` |
 | Agent prompts | `frontend/src/lib/prompts.ts` |
 | Game UI | `frontend/src/app/game/[id]/page.tsx` |
+| Fallback attempt pills | `frontend/src/components/game/AIThinkingOverlay.tsx` |
 | Header / game chrome | `frontend/src/components/game/ScorePanel.tsx`, `frontend/src/components/game/GameControls.tsx` |
-| Shared premium UI effect | `frontend/src/lib/premiumSurface.ts` |
+| Shared premium UI effect + ping-pong motion | `frontend/src/lib/premiumSurface.ts` |
 
-## Current product state (March 2026)
+## Current product state (August 2026)
 
 - Human-vs-human multiplayer is live:
   - queue join/cancel
@@ -98,7 +104,7 @@ npm run build
   - shared pointer-reactive gold/black chrome in `frontend/src/lib/premiumSurface.ts`
   - used by settings plus the game header/footer
   - controlled by the persisted `premiumLookEnabled` store flag
-- Libre Tiles is a **free-only** product: it does not handle money, app credits, USD balances, token prices, or per-game charges. Play uses the five curated free rivals only. Judge uses a free rival. Provider quotas or trial terms are external and may change; they are not Libre Tiles credits or charges. Stripe is rejected for this product direction.
+- Libre Tiles is a **free-only** product: it does not handle money, app credits, USD balances, token prices, or per-game charges. Play and Judge share one preference-first fallback queue over the selectable free-rival catalog (flag-off: five curated bootstrap pairs; flag-on: four newest eligible OpenRouter models plus the seeded NIM tuple). Provider quotas or trial terms are external and may change; they are not Libre Tiles credits or charges. Stripe is rejected for this product direction.
 
 ## Word validation (important)
 
@@ -106,20 +112,51 @@ npm run build
 - AI **candidates** in the overlay may show invalid attempts (`valid: false`); the final move is always **re-validated** on the server.
 - If someone reports that the “backend accepted” an invalid word: check whether it was an **overlay candidate** vs. a **persisted move**; add a regression test under `backend/tests/`.
 - The dictionary is not copied from `scrabgpt_sk` — maintain it only in `libretiles/backend/assets/dicts/`.
+- The AI judge (`/api/ai/judge`) is Collins-2019-conservative Tier 3 assistance only. It never overrides a persisted Django verdict. Exhaustion is HTTP 503; the route must not synthesize false `invalid` results from malformed output.
 
 ## Making the AI stronger
 
-- **Model**: pick one of the five curated `(provider, model_id)` pairs (`frontend/src/lib/free-rivals.ts`). Default remains OpenRouter `google/gemma-4-31b-it:free`. The other pairs are NVIDIA NIM `nvidia/nemotron-3-super-120b-a12b` (no `:free` suffix; not the FrameNest Omni/VLM), OpenRouter `nvidia/nemotron-3-super-120b-a12b:free`, `z-ai/glm-5.2:free`, and `google/gemma-4-26b-a4b-it:free`. Use native IDs (never `openrouter/google/...`). Django Admin remains catalog authority; deactivating the NIM row is the operational kill switch. Do not buy a paid catalog tier for this cut.
-- **Fallback**: one AI turn may try at most three sequential `/api/ai/move` streams. Preference `model_id` is unchanged; `runtime_model_id` is the attempt.
+- **Catalog**: `GET /api/catalog/models/` returns `get_selectable_models()` in canonical order and marks only row 1 `is_flagship` / `recommended`. Native IDs only (never `openrouter/google/...`). The NIM id has no `:free` suffix and is not the FrameNest Omni/VLM.
+  - `DYNAMIC_FREE_MODEL_CATALOG_ENABLED=false` (default, flag-off legacy path): the five curated bootstrap pairs from `backend/catalog/selection.py` `FREE_RIVAL_PAIRS` — OpenRouter `google/gemma-4-31b-it:free`, NVIDIA NIM `nvidia/nemotron-3-super-120b-a12b`, OpenRouter `nvidia/nemotron-3-super-120b-a12b:free`, `z-ai/glm-5.2:free`, `google/gemma-4-26b-a4b-it:free`.
+  - Flag on: the four newest eligible OpenRouter `:free` models (zero prompt and completion pricing, tools, text output, OpenRouter-managed and currently available) plus the fixed seeded NIM tuple last. Missing `released_at` ranks after dated rows; bootstrap `sort_order` then `model_id` break ties.
+  - Django Admin `is_active` is the durable kill switch. Neither `seed_models` nor `sync_openrouter_models` may reactivate or deactivate an existing row. Do not buy a paid catalog tier for this cut.
+- **Preference**: a valid explicit preference is attempt 1; remaining attempts follow untouched catalog order. New users and empty Zustand `selectedModelId` receive catalog row 1. Returning valid preferences stay; stale ids are repaired against the live catalog. There is no `NEXT_PUBLIC_DEFAULT_MODEL`.
+- **Fallback**: Play and Judge call the same `buildFallbackQueue` in `frontend/src/lib/ai-fallback.ts`, capped at three distinct pairs. Preference `model_id` is unchanged; `runtime_model_id` is the Play attempt. Play retries only retryable provider failures after unchanged-turn reconciliation. Terminal SSE metadata includes `provider_requests_used`; `max_steps` is the remaining whole-turn provider-call budget shared across attempts (not a fresh budget per stream).
+- **Judge**: up to three sequential attempts, AI SDK `maxRetries: 0`, 10 seconds per attempt, 30 seconds overall. HTTP 503 on exhaustion. Never invent false invalid verdicts.
+- **Presentation**: `AIThinkingOverlay` shows ordered provider/model pills bound to attempt lifecycle (`data-attempt-status`). Exactly one gold/black ping-pong tile mounts on the active attempt (`pingPongTileMotion` delay is always `0`). Reduced motion yields a static tile. With Premium Look off, pills stay readable via flat amber chrome.
 - **Time / search**: `aiTimeout` and `aiMaxSteps` in the Zustand store / Settings, consumed by the SSE move route.
-- **Prompt**: `frontend/src/lib/prompts.ts` — strategy, tools, anti-pass logic; change carefully and test against backend validation.
-- Optional `NEXT_PUBLIC_DEFAULT_MODEL` is only a documented fallback for move/judge routes. The store default is `DEFAULT_FREE_MODEL_ID`, not `process.env`.
+- **Prompt**: `frontend/src/lib/prompts.ts` — legality-first anchor search, early backend-validated scoring floor, budget-bounded diversity, Collins-2019-only judge authority, no natural-usage override, strict JSON. Change carefully and test against backend validation.
+- **Seeded-prompt migration**: `0010_refresh_seeded_prompts` is reversible and SHA-256 hash-gated. It refreshes only unmodified seed rows (Initial, Fast Search, Short Hooks, Grandmaster). Admin-customized rows are never overwritten.
 - Hardcoded bases: OpenRouter `https://openrouter.ai/api/v1`; NVIDIA NIM `https://integrate.api.nvidia.com/v1`. No base-URL env vars.
+
+## Operations and rollout
+
+Documented production schedule (configure only under separate production authority — this repository does not install it):
+
+- Name: `libretiles-openrouter-catalog-refresh`
+- Cadence: daily at 03:17 UTC
+- Command: `python manage.py sync_openrouter_models` under a non-overlapping platform lock
+- One scheduled run performs exactly **one** unauthenticated OpenRouter catalog GET (`https://openrouter.ai/api/v1/models`) with a 20-second timeout, no retries, no per-model probes, and no NVIDIA/NIM request
+- Empty or >50% cohort drops abort with zero writes unless an operator passes CLI-only `--allow-large-drop` (empty still aborts)
+
+Rollout order:
+
+1. Deploy backend with `DYNAMIC_FREE_MODEL_CATALOG_ENABLED=false`
+2. Deploy the dynamic-capable frontend
+3. Run migrate / sync evidence
+4. Enable the flag and restart Django
+5. Configure `libretiles-openrouter-catalog-refresh` only under separate production authority
+
+Rollback:
+
+1. Set `DYNAMIC_FREE_MODEL_CATALOG_ENABLED=false` and restart Django (immediate product rollback; stored dynamic rows become unselectable; stale frontend preferences repair to a bootstrap row)
+2. Pause `libretiles-openrouter-catalog-refresh` and/or deactivate rows in Django Admin (operational kill switches; catalog rows are not deleted)
+3. Roll backend selection back to curated-only **before** rolling back the dynamic-capable frontend
 
 ## Deployment
 
 - Frontend: Vercel (env from `frontend/.env.local.example`).
-- Backend: VPS / PaaS with PostgreSQL in production; see `docs/architecture.md` and `README.md`.
+- Backend: VPS / PaaS with PostgreSQL in production; see [docs/architecture.md](docs/architecture.md) and [README.md](README.md).
 
 ## Security
 
@@ -128,8 +165,9 @@ npm run build
 
 ## Not done yet (typical next steps)
 
-- LM Studio, Vercel AI Gateway, Slovak dictionary, and push/deploy are out of this cut. Stripe is rejected, not unfinished work.
-- Tier 2 / 3 dictionary (optional API, AI judge) — see PRD and `docs/architecture.md`.
+- LM Studio, Vercel AI Gateway, Slovak dictionary, and push/deploy are out of this cut (historical rejection / removal, not unfinished AI routing). Stripe is rejected, not unfinished work.
+- Configuring `libretiles-openrouter-catalog-refresh` on a host is separate production authority, not this cut.
+- Tier 2 dictionary (optional API) — see PRD and `docs/architecture.md`.
 - Stronger AI search / candidate generation beyond prompt-only improvements.
 
 
