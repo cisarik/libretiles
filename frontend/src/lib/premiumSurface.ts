@@ -28,6 +28,56 @@ export const PREMIUM_FOOTER_STYLE: CSSProperties = {
 export const PREMIUM_GOLD_TEXT_SHADOW_CLASS =
   "transition-[filter] duration-200 [filter:drop-shadow(0_2px_0_rgba(0,0,0,0.92))_drop-shadow(0_10px_18px_rgba(0,0,0,0.56))] group-hover:[filter:none]";
 
+/** Gold/black chrome for the fallback ping-pong tile when Premium Look is on. */
+export const PREMIUM_PING_PONG_TILE_STYLE: CSSProperties = {
+  backgroundImage:
+    "linear-gradient(135deg, rgba(254,240,138,0.98) 0%, rgba(251,191,36,0.95) 42%, rgba(66,32,6,0.97) 100%)",
+};
+
+export interface PingPongTileMotion {
+  x: number[];
+  transition: {
+    duration: number;
+    ease: "easeInOut";
+    repeat: number;
+    repeatType: "reverse";
+    /** Always zero: the ping-pong must never add artificial delay. */
+    delay: 0;
+  };
+}
+
+/**
+ * Motion for the active-attempt ping-pong tile. Reduced motion yields `null`
+ * so callers render a static tile instead of any movement.
+ */
+export function pingPongTileMotion(
+  reducedMotion: boolean,
+): PingPongTileMotion | null {
+  if (reducedMotion) return null;
+  return {
+    x: [-3, 3],
+    transition: {
+      duration: 0.5,
+      ease: "easeInOut",
+      repeat: Infinity,
+      repeatType: "reverse",
+      delay: 0,
+    },
+  };
+}
+
+/**
+ * The ping-pong is bound strictly to the attempt lifecycle: an attempt is
+ * visually active only while the store's active index points at it and it has
+ * not failed yet.
+ */
+export function isAttemptPingPongActive(
+  status: "pending" | "active" | "failed",
+  isActiveIndex: boolean,
+): boolean {
+  return isActiveIndex && status !== "failed";
+}
+
 export function handlePremiumSurfacePointer(event: ReactMouseEvent<HTMLElement>) {
   const rect = event.currentTarget.getBoundingClientRect();
   const x = event.clientX - rect.left;

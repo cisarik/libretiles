@@ -1,9 +1,16 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { useGameStore } from "@/hooks/useGameStore";
+import { providerBadgeLabel } from "@/lib/ai-fallback";
+import {
+  PREMIUM_PING_PONG_TILE_STYLE,
+  isAttemptPingPongActive,
+  pingPongTileMotion,
+} from "@/lib/premiumSurface";
 import { TILE_POINTS } from "@/lib/constants";
+import type { AiFallbackAttempt } from "@/lib/types";
 
 function formatTime(seconds: number): string {
   const m = Math.floor(seconds / 60);
@@ -124,6 +131,93 @@ function HourglassSimple({ urgent }: { urgent: boolean }) {
   );
 }
 
+function FallbackAttemptPill({
+  attempt,
+  isActive,
+}: {
+  attempt: AiFallbackAttempt;
+  isActive: boolean;
+}) {
+  const premiumLookEnabled = useGameStore((s) => s.premiumLookEnabled);
+  const reduceMotion = useReducedMotion();
+  // The ping-pong mounts only while this attempt owns the lifecycle; reduced
+  // motion swaps it for a static tile. Neither path adds artificial delay.
+  const motionSpec = isActive ? pingPongTileMotion(Boolean(reduceMotion)) : null;
+  const tileStyle = premiumLookEnabled ? PREMIUM_PING_PONG_TILE_STYLE : undefined;
+
+  return (
+    <div
+      data-attempt-status={isActive ? "active" : attempt.status}
+      aria-current={isActive || undefined}
+      title={attempt.modelId}
+      className={`
+        inline-flex max-w-full items-center gap-1.5 rounded-full border px-2 py-1
+        text-[10px] leading-none tracking-wide transition-colors
+        ${isActive
+          ? "border-amber-300/50 bg-amber-400/12 text-amber-100 shadow-[0_0_18px_rgba(251,191,36,0.18)]"
+          : attempt.status === "failed"
+            ? "border-white/8 bg-stone-800/60 text-stone-500 line-through decoration-stone-600"
+            : "border-white/10 bg-stone-800/45 text-stone-400"
+        }
+      `}
+    >
+      {isActive && motionSpec && (
+        <motion.span
+          data-pingpong="active"
+          className={`inline-block h-2 w-2 shrink-0 rounded-[3px] ${
+            premiumLookEnabled ? "shadow-[0_0_8px_rgba(251,191,36,0.55)]" : "bg-amber-400"
+          }`}
+          style={tileStyle}
+          animate={{ x: motionSpec.x }}
+          transition={motionSpec.transition}
+        />
+      )}
+      {isActive && !motionSpec && (
+        <span
+          data-pingpong="static"
+          className={`inline-block h-2 w-2 shrink-0 rounded-[3px] ${
+            premiumLookEnabled ? "" : "bg-amber-400"
+          }`}
+          style={tileStyle}
+        />
+      )}
+      {attempt.status === "failed" && (
+        <span aria-hidden className="no-underline text-red-400/70">✕</span>
+      )}
+      <span className="shrink-0 font-bold uppercase opacity-80">
+        {providerBadgeLabel(attempt.provider)}
+      </span>
+      <span className="truncate font-medium">{attempt.modelId}</span>
+    </div>
+  );
+}
+
+/**
+ * Ordered fallback-rival pills driven by the structured store progress state.
+ * Renders nothing (and reserves no space) outside an AI turn with attempts.
+ */
+export function FallbackAttemptProgress() {
+  const aiFallbackAttempts = useGameStore((s) => s.aiFallbackAttempts);
+  const activeIndex = useGameStore((s) => s.aiFallbackActiveIndex);
+
+  if (aiFallbackAttempts.length === 0) return null;
+
+  return (
+    <div
+      data-testid="ai-fallback-progress"
+      className="flex flex-wrap items-center gap-1.5 border-t border-stone-800/50 pt-2"
+    >
+      {aiFallbackAttempts.map((attempt, i) => (
+        <FallbackAttemptPill
+          key={`${attempt.provider}-${attempt.modelId}-${i}`}
+          attempt={attempt}
+          isActive={isAttemptPingPongActive(attempt.status, i === activeIndex)}
+        />
+      ))}
+    </div>
+  );
+}
+
 export function AIThinkingOverlay() {
   const aiThinking = useGameStore((s) => s.aiThinking);
   const aiCountdown = useGameStore((s) => s.aiCountdown);
@@ -194,6 +288,9 @@ export function AIThinkingOverlay() {
                 </div>
               )}
             </div>
+
+            {/* Fallback rival attempts (ordered pills) */}
+            <FallbackAttemptProgress />
 
             {/* Candidate list */}
             {aiCandidates.length > 0 ? (
