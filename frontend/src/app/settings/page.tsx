@@ -12,7 +12,7 @@ import { motion } from "framer-motion";
 import { useGameStore, type BoardTheme } from "@/hooks/useGameStore";
 import { providerBadgeLabel } from "@/lib/ai-fallback";
 import { api } from "@/lib/api";
-import { DEFAULT_FREE_MODEL_ID } from "@/lib/free-rivals";
+import { resolveEligibleModelId } from "@/lib/model-catalog";
 import {
   PREMIUM_PANEL_STYLE,
   handlePremiumSurfacePointer,
@@ -53,7 +53,7 @@ const MODAL_TRANSITION = {
 };
 
 const CATALOG_EMPTY_MESSAGE =
-  "The rival catalog is empty. Seed the five curated free rivals to play AI matches.";
+  "The rival catalog is empty. Seed the free catalog to play AI matches.";
 
 type NoticeTone = "success" | "warning" | "info";
 
@@ -77,17 +77,6 @@ function noticeClasses(tone: NoticeTone): string {
     return "border-amber-400/25 bg-amber-500/10 text-amber-100";
   }
   return "border-sky-400/25 bg-sky-500/10 text-sky-100";
-}
-
-function resolveEligibleModelId(
-  eligibleIds: string[],
-  preferredId: string | null | undefined,
-  storedId: string | null | undefined,
-): string | null {
-  if (preferredId && eligibleIds.includes(preferredId)) return preferredId;
-  if (storedId && eligibleIds.includes(storedId)) return storedId;
-  if (eligibleIds.includes(DEFAULT_FREE_MODEL_ID)) return DEFAULT_FREE_MODEL_ID;
-  return eligibleIds[0] ?? null;
 }
 
 function SettingsPanel({
@@ -597,7 +586,7 @@ export default function SettingsPage() {
             <section ref={rivalSectionRef} className="min-h-0">
               <SettingsPanel
                 title="Choose the rival"
-                description="Provider-diverse free rivals from the live catalog (five cards)."
+                description="Provider-diverse free rivals from the live catalog, newest first."
               >
                 <div className="mb-4 min-w-0">
                   <div

@@ -1,29 +1,23 @@
 import type { LanguageModel } from "ai";
 import { getOpenRouterModel } from "./openrouter";
 import { getNvidiaNimModel } from "./nvidia-nim";
+import {
+  NVIDIA_NIM_PROVIDER,
+  isValidRuntimePair,
+  type CatalogModelRow,
+} from "./model-catalog";
 
-export const OPENROUTER_PROVIDER = "openrouter" as const;
-export const NVIDIA_NIM_PROVIDER = "nvidia-nim" as const;
-
-export type AiRuntimeProvider =
-  | typeof OPENROUTER_PROVIDER
-  | typeof NVIDIA_NIM_PROVIDER;
-
-export type FreeRivalPair = readonly [AiRuntimeProvider, string];
-
-/** Keep in sync with backend/catalog/selection.py FREE_RIVAL_PAIRS. */
-export const FREE_RIVAL_PAIRS: readonly FreeRivalPair[] = [
-  [OPENROUTER_PROVIDER, "google/gemma-4-31b-it:free"],
-  [NVIDIA_NIM_PROVIDER, "nvidia/nemotron-3-super-120b-a12b"],
-  [OPENROUTER_PROVIDER, "nvidia/nemotron-3-super-120b-a12b:free"],
-  [OPENROUTER_PROVIDER, "z-ai/glm-5.2:free"],
-  [OPENROUTER_PROVIDER, "google/gemma-4-26b-a4b-it:free"],
-];
-
-export type CatalogModelRow = {
-  provider: string;
-  model_id: string;
-};
+export {
+  NVIDIA_NIM_MODEL_ID,
+  NVIDIA_NIM_PROVIDER,
+  OPENROUTER_PROVIDER,
+  isValidRuntimePair,
+  revalidateRuntimePair,
+} from "./model-catalog";
+export type {
+  AiRuntimeProvider,
+  CatalogModelRow,
+} from "./model-catalog";
 
 export type NormalizedProviderError = {
   code:
@@ -40,57 +34,29 @@ const RATE_LIMIT_MESSAGE =
 const UNAVAILABLE_MESSAGE =
   "This free rival is temporarily unavailable. Switch to another free rival or retry later.";
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
-export function isCuratedPair(provider: string, modelId: string): boolean {
-  return FREE_RIVAL_PAIRS.some(
-    ([entryProvider, entryModelId]) =>
-      entryProvider === provider && entryModelId === modelId,
-  );
-}
-
-export function findCuratedPair(
-  modelId: string,
-): { provider: AiRuntimeProvider; modelId: string } | null {
-  const pair = FREE_RIVAL_PAIRS.find(([, entryModelId]) => entryModelId === modelId);
-  return pair ? { provider: pair[0], modelId: pair[1] } : null;
-}
-
 export function parseCatalogModelRows(data: unknown): CatalogModelRow[] {
   if (!Array.isArray(data)) return [];
   const rows: CatalogModelRow[] = [];
   for (const item of data) {
-    if (!isRecord(item)) continue;
-    if (typeof item.provider !== "string" || typeof item.model_id !== "string") {
+    if (typeof item !== "object" || item === null) continue;
+    const record = item as Record<string, unknown>;
+    if (typeof record.provider !== "string" || typeof record.model_id !== "string") {
       continue;
     }
-    rows.push({ provider: item.provider, model_id: item.model_id });
+    rows.push({ provider: record.provider, model_id: record.model_id });
   }
   return rows;
 }
 
 /**
- * Accept only an exact pair present in both the curated registry and the
- * catalog list. Unknown or partial matches are rejected.
+ * Runtime dispatch accepts only structurally valid free pairs: OpenRouter
+ * native `vendor/model:free` IDs and the fixed NIM chat tuple.
  */
-export function revalidateRuntimePair(
-  provider: string,
-  modelId: string,
-  catalogRows: CatalogModelRow[],
-): boolean {
-  if (!isCuratedPair(provider, modelId)) return false;
-  return catalogRows.some(
-    (row) => row.provider === provider && row.model_id === modelId,
-  );
-}
-
 export function getLanguageModel(
   provider: string,
   modelId: string,
 ): LanguageModel {
-  if (!isCuratedPair(provider, modelId)) {
+  if (!isValidRuntimePair(provider, modelId)) {
     throw new Error("Unknown free-rival pair");
   }
   if (provider === NVIDIA_NIM_PROVIDER) {
@@ -104,7 +70,11 @@ export function getLanguageModel(
  * ok:false, missing ok, and non-objects are not legal terminals.
  */
 export function isLegalBackendTerminal(result: unknown): boolean {
-  return isRecord(result) && result.ok === true;
+  return (
+    typeof result === "object" &&
+    result !== null &&
+    (result as Record<string, unknown>).ok === true
+  );
 }
 
 function collectErrorGraph(error: unknown): {

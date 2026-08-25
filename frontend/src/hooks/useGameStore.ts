@@ -1,12 +1,12 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
-import { DEFAULT_FREE_MODEL_ID, resolveFreeRivalId } from "@/lib/free-rivals";
 import type {
   GameState,
   Placement,
   MoveResult,
   StartingDraw,
   AICandidate,
+  AiFallbackAttempt,
 } from "@/lib/types";
 
 interface PendingTile extends Placement {
@@ -23,7 +23,7 @@ interface GameStore {
   setRefreshToken: (token: string | null) => void;
   clearAuth: () => void;
 
-  // AI model selection
+  // AI model selection (empty string = unresolved; pages resolve from catalog row 1)
   selectedModelId: string;
   setSelectedModelId: (id: string) => void;
   selectedPromptId: number | null;
@@ -77,6 +77,14 @@ interface GameStore {
   aiStatusMessage: string | null;
   setAIStatusMessage: (message: string | null) => void;
 
+  // Structured fallback progress (ordered pills, failures, active attempt)
+  aiFallbackAttempts: AiFallbackAttempt[];
+  aiFallbackActiveIndex: number | null;
+  setAIFallbackAttempts: (attempts: AiFallbackAttempt[]) => void;
+  setAIFallbackActiveIndex: (index: number | null) => void;
+  markAIFallbackFailed: (index: number) => void;
+  clearAIFallbackProgress: () => void;
+
   // AI countdown (seconds remaining)
   aiCountdown: number;
   setAICountdown: (seconds: number) => void;
@@ -107,7 +115,7 @@ export const useGameStore = create<GameStore>()(
       setRefreshToken: (refreshToken) => set({ refreshToken }),
       clearAuth: () => set({ token: null, refreshToken: null }),
 
-      selectedModelId: DEFAULT_FREE_MODEL_ID,
+      selectedModelId: "",
       setSelectedModelId: (selectedModelId) => set({ selectedModelId }),
       selectedPromptId: null,
       setSelectedPromptId: (selectedPromptId) => set({ selectedPromptId }),
@@ -173,6 +181,21 @@ export const useGameStore = create<GameStore>()(
       aiStatusMessage: null,
       setAIStatusMessage: (aiStatusMessage) => set({ aiStatusMessage }),
 
+      aiFallbackAttempts: [],
+      aiFallbackActiveIndex: null,
+      setAIFallbackAttempts: (aiFallbackAttempts) =>
+        set({ aiFallbackAttempts, aiFallbackActiveIndex: null }),
+      setAIFallbackActiveIndex: (aiFallbackActiveIndex) =>
+        set({ aiFallbackActiveIndex }),
+      markAIFallbackFailed: (index) =>
+        set((s) => ({
+          aiFallbackAttempts: s.aiFallbackAttempts.map((attempt, i) =>
+            i === index ? { ...attempt, status: "failed" as const } : attempt,
+          ),
+        })),
+      clearAIFallbackProgress: () =>
+        set({ aiFallbackAttempts: [], aiFallbackActiveIndex: null }),
+
       aiCountdown: 0,
       setAICountdown: (aiCountdown) => set({ aiCountdown }),
 
@@ -197,6 +220,8 @@ export const useGameStore = create<GameStore>()(
           aiThinking: false,
           aiCandidates: [],
           aiStatusMessage: null,
+          aiFallbackAttempts: [],
+          aiFallbackActiveIndex: null,
           aiCountdown: 0,
           lastMoveResult: null,
           phase: "idle",
@@ -214,7 +239,7 @@ export const useGameStore = create<GameStore>()(
         const incoming = { ...((persistedState ?? {}) as Record<string, unknown>) };
         delete incoming.localAIContextLength;
         delete incoming.localAIReloadAfterTurn;
-        incoming.selectedModelId = resolveFreeRivalId(incoming.selectedModelId);
+        // Stale model ids are repaired at runtime against the live catalog.
         return incoming as unknown as GameStore;
       },
       storage: createJSONStorage(() =>

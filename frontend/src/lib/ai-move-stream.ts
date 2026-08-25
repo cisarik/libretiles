@@ -14,11 +14,14 @@ export type AiMoveStreamTerminal =
       kind: "coded_provider_error";
       code: CodedProviderErrorCode;
       message: string;
+      /** Provider model-step HTTP calls already spent inside the stream. */
+      providerRequestsUsed?: number;
     }
   | {
       kind: "generic_error";
       message: string;
       code?: string;
+      providerRequestsUsed?: number;
     }
   | { kind: "no_terminal" };
 
@@ -37,10 +40,26 @@ function recordErrorEvent(
 ): Exclude<AiMoveStreamTerminal, { kind: "done" } | { kind: "no_terminal" }> {
   const message = typeof json.error === "string" ? json.error : "AI error";
   const code = typeof json.code === "string" ? json.code : undefined;
+  const providerRequestsUsed =
+    typeof json.provider_requests_used === "number" &&
+    Number.isFinite(json.provider_requests_used) &&
+    json.provider_requests_used >= 0
+      ? Math.floor(json.provider_requests_used)
+      : undefined;
   if (code && isCodedProviderErrorCode(code)) {
-    return { kind: "coded_provider_error", code, message };
+    return {
+      kind: "coded_provider_error",
+      code,
+      message,
+      ...(providerRequestsUsed !== undefined ? { providerRequestsUsed } : {}),
+    };
   }
-  return { kind: "generic_error", message, code };
+  return {
+    kind: "generic_error",
+    message,
+    code,
+    ...(providerRequestsUsed !== undefined ? { providerRequestsUsed } : {}),
+  };
 }
 
 function applySseEvent(

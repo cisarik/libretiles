@@ -41,7 +41,6 @@ import {
 } from "@/lib/ai-fallback";
 import { consumeAIStream } from "@/lib/ai-move-stream";
 import { api } from "@/lib/api";
-import { resolveFreeRivalId } from "@/lib/free-rivals";
 import { PREMIUM_FOOTER_STYLE, handlePremiumSurfacePointer } from "@/lib/premiumSurface";
 import { isPlausibleRack } from "@/lib/rack";
 import { buildGameWebSocketUrl } from "@/lib/ws";
@@ -460,6 +459,12 @@ export default function GamePage() {
   const clearAICandidates = useGameStore((s) => s.clearAICandidates);
   const setAICountdown = useGameStore((s) => s.setAICountdown);
   const setAIStatusMessage = useGameStore((s) => s.setAIStatusMessage);
+  const setAIFallbackAttempts = useGameStore((s) => s.setAIFallbackAttempts);
+  const setAIFallbackActiveIndex = useGameStore(
+    (s) => s.setAIFallbackActiveIndex,
+  );
+  const markAIFallbackFailed = useGameStore((s) => s.markAIFallbackFailed);
+  const clearAIFallbackProgress = useGameStore((s) => s.clearAIFallbackProgress);
   const resetGameUi = useGameStore((s) => s.resetGameUi);
 
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -885,9 +890,7 @@ export default function GamePage() {
     if (gameState.current_turn_slot !== aiSlotNumber) return;
     if (aiInFlightRef.current) return;
 
-    const preferenceModelId = resolveFreeRivalId(
-      selectedModelId || gameState.ai_model_id,
-    );
+    const preferenceModelId = selectedModelId || gameState.ai_model_id || "";
     const turnStartedAtMs = Date.now();
     const turnAnchor = {
       gameId,
@@ -897,6 +900,7 @@ export default function GamePage() {
 
     aiInFlightRef.current = true;
     clearAICandidates();
+    clearAIFallbackProgress();
     setAIThinking(true);
     setAIStatusMessage(`Exploring legal words with ${preferenceModelId}...`);
     setAiError(null);
@@ -917,11 +921,19 @@ export default function GamePage() {
       } catch {
         queue = fallbackQueueForCatalogFailure(preferenceModelId);
       }
+      setAIFallbackAttempts(
+        queue.map((pair) => ({
+          provider: pair.provider,
+          modelId: pair.model_id,
+          status: "pending" as const,
+        })),
+      );
 
       const result = await orchestrateFallbackTurn({
         queue,
         turnStartedAtMs,
         aiTimeoutSeconds: aiTimeout,
+        maxStepsTotal: aiMaxSteps,
         now: Date.now,
         anchor: turnAnchor,
         fetchGameState: async () => {
@@ -939,16 +951,17 @@ export default function GamePage() {
             return null;
           }
         },
-        runStream: async ({ pair, attemptIndex, timeoutSeconds }) => {
+        runStream: async ({ pair, attemptIndex, timeoutSeconds, maxStepsRemaining }) => {
           const attemptLabel = `Attempt ${attemptIndex + 1}/${queue.length} · ${providerBadgeLabel(pair.provider)} · ${pair.model_id}`;
           setAIStatusMessage(attemptLabel);
+          setAIFallbackActiveIndex(attemptIndex);
           const payload = aiMoveRequestBody({
             gameId,
             token,
             preferenceModelId,
             runtimeModelId: pair.model_id,
             timeout: timeoutSeconds,
-            maxSteps: aiMaxSteps,
+            maxSteps: maxStepsRemaining,
           });
           const res = await fetch("/api/ai/move", {
             method: "POST",
@@ -980,6 +993,11 @@ export default function GamePage() {
             onStatus: (msg) => {
               setAIStatusMessage(`${attemptLabel} — ${msg}`);
             },
+          }).then((terminal) => {
+            if (terminal.kind === "coded_provider_error") {
+              markAIFallbackFailed(attemptIndex);
+            }
+            return terminal;
           });
         },
       });
@@ -1017,6 +1035,7 @@ export default function GamePage() {
         result.stopReason === "queue_exhausted"
         || result.stopReason === "deadline"
         || result.stopReason === "empty_queue"
+        || result.stopReason === "budget_exhausted"
       ) {
         setAiApproved(false);
         if (last?.kind === "coded_provider_error") {
@@ -1055,6 +1074,7 @@ export default function GamePage() {
     } finally {
       setAIThinking(false);
       setAIStatusMessage(null);
+      clearAIFallbackProgress();
       stopCountdown();
       aiInFlightRef.current = false;
     }
@@ -1062,6 +1082,8 @@ export default function GamePage() {
     token, gameState, gameId, selectedModelId, aiTimeout, aiMaxSteps, aiSlotNumber,
     setAIThinking, setLastMoveResult, setGameState, setAIStatusMessage, syncState,
     clearAICandidates, addAICandidate, startCountdown, stopCountdown, showToast,
+    setAIFallbackAttempts, setAIFallbackActiveIndex, markAIFallbackFailed,
+    clearAIFallbackProgress,
   ]);
 
   useEffect(() => {

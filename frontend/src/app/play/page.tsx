@@ -8,7 +8,7 @@ import { GameHistoryPanel } from "@/components/game/GameHistoryPanel";
 import { useGameStore } from "@/hooks/useGameStore";
 import { providerBadgeLabel } from "@/lib/ai-fallback";
 import { api } from "@/lib/api";
-import { DEFAULT_FREE_MODEL_ID } from "@/lib/free-rivals";
+import { resolveEligibleModelId } from "@/lib/model-catalog";
 import {
   PREMIUM_GOLD_TEXT_SHADOW_CLASS,
   PREMIUM_HEADER_STYLE,
@@ -25,18 +25,7 @@ import type {
 } from "@/lib/types";
 
 const CATALOG_EMPTY_MESSAGE =
-  "The rival catalog is empty. Seed the five curated free rivals to play AI matches.";
-
-function resolveEligibleModelId(
-  eligibleIds: string[],
-  preferredId: string | null | undefined,
-  storedId: string | null | undefined,
-): string | null {
-  if (preferredId && eligibleIds.includes(preferredId)) return preferredId;
-  if (storedId && eligibleIds.includes(storedId)) return storedId;
-  if (eligibleIds.includes(DEFAULT_FREE_MODEL_ID)) return DEFAULT_FREE_MODEL_ID;
-  return eligibleIds[0] ?? null;
-}
+  "The rival catalog is empty. Seed the free catalog to play AI matches.";
 
 function humanizeModelId(modelId?: string | null): string {
   if (!modelId) return "Choose AI";

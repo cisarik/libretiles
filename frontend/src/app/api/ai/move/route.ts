@@ -22,16 +22,14 @@ import { NextRequest } from "next/server";
 import { generateText, tool, stepCountIs } from "ai";
 import { z } from "zod";
 import {
-  DEFAULT_FREE_MODEL_ID,
-  resolveFreeRivalId,
-} from "@/lib/free-rivals";
+  findCatalogPair,
+  revalidateRuntimePair,
+} from "@/lib/model-catalog";
 import {
-  findCuratedPair,
   getLanguageModel,
   isLegalBackendTerminal,
   normalizeProviderError,
   parseCatalogModelRows,
-  revalidateRuntimePair,
 } from "@/lib/ai-runtimes";
 import {
   MOVE_SYSTEM_PROMPT,
@@ -516,7 +514,31 @@ export async function POST(req: NextRequest) {
         const sessionModelId =
           typeof context.ai_model_id === "string" ? context.ai_model_id : null;
 
-        if (requestedModelId && requestedModelId !== sessionModelId) {
+        const resolvedPair =
+          findCatalogPair(requestedModelId, catalogRows) ??
+          findCatalogPair(sessionModelId, catalogRows) ??
+          findCatalogPair(catalogRows[0]?.model_id, catalogRows);
+        if (!resolvedPair) {
+          emit({
+            type: "error",
+            code: "provider_unavailable",
+            error:
+              "This free rival is temporarily unavailable. Switch to another free rival or retry later.",
+            provider_path: providerPath,
+            runtime_model: runtimeModelId,
+          });
+          closeStream();
+          return;
+        }
+        const resolvedModelId = resolvedPair.model_id;
+
+        // Only a catalog-confirmed explicit preference may PATCH the session
+        // model; stale ids are repaired by falling back to the catalog order.
+        if (
+          requestedModelId &&
+          requestedModelId === resolvedPair.model_id &&
+          requestedModelId !== sessionModelId
+        ) {
           const updateResult = await backendPatch(
             `/api/game/${game_id}/ai-model/`,
             { ai_model_model_id: requestedModelId },
@@ -544,24 +566,20 @@ export async function POST(req: NextRequest) {
               MAX_MAX_OUTPUT_TOKENS,
             )
           : DEFAULT_MAX_OUTPUT_TOKENS;
-        const resolvedModelId = resolveFreeRivalId(
-          requestedModelId ||
-            sessionModelId ||
-            process.env.NEXT_PUBLIC_DEFAULT_MODEL ||
-            DEFAULT_FREE_MODEL_ID,
-        );
-        runtimeModelId =
-          requestedRuntimeModelId ||
-          resolvedModelId;
-        const runtimePair = findCuratedPair(runtimeModelId);
-        if (
-          !runtimePair ||
-          !revalidateRuntimePair(
-            runtimePair.provider,
-            runtimePair.modelId,
+        const requestedRuntimePair =
+          requestedRuntimeModelId
+            ? findCatalogPair(requestedRuntimeModelId, catalogRows)
+            : null;
+        const runtimePair =
+          requestedRuntimePair &&
+          revalidateRuntimePair(
+            requestedRuntimePair.provider,
+            requestedRuntimePair.model_id,
             catalogRows,
           )
-        ) {
+            ? requestedRuntimePair
+            : resolvedPair;
+        if (!revalidateRuntimePair(runtimePair.provider, runtimePair.model_id, catalogRows)) {
           emit({
             type: "error",
             code: "provider_unavailable",
@@ -573,6 +591,7 @@ export async function POST(req: NextRequest) {
           closeStream();
           return;
         }
+        runtimeModelId = runtimePair.model_id;
         providerPath = runtimePair.provider;
         const maxOutputTokens = requestedMaxOutputTokens;
         const useExtendedSearchBudget = timeoutS >= 90 || maxSteps >= 45;
@@ -589,7 +608,7 @@ export async function POST(req: NextRequest) {
             : MOVE_SYSTEM_PROMPT;
         let model;
         try {
-          model = getLanguageModel(runtimePair.provider, runtimePair.modelId);
+          model = getLanguageModel(runtimePair.provider, runtimePair.model_id);
         } catch (err) {
           const normalizedError = normalizeProviderError(err) ?? {
             code: "provider_auth_failed" as const,
@@ -631,6 +650,7 @@ export async function POST(req: NextRequest) {
               model: activeModel,
               maxOutputTokens,
               temperature: 0.15,
+              maxRetries: 0,
               system: activeMovePrompt,
               prompt: buildMoveUserPrompt(context),
               abortSignal: abortController.signal,
@@ -859,6 +879,7 @@ export async function POST(req: NextRequest) {
           provider_metadata: aiResult?.providerMetadata,
           usage: normalizedUsage,
           steps: aiResult?.steps?.length ?? completedStepCount,
+          provider_requests_used: aiResult?.steps?.length ?? completedStepCount,
           max_steps: maxSteps,
           auto_finalize_grace_ms: autoFinalizeGraceMs,
           auto_finalize_valid_cap: autoFinalizeValidCap,
@@ -889,9 +910,11 @@ export async function POST(req: NextRequest) {
         };
 
         // 4. Apply the final move
+        const providerRequestsUsed = aiResult?.steps?.length ?? completedStepCount;
         const runtimeFields = {
           provider_path: providerPath,
           runtime_model: runtimeModelId,
+          provider_requests_used: providerRequestsUsed,
         };
 
         function emitUnacceptedAction() {
@@ -1038,6 +1061,7 @@ export async function POST(req: NextRequest) {
             error: normalizedError.message,
             provider_path: providerPath,
             runtime_model: runtimeModelId,
+            provider_requests_used: completedStepCount,
           });
           closeStream();
           return;
@@ -1057,6 +1081,7 @@ export async function POST(req: NextRequest) {
                 error: "The AI action was not accepted.",
                 provider_path: providerPath,
                 runtime_model: runtimeModelId,
+                provider_requests_used: completedStepCount,
               });
             } else {
               const appliedWords = Array.isArray(moveResult.words)
@@ -1071,6 +1096,7 @@ export async function POST(req: NextRequest) {
                 fallback: true,
                 provider_path: providerPath,
                 runtime_model: runtimeModelId,
+                provider_requests_used: completedStepCount,
               });
             }
           } catch {
@@ -1079,6 +1105,7 @@ export async function POST(req: NextRequest) {
               error: "AI move failed",
               provider_path: providerPath,
               runtime_model: runtimeModelId,
+              provider_requests_used: completedStepCount,
             });
           }
         } else {
@@ -1087,6 +1114,7 @@ export async function POST(req: NextRequest) {
             error: "AI move failed",
             provider_path: providerPath,
             runtime_model: runtimeModelId,
+            provider_requests_used: completedStepCount,
           });
         }
       } finally {

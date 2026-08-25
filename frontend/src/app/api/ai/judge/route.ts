@@ -3,77 +3,176 @@
  *
  * Used as a fallback when a word is not in the local Collins 2019 dictionary.
  * The AI acts as a Libre Tiles referee, judging whether words are valid
- * based on lexicon knowledge and natural language understanding.
+ * based on lexicon knowledge. Collins 2019 remains the persisted-move
+ * authority; a judge result never overrides it.
  *
  * Validation pipeline:
  *   Tier 1: Local Collins 2019 dictionary (279,496 words, O(1) lookup) — Django
  *   Tier 2: Online dictionary API (optional) — Django
- *   Tier 3: AI Judge (this route) — free-rival dispatch (OpenRouter or NVIDIA NIM via `ai-runtimes`)
+ *   Tier 3: AI Judge (this route) — newest-first free-rival fallback queue
  *
- * See: scrabgpt/ai/client.py build_judge_prompt() for the original desktop version.
+ * Fallback contract:
+ *   - Same shared queue builder as /api/ai/move (preference first, then
+ *     untouched catalog order), capped at three distinct pairs.
+ *   - At most three sequential provider calls, 10s per attempt, 30s overall.
+ *   - AI SDK retries disabled; malformed output advances to the next model.
+ *   - Exhaustion is an explicit HTTP 503 — malformed output is never
+ *     synthesized into false "invalid" results.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { generateText } from "ai";
-import { resolveFreeRivalId } from "@/lib/free-rivals";
-import { findCuratedPair, getLanguageModel } from "@/lib/ai-runtimes";
-import { JUDGE_SYSTEM_PROMPT } from "@/lib/prompts";
+import { buildFallbackQueue, MAX_FALLBACK_ATTEMPTS } from "@/lib/ai-fallback";
+import {
+  getLanguageModel,
+  parseCatalogModelRows,
+} from "@/lib/ai-runtimes";
+
+const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8000";
+const ATTEMPT_TIMEOUT_MS = 10_000;
+const OVERALL_BUDGET_MS = 30_000;
+
+type JudgeResult = {
+  results: Array<{ word: string; valid: boolean; reason?: string }>;
+};
+
+async function fetchCatalogModelRows() {
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/catalog/models/`, {
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    const data: unknown = await res.json();
+    if (!Array.isArray(data)) return null;
+    return parseCatalogModelRows(data);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeWord(value: unknown): string | null {
+  return typeof value === "string" ? value.trim().toUpperCase() : null;
+}
+
+/**
+ * Strict one-result-per-input validation: the payload must be an object with
+ * a `results` array covering exactly the requested words (order-insensitive,
+ * case-insensitive), each with a boolean `valid`. Anything else is invalid
+ * judge output and must not be surfaced as a verdict.
+ */
+function parseJudgeResults(
+  text: string,
+  words: string[],
+): JudgeResult | null {
+  const match = text.match(/\{[\s\S]*"results"[\s\S]*\}/);
+  if (!match) return null;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(match[0]);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return null;
+  }
+  const rawResults = (parsed as Record<string, unknown>).results;
+  if (!Array.isArray(rawResults)) return null;
+  if (rawResults.length !== words.length) return null;
+
+  const expected = new Map<string, number>();
+  for (const word of words) {
+    expected.set(word, (expected.get(word) ?? 0) + 1);
+  }
+
+  const results: JudgeResult["results"] = [];
+  for (const entry of rawResults) {
+    if (typeof entry !== "object" || entry === null) return null;
+    const record = entry as Record<string, unknown>;
+    const word = normalizeWord(record.word);
+    if (!word || typeof record.valid !== "boolean") return null;
+    if ((expected.get(word) ?? 0) < 1) return null;
+    expected.set(word, (expected.get(word) ?? 0) - 1);
+    results.push({
+      word,
+      valid: record.valid,
+      ...(typeof record.reason === "string" ? { reason: record.reason } : {}),
+    });
+  }
+  for (const count of expected.values()) {
+    if (count !== 0) return null;
+  }
+  return { results };
+}
 
 export async function POST(req: NextRequest) {
+  let body: { words?: unknown; model_id?: unknown };
   try {
-    const { words, model_id } = (await req.json()) as {
-      words: string[];
-      model_id?: string;
-    };
+    body = (await req.json()) as { words?: unknown; model_id?: unknown };
+  } catch {
+    return NextResponse.json({ error: "No words provided" }, { status: 400 });
+  }
 
-    if (!words || words.length === 0) {
-      return NextResponse.json(
-        { error: "No words provided" },
-        { status: 400 },
-      );
+  const rawWords = body.words;
+  if (
+    !Array.isArray(rawWords) ||
+    rawWords.length === 0 ||
+    rawWords.some((word) => typeof word !== "string" || word.trim().length === 0)
+  ) {
+    return NextResponse.json({ error: "No words provided" }, { status: 400 });
+  }
+  const words = rawWords.map((word) => word.trim().toUpperCase());
+
+  const catalogRows = await fetchCatalogModelRows();
+  if (!catalogRows || catalogRows.length === 0) {
+    return NextResponse.json({ error: "AI judge failed" }, { status: 503 });
+  }
+
+  const preferenceId =
+    typeof body.model_id === "string" && body.model_id ? body.model_id : "";
+  const queue = buildFallbackQueue(preferenceId, catalogRows);
+  if (queue.length === 0) {
+    return NextResponse.json({ error: "AI judge failed" }, { status: 503 });
+  }
+
+  const overallDeadlineMs = Date.now() + OVERALL_BUDGET_MS;
+  for (const pair of queue.slice(0, MAX_FALLBACK_ATTEMPTS)) {
+    if (Date.now() + ATTEMPT_TIMEOUT_MS > overallDeadlineMs) break;
+
+    let model;
+    try {
+      model = getLanguageModel(pair.provider, pair.model_id);
+    } catch {
+      continue;
     }
-
-    const modelId = resolveFreeRivalId(model_id);
-    const pair = findCuratedPair(modelId);
-    if (!pair) {
-      return NextResponse.json({ error: "AI judge failed" }, { status: 500 });
-    }
-    const model = getLanguageModel(pair.provider, pair.modelId);
-
-    const result = await generateText({
-      model,
-      maxOutputTokens: 1000,
-      temperature: 0.1,
-      system: JUDGE_SYSTEM_PROMPT,
-      prompt: `Validate these words for English Libre Tiles play: ${words.join(", ")}. Return JSON exactly matching the schema.`,
-    });
 
     try {
-      const jsonMatch = result.text.match(/\{[\s\S]*"results"[\s\S]*\}/);
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]);
+      const result = await generateText({
+        model,
+        maxOutputTokens: 1000,
+        temperature: 0.1,
+        maxRetries: 0,
+        abortSignal: AbortSignal.timeout(ATTEMPT_TIMEOUT_MS),
+        system:
+          "You are the Libre Tiles word referee. Judge only against Collins " +
+          "Scrabble Words (2019). Reply with JSON only.",
+        prompt: `Validate these words for English Libre Tiles play: ${words.join(", ")}. Return JSON exactly matching the schema.`,
+      });
+
+      const parsed = parseJudgeResults(result.text, words);
+      if (parsed) {
         return NextResponse.json({
           ...parsed,
-          model: model_id || process.env.NEXT_PUBLIC_DEFAULT_MODEL,
+          model: pair.model_id,
+          provider: pair.provider,
           usage: result.usage,
         });
       }
     } catch {
-      // JSON parse failed
+      // Timeout, provider failure, or SDK error — advance to the next model.
+      continue;
     }
-
-    return NextResponse.json({
-      results: words.map((w) => ({
-        word: w,
-        valid: false,
-        reason: "Could not determine validity",
-      })),
-    });
-  } catch (error) {
-    console.error("AI judge error:", error);
-    return NextResponse.json(
-      { error: "AI judge failed" },
-      { status: 500 },
-    );
   }
+
+  return NextResponse.json({ error: "AI judge failed" }, { status: 503 });
 }

@@ -198,6 +198,14 @@ export type PremiumType = "TW" | "DW" | "TL" | "DL" | "";
 
 // AI thinking overlay types
 
+export type AiFallbackAttemptStatus = "pending" | "active" | "failed";
+
+export interface AiFallbackAttempt {
+  provider: string;
+  modelId: string;
+  status: AiFallbackAttemptStatus;
+}
+
 export interface AICandidate {
   word: string;
   score: number;

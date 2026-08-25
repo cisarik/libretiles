@@ -1,13 +1,19 @@
-import { findCuratedPair } from "./ai-runtimes";
 import type { AiMoveStreamTerminal } from "./ai-move-stream";
+import {
+  NVIDIA_NIM_MODEL_ID,
+  NVIDIA_NIM_PROVIDER,
+  OPENROUTER_PROVIDER,
+  isOpenRouterFreeId,
+  playableCatalogPairs,
+  type CatalogPair,
+} from "./model-catalog";
 
 export const MIN_ATTEMPT_TIMEOUT_SECONDS = 15;
 export const MAX_FALLBACK_ATTEMPTS = 3;
+/** An attempt shorter than this cannot complete a meaningful tool loop. */
+export const MIN_ATTEMPT_STEPS = 5;
 
-export type CatalogPair = {
-  provider: string;
-  model_id: string;
-};
+export type { CatalogPair };
 
 export type FallbackStopReason =
   | "done"
@@ -16,7 +22,8 @@ export type FallbackStopReason =
   | "queue_exhausted"
   | "deadline"
   | "reconciliation"
-  | "empty_queue";
+  | "empty_queue"
+  | "budget_exhausted";
 
 export type TurnAnchor = {
   gameId: string;
@@ -36,6 +43,8 @@ export type FallbackAttemptRequest = {
   pair: CatalogPair;
   attemptIndex: number;
   timeoutSeconds: number;
+  /** Remaining whole-turn provider-call budget granted to this attempt. */
+  maxStepsRemaining: number;
 };
 
 function pairKey(pair: CatalogPair): string {
@@ -74,70 +83,46 @@ export function aiMoveRequestBody(input: {
 }
 
 /**
- * Catalog rows are already eligibility-filtered. Queue at most three distinct
- * `(provider, model_id)` pairs: selected, then unused-provider diversity, then
- * unused providers or the next unused catalog models.
+ * One shared queue for Play and Judge. A valid explicit preference is attempt
+ * 1; remaining attempts follow untouched catalog order (newest-first). Distinct
+ * pairs only, capped at MAX_FALLBACK_ATTEMPTS.
  */
 export function buildFallbackQueue(
-  selectedModelId: string,
+  selectedModelId: string | null | undefined,
   catalogRows: CatalogPair[],
 ): CatalogPair[] {
+  const rows = playableCatalogPairs(catalogRows);
+  const selected =
+    selectedModelId
+      ? rows.find((row) => row.model_id === selectedModelId)
+      : undefined;
+
   const queue: CatalogPair[] = [];
   const used = new Set<string>();
-  const usedProviders = new Set<string>();
-
-  const tryAppend = (row: CatalogPair): boolean => {
+  for (const row of selected ? [selected, ...rows] : rows) {
     const key = pairKey(row);
-    if (used.has(key)) return false;
+    if (used.has(key)) continue;
     used.add(key);
-    usedProviders.add(row.provider);
     queue.push({ provider: row.provider, model_id: row.model_id });
-    return true;
-  };
-
-  const selected = catalogRows.find((row) => row.model_id === selectedModelId);
-  if (selected) tryAppend(selected);
-
-  const appendUnusedProvider = (): boolean => {
-    for (const row of catalogRows) {
-      if (used.has(pairKey(row))) continue;
-      if (usedProviders.has(row.provider)) continue;
-      return tryAppend(row);
-    }
-    return false;
-  };
-
-  const appendNextUnused = (): boolean => {
-    for (const row of catalogRows) {
-      if (used.has(pairKey(row))) continue;
-      return tryAppend(row);
-    }
-    return false;
-  };
-
-  if (queue.length < MAX_FALLBACK_ATTEMPTS) {
-    appendUnusedProvider();
+    if (queue.length >= MAX_FALLBACK_ATTEMPTS) break;
   }
-
-  while (queue.length < MAX_FALLBACK_ATTEMPTS) {
-    if (appendUnusedProvider()) continue;
-    if (!appendNextUnused()) break;
-  }
-
   return queue;
 }
 
-/** Catalog fetch failed: only the already-resolved selected id, no static fill. */
+/**
+ * Catalog fetch failed: only the already-resolved selected id may be tried,
+ * and only when it is structurally playable. Never invent a static list.
+ */
 export function fallbackQueueForCatalogFailure(
   selectedModelId: string,
 ): CatalogPair[] {
-  const curated = findCuratedPair(selectedModelId);
-  return [
-    {
-      provider: curated?.provider ?? "openrouter",
-      model_id: selectedModelId,
-    },
-  ];
+  if (selectedModelId === NVIDIA_NIM_MODEL_ID) {
+    return [{ provider: NVIDIA_NIM_PROVIDER, model_id: selectedModelId }];
+  }
+  if (isOpenRouterFreeId(selectedModelId)) {
+    return [{ provider: OPENROUTER_PROVIDER, model_id: selectedModelId }];
+  }
+  return [];
 }
 
 export function remainingTimeoutSeconds(
@@ -163,6 +148,29 @@ export function gameStateAllowsRetry(
   if (latest.current_turn_slot !== anchor.aiSlot) return false;
   if (latest.game_over) return false;
   return true;
+}
+
+/** Whole-turn provider-call usage reported by a terminal. */
+export function providerRequestsUsedFromTerminal(
+  terminal: AiMoveStreamTerminal | null,
+): number {
+  if (!terminal) return 0;
+  if (terminal.kind === "done") {
+    const used = terminal.data.provider_requests_used;
+    return typeof used === "number" && Number.isFinite(used) && used >= 0
+      ? Math.floor(used)
+      : 0;
+  }
+  if (
+    terminal.kind === "coded_provider_error" ||
+    terminal.kind === "generic_error"
+  ) {
+    const used = terminal.providerRequestsUsed;
+    return typeof used === "number" && Number.isFinite(used) && used >= 0
+      ? Math.floor(used)
+      : 0;
+  }
+  return 0;
 }
 
 export function decideNextFallbackAttempt(input: {
@@ -208,13 +216,16 @@ function stopReasonFromTerminal(
 }
 
 /**
- * Sequential one-turn fallback. Attempt 2+ never POSTs unless Django state
- * still matches the turn anchor.
+ * Sequential one-turn fallback with one shared provider-call budget across
+ * attempts. Attempt 2+ never POSTs unless Django state still matches the
+ * turn anchor, the deadline allows it, and budget remains.
  */
 export async function orchestrateFallbackTurn(opts: {
   queue: CatalogPair[];
   turnStartedAtMs: number;
   aiTimeoutSeconds: number;
+  /** Whole-turn provider-call budget shared by every fallback attempt. */
+  maxStepsTotal: number;
   now: () => number;
   anchor: TurnAnchor;
   fetchGameState: () => Promise<ReconciliationView | null>;
@@ -223,12 +234,15 @@ export async function orchestrateFallbackTurn(opts: {
   posts: FallbackAttemptRequest[];
   stopReason: FallbackStopReason;
   lastTerminal: AiMoveStreamTerminal | null;
+  providerRequestsUsed: number;
 }> {
   const posts: FallbackAttemptRequest[] = [];
   let lastTerminal: AiMoveStreamTerminal | null = null;
+  let providerRequestsUsed = 0;
+  let remainingSteps = Math.max(Math.floor(opts.maxStepsTotal), 0);
 
   if (opts.queue.length === 0) {
-    return { posts, stopReason: "empty_queue", lastTerminal };
+    return { posts, stopReason: "empty_queue", lastTerminal, providerRequestsUsed };
   }
 
   for (let attemptIndex = 0; attemptIndex < opts.queue.length; attemptIndex += 1) {
@@ -240,10 +254,23 @@ export async function orchestrateFallbackTurn(opts: {
     let reconciliationAllowsRetry: boolean | null = null;
     if (attemptIndex > 0) {
       if (!canStartAttempt(remainingSeconds)) {
-        return { posts, stopReason: "deadline", lastTerminal };
+        return {
+          posts,
+          stopReason: "deadline",
+          lastTerminal,
+          providerRequestsUsed,
+        };
       }
       const latest = await opts.fetchGameState();
       reconciliationAllowsRetry = gameStateAllowsRetry(opts.anchor, latest);
+    }
+    if (attemptIndex > 0 && remainingSteps < MIN_ATTEMPT_STEPS) {
+      return {
+        posts,
+        stopReason: "budget_exhausted",
+        lastTerminal,
+        providerRequestsUsed,
+      };
     }
 
     const decision = decideNextFallbackAttempt({
@@ -254,13 +281,19 @@ export async function orchestrateFallbackTurn(opts: {
       reconciliationAllowsRetry,
     });
     if (decision.action === "stop") {
-      return { posts, stopReason: decision.reason, lastTerminal };
+      return {
+        posts,
+        stopReason: decision.reason,
+        lastTerminal,
+        providerRequestsUsed,
+      };
     }
 
     const request: FallbackAttemptRequest = {
       pair: opts.queue[attemptIndex],
       attemptIndex,
       timeoutSeconds: decision.timeoutSeconds,
+      maxStepsRemaining: remainingSteps,
     };
     posts.push(request);
 
@@ -275,9 +308,19 @@ export async function orchestrateFallbackTurn(opts: {
 
     const immediateStop = stopReasonFromTerminal(lastTerminal);
     if (immediateStop) {
-      return { posts, stopReason: immediateStop, lastTerminal };
+      return { posts, stopReason: immediateStop, lastTerminal, providerRequestsUsed };
     }
+
+    // A failed stream without reported usage conservatively charges the
+    // minimum viable attempt so unaccounted provider HTTP cannot spin forever.
+    const reported = providerRequestsUsedFromTerminal(lastTerminal);
+    const charged =
+      lastTerminal?.kind === "done"
+        ? reported
+        : Math.max(reported, MIN_ATTEMPT_STEPS);
+    remainingSteps = Math.max(remainingSteps - charged, 0);
+    providerRequestsUsed += reported;
   }
 
-  return { posts, stopReason: "queue_exhausted", lastTerminal };
+  return { posts, stopReason: "queue_exhausted", lastTerminal, providerRequestsUsed };
 }

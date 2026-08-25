@@ -1,7 +1,6 @@
 import type { LanguageModel } from "ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  findCuratedPair,
   getLanguageModel,
   isLegalBackendTerminal,
   normalizeProviderError,
@@ -17,7 +16,6 @@ const CATALOG_ROWS = [
   { provider: "nvidia-nim", model_id: NVIDIA_NIM_NEMOTRON },
   { provider: "openrouter", model_id: OPENROUTER_NEMOTRON },
   { provider: "openrouter", model_id: "z-ai/glm-5.2:free" },
-  { provider: "openrouter", model_id: "google/gemma-4-26b-a4b-it:free" },
 ];
 
 afterEach(() => {
@@ -53,18 +51,16 @@ function assertChatModel(
   expect(model.modelId).toBe(modelId);
 }
 
-function sseTypeForBackendResult(result: unknown): "done" | "error" {
-  return isLegalBackendTerminal(result) ? "done" : "error";
-}
-
 describe("getLanguageModel", () => {
-  it("maps OpenRouter Gemma through Chat Completions", () => {
+  it("maps catalog-confirmed OpenRouter :free IDs through Chat Completions", () => {
     vi.stubEnv("OPENROUTER_API_KEY", "test-openrouter-key");
     const model = getLanguageModel("openrouter", OPENROUTER_GEMMA);
     assertChatModel(model, "openrouter", OPENROUTER_GEMMA);
+    const nemotron = getLanguageModel("openrouter", OPENROUTER_NEMOTRON);
+    assertChatModel(nemotron, "openrouter", OPENROUTER_NEMOTRON);
   });
 
-  it("maps NVIDIA NIM Nemotron through Chat Completions", () => {
+  it("maps the fixed NVIDIA NIM tuple through Chat Completions", () => {
     vi.stubEnv("NVIDIA_API_KEY", "test-nvidia-key");
     const model = getLanguageModel("nvidia-nim", NVIDIA_NIM_NEMOTRON);
     assertChatModel(model, "nvidia-nim", NVIDIA_NIM_NEMOTRON);
@@ -86,32 +82,58 @@ describe("getLanguageModel", () => {
     }
   });
 
-  it("rejects unknown provider/model pairs", () => {
+  it("rejects paid, unknown-provider, cross-provider, and non-free pairs", () => {
     vi.stubEnv("OPENROUTER_API_KEY", "test-openrouter-key");
+    vi.stubEnv("NVIDIA_API_KEY", "test-nvidia-key");
+    // OpenRouter runtime ID without the :free suffix
+    expect(() =>
+      getLanguageModel("openrouter", "openai/gpt-5-mini"),
+    ).toThrow(/unknown free-rival pair/i);
+    // Unknown provider
+    expect(() =>
+      getLanguageModel("anthropic", "anthropic/claude:free"),
+    ).toThrow(/unknown free-rival pair/i);
+    // NIM tuple claimed under the OpenRouter provider
     expect(() =>
       getLanguageModel("openrouter", NVIDIA_NIM_NEMOTRON),
     ).toThrow(/unknown free-rival pair/i);
+    // OpenRouter :free id claimed under the NIM provider
     expect(() =>
       getLanguageModel("nvidia-nim", OPENROUTER_GEMMA),
     ).toThrow(/unknown free-rival pair/i);
-    expect(findCuratedPair("openai/gpt-4o")).toBeNull();
+    // Excluded meta-row
+    expect(() =>
+      getLanguageModel("openrouter", "openrouter/free"),
+    ).toThrow(/unknown free-rival pair/i);
   });
 });
 
 describe("revalidateRuntimePair", () => {
-  it("accepts only exact curated pairs that are also in the catalog", () => {
+  it("accepts only exact structurally valid pairs that are in the catalog", () => {
     expect(
       revalidateRuntimePair("nvidia-nim", NVIDIA_NIM_NEMOTRON, CATALOG_ROWS),
     ).toBe(true);
     expect(
       revalidateRuntimePair("openrouter", OPENROUTER_GEMMA, CATALOG_ROWS),
     ).toBe(true);
+    // Structurally valid but absent from the catalog
     expect(
-      revalidateRuntimePair("openrouter", NVIDIA_NIM_NEMOTRON, CATALOG_ROWS),
+      revalidateRuntimePair("openrouter", "qwen/qwen3-next:free", CATALOG_ROWS),
     ).toBe(false);
     expect(
       revalidateRuntimePair("nvidia-nim", NVIDIA_NIM_NEMOTRON, [
         { provider: "openrouter", model_id: OPENROUTER_GEMMA },
+      ]),
+    ).toBe(false);
+    // Structurally invalid even when present
+    expect(
+      revalidateRuntimePair("openrouter", NVIDIA_NIM_NEMOTRON, [
+        { provider: "openrouter", model_id: NVIDIA_NIM_NEMOTRON },
+      ]),
+    ).toBe(false);
+    expect(
+      revalidateRuntimePair("openrouter", "openai/gpt-5-mini", [
+        { provider: "openrouter", model_id: "openai/gpt-5-mini" },
       ]),
     ).toBe(false);
   });
@@ -125,16 +147,14 @@ describe("isLegalBackendTerminal", () => {
   });
 
   it("rejects failed pass/exchange payloads so routes must not emit done", () => {
-    expect(sseTypeForBackendResult({ ok: false, action: "pass" })).toBe(
-      "error",
+    expect(isLegalBackendTerminal({ ok: false, action: "pass" })).toBe(false);
+    expect(isLegalBackendTerminal({ ok: false, action: "exchange" })).toBe(
+      false,
     );
-    expect(sseTypeForBackendResult({ ok: false, action: "exchange" })).toBe(
-      "error",
-    );
-    expect(sseTypeForBackendResult({ action: "pass" })).toBe("error");
-    expect(sseTypeForBackendResult(null)).toBe("error");
-    expect(sseTypeForBackendResult("ok")).toBe("error");
-    expect(sseTypeForBackendResult({ ok: true, action: "pass" })).toBe("done");
+    expect(isLegalBackendTerminal({ action: "pass" })).toBe(false);
+    expect(isLegalBackendTerminal(null)).toBe(false);
+    expect(isLegalBackendTerminal("ok")).toBe(false);
+    expect(isLegalBackendTerminal({ ok: true, action: "pass" })).toBe(true);
   });
 });
 

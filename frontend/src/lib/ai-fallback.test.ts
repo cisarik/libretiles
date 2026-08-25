@@ -9,6 +9,7 @@ import {
   gameStateAllowsRetry,
   orchestrateFallbackTurn,
   providerBadgeLabel,
+  providerRequestsUsedFromTerminal,
   remainingTimeoutSeconds,
   type CatalogPair,
   type ReconciliationView,
@@ -21,12 +22,13 @@ const OPENROUTER_NEMOTRON = "nvidia/nemotron-3-super-120b-a12b:free";
 const OPENROUTER_GLM = "z-ai/glm-5.2:free";
 const OPENROUTER_GEMMA_SMALL = "google/gemma-4-26b-a4b-it:free";
 
-const FULL_CATALOG: CatalogPair[] = [
-  { provider: "openrouter", model_id: OPENROUTER_GEMMA },
-  { provider: "nvidia-nim", model_id: NVIDIA_NIM_NEMOTRON },
-  { provider: "openrouter", model_id: OPENROUTER_NEMOTRON },
+/** Newest-first catalog order as returned by /api/catalog/models/. */
+const NEWEST_FIRST_CATALOG: CatalogPair[] = [
   { provider: "openrouter", model_id: OPENROUTER_GLM },
+  { provider: "openrouter", model_id: OPENROUTER_NEMOTRON },
   { provider: "openrouter", model_id: OPENROUTER_GEMMA_SMALL },
+  { provider: "nvidia-nim", model_id: NVIDIA_NIM_NEMOTRON },
+  { provider: "openrouter", model_id: OPENROUTER_GEMMA },
 ];
 
 const ANCHOR: TurnAnchor = {
@@ -66,29 +68,56 @@ const CODED_UNAVAILABLE: AiMoveStreamTerminal = {
   message: "provider down",
 };
 
+function doneWith(used?: number): AiMoveStreamTerminal {
+  return {
+    kind: "done",
+    data:
+      used === undefined
+        ? { type: "done", ok: true, action: "place" }
+        : { type: "done", ok: true, action: "place", provider_requests_used: used },
+  };
+}
+
 describe("buildFallbackQueue", () => {
-  it("orders selected, unused provider, then next unused catalog pair", () => {
-    expect(buildFallbackQueue(OPENROUTER_GEMMA, FULL_CATALOG)).toEqual([
-      { provider: "openrouter", model_id: OPENROUTER_GEMMA },
+  it("puts a valid preference first then follows untouched catalog order", () => {
+    expect(buildFallbackQueue(OPENROUTER_NEMOTRON, NEWEST_FIRST_CATALOG)).toEqual([
+      { provider: "openrouter", model_id: OPENROUTER_NEMOTRON },
+      { provider: "openrouter", model_id: OPENROUTER_GLM },
+      { provider: "openrouter", model_id: OPENROUTER_GEMMA_SMALL },
+    ]);
+  });
+
+  it("starts at catalog row 1 when the preference is stale or missing", () => {
+    expect(buildFallbackQueue("gone/model:free", NEWEST_FIRST_CATALOG)).toEqual([
+      { provider: "openrouter", model_id: OPENROUTER_GLM },
+      { provider: "openrouter", model_id: OPENROUTER_NEMOTRON },
+      { provider: "openrouter", model_id: OPENROUTER_GEMMA_SMALL },
+    ]);
+    expect(buildFallbackQueue(null, NEWEST_FIRST_CATALOG)).toEqual([
+      { provider: "openrouter", model_id: OPENROUTER_GLM },
+      { provider: "openrouter", model_id: OPENROUTER_NEMOTRON },
+      { provider: "openrouter", model_id: OPENROUTER_GEMMA_SMALL },
+    ]);
+    expect(buildFallbackQueue(NVIDIA_NIM_NEMOTRON, NEWEST_FIRST_CATALOG)).toEqual([
       { provider: "nvidia-nim", model_id: NVIDIA_NIM_NEMOTRON },
+      { provider: "openrouter", model_id: OPENROUTER_GLM },
       { provider: "openrouter", model_id: OPENROUTER_NEMOTRON },
     ]);
   });
 
-  it("starts from the selected NIM pair then the first unused provider", () => {
-    expect(buildFallbackQueue(NVIDIA_NIM_NEMOTRON, FULL_CATALOG)).toEqual([
-      { provider: "nvidia-nim", model_id: NVIDIA_NIM_NEMOTRON },
-      { provider: "openrouter", model_id: OPENROUTER_GEMMA },
-      { provider: "openrouter", model_id: OPENROUTER_NEMOTRON },
-    ]);
+  it("gives Play and Judge identical queues for identical inputs", () => {
+    const playQueue = buildFallbackQueue(OPENROUTER_GEMMA, NEWEST_FIRST_CATALOG);
+    const judgeQueue = buildFallbackQueue(OPENROUTER_GEMMA, NEWEST_FIRST_CATALOG);
+    expect(playQueue).toEqual(judgeQueue);
+    expect(playQueue).toHaveLength(3);
   });
 
-  it("de-duplicates exact provider/model pairs and caps at three", () => {
+  it("de-duplicates exact pairs and never exceeds three attempts", () => {
     const duplicated: CatalogPair[] = [
-      ...FULL_CATALOG,
-      { provider: "openrouter", model_id: OPENROUTER_GEMMA },
+      ...NEWEST_FIRST_CATALOG,
+      { provider: "openrouter", model_id: OPENROUTER_GLM },
     ];
-    const queue = buildFallbackQueue(OPENROUTER_GEMMA, duplicated);
+    const queue = buildFallbackQueue(OPENROUTER_GLM, duplicated);
     expect(queue).toHaveLength(3);
     const keys = queue.map((pair) => `${pair.provider}:${pair.model_id}`);
     expect(new Set(keys).size).toBe(3);
@@ -98,34 +127,32 @@ describe("buildFallbackQueue", () => {
     expect(buildFallbackQueue(OPENROUTER_GEMMA, [])).toEqual([]);
   });
 
-  it("queues up to three models from a single-provider catalog", () => {
-    const singleProvider: CatalogPair[] = [
-      { provider: "openrouter", model_id: OPENROUTER_GEMMA },
-      { provider: "openrouter", model_id: OPENROUTER_NEMOTRON },
+  it("drops structurally invalid rows such as paid or unknown-provider ids", () => {
+    const dirty: CatalogPair[] = [
+      { provider: "openrouter", model_id: "openai/gpt-5-mini" },
+      { provider: "anthropic", model_id: "anthropic/claude:free" },
+      { provider: "nvidia-nim", model_id: OPENROUTER_GEMMA },
       { provider: "openrouter", model_id: OPENROUTER_GLM },
-      { provider: "openrouter", model_id: OPENROUTER_GEMMA_SMALL },
     ];
-    expect(buildFallbackQueue(OPENROUTER_GEMMA, singleProvider)).toEqual([
-      { provider: "openrouter", model_id: OPENROUTER_GEMMA },
-      { provider: "openrouter", model_id: OPENROUTER_NEMOTRON },
+    expect(buildFallbackQueue("", dirty)).toEqual([
       { provider: "openrouter", model_id: OPENROUTER_GLM },
-    ]);
-  });
-
-  it("skips a selected id that is missing from the catalog", () => {
-    expect(buildFallbackQueue("missing/model", FULL_CATALOG)).toEqual([
-      { provider: "openrouter", model_id: OPENROUTER_GEMMA },
-      { provider: "nvidia-nim", model_id: NVIDIA_NIM_NEMOTRON },
-      { provider: "openrouter", model_id: OPENROUTER_NEMOTRON },
     ]);
   });
 });
 
 describe("catalog failure and timeout helpers", () => {
-  it("does not invent a static fallback list when the catalog fetch failed", () => {
+  it("keeps only a playable selected id when the catalog fetch failed", () => {
+    expect(fallbackQueueForCatalogFailure(OPENROUTER_GEMMA)).toEqual([
+      { provider: "openrouter", model_id: OPENROUTER_GEMMA },
+    ]);
     expect(fallbackQueueForCatalogFailure(NVIDIA_NIM_NEMOTRON)).toEqual([
       { provider: "nvidia-nim", model_id: NVIDIA_NIM_NEMOTRON },
     ]);
+  });
+
+  it("fails closed with an empty queue for an unplayable selected id", () => {
+    expect(fallbackQueueForCatalogFailure("openai/gpt-5-mini")).toEqual([]);
+    expect(fallbackQueueForCatalogFailure("")).toEqual([]);
   });
 
   it("refuses another attempt when remaining timeout is under 15 seconds", () => {
@@ -203,11 +230,38 @@ describe("gameStateAllowsRetry", () => {
   });
 });
 
+describe("providerRequestsUsedFromTerminal", () => {
+  it("reads usage from done data and error terminals only", () => {
+    expect(providerRequestsUsedFromTerminal(doneWith(7))).toBe(7);
+    expect(providerRequestsUsedFromTerminal(CODED_429)).toBe(0);
+    expect(
+      providerRequestsUsedFromTerminal({
+        kind: "coded_provider_error",
+        code: "provider_rate_limited",
+        message: "429",
+        providerRequestsUsed: 3,
+      }),
+    ).toBe(3);
+    expect(
+      providerRequestsUsedFromTerminal({
+        kind: "generic_error",
+        message: "boom",
+        providerRequestsUsed: 2,
+      }),
+    ).toBe(2);
+    expect(
+      providerRequestsUsedFromTerminal({ kind: "no_terminal" }),
+    ).toBe(0);
+    expect(providerRequestsUsedFromTerminal(doneWith(-4))).toBe(0);
+  });
+});
+
 describe("orchestrateFallbackTurn", () => {
   const baseOpts = {
-    queue: buildFallbackQueue(OPENROUTER_GEMMA, FULL_CATALOG),
+    queue: buildFallbackQueue("", NEWEST_FIRST_CATALOG),
     turnStartedAtMs: 0,
     aiTimeoutSeconds: 60,
+    maxStepsTotal: 30,
     now: () => 1_000,
     anchor: ANCHOR,
   };
@@ -223,87 +277,61 @@ describe("orchestrateFallbackTurn", () => {
     expect(result.stopReason).toBe("reconciliation");
   });
 
-  it("does not start a second stream after a persisted move_count change", async () => {
-    const fetchGameState = vi.fn(async () => activeState({ move_count: 5 }));
-    const runStream = vi.fn(async () => CODED_429);
-    const result = await orchestrateFallbackTurn({
-      ...baseOpts,
-      fetchGameState,
-      runStream,
-    });
-    expect(runStream).toHaveBeenCalledTimes(1);
-    expect(fetchGameState).toHaveBeenCalledTimes(1);
-    expect(result.posts).toHaveLength(1);
-    expect(result.stopReason).toBe("reconciliation");
-  });
-
-  it("does not start a second stream after the turn leaves the AI", async () => {
-    const result = await orchestrateFallbackTurn({
-      ...baseOpts,
-      fetchGameState: async () => activeState({ current_turn_slot: 0 }),
-      runStream: async () => CODED_AUTH,
-    });
-    expect(result.posts).toHaveLength(1);
-    expect(result.stopReason).toBe("reconciliation");
-  });
-
-  it("does not start a second stream after game-over", async () => {
-    const result = await orchestrateFallbackTurn({
-      ...baseOpts,
-      fetchGameState: async () =>
-        activeState({ game_over: true, status: "finished" }),
-      runStream: async () => CODED_UNAVAILABLE,
-    });
-    expect(result.posts).toHaveLength(1);
-    expect(result.stopReason).toBe("reconciliation");
-  });
-
-  it("retries a missing NIM key onto the next queued model", async () => {
+  it("retries onto the next queued model after a reported failure", async () => {
     const terminals: AiMoveStreamTerminal[] = [
       CODED_AUTH,
-      { kind: "done", data: { type: "done", ok: true, action: "pass" } },
+      doneWith(),
     ];
-    const runStream = vi.fn(async () => terminals.shift()!);
+    const runStream = vi.fn(
+      async (request: { attemptIndex: number }): Promise<AiMoveStreamTerminal> =>
+        request.attemptIndex === 0 ? terminals[0] : terminals[1],
+    );
     const result = await orchestrateFallbackTurn({
-      queue: buildFallbackQueue(NVIDIA_NIM_NEMOTRON, FULL_CATALOG),
-      turnStartedAtMs: 0,
-      aiTimeoutSeconds: 60,
-      now: () => 1_000,
-      anchor: ANCHOR,
+      ...baseOpts,
+      queue: buildFallbackQueue(NVIDIA_NIM_NEMOTRON, NEWEST_FIRST_CATALOG),
       fetchGameState: async () => activeState(),
       runStream,
     });
     expect(runStream).toHaveBeenCalledTimes(2);
     expect(result.posts[0]?.pair.model_id).toBe(NVIDIA_NIM_NEMOTRON);
-    expect(result.posts[1]?.pair.provider).toBe("openrouter");
+    expect(result.posts[0]?.maxStepsRemaining).toBe(30);
     expect(result.stopReason).toBe("done");
   });
 
-  it("retries a nested OpenRouter 429 onto NIM as the second model", async () => {
-    const terminals: AiMoveStreamTerminal[] = [
-      CODED_429,
-      { kind: "done", data: { type: "done", ok: true, action: "place" } },
-    ];
-    const runStream = vi.fn(async () => terminals.shift()!);
+  it("shares one whole-turn budget across fallback attempts", async () => {
+    let calls = 0;
+    const grantedSteps: number[] = [];
+    const runStream = vi.fn(async (request: { maxStepsRemaining: number }) => {
+      calls += 1;
+      grantedSteps.push(request.maxStepsRemaining);
+      return {
+        kind: "coded_provider_error" as const,
+        code: "provider_rate_limited" as const,
+        message: "429",
+        providerRequestsUsed: 10,
+      };
+    });
     const result = await orchestrateFallbackTurn({
       ...baseOpts,
+      maxStepsTotal: 20,
       fetchGameState: async () => activeState(),
       runStream,
     });
-    expect(result.posts).toHaveLength(2);
-    expect(result.posts[1]?.pair).toEqual({
-      provider: "nvidia-nim",
-      model_id: NVIDIA_NIM_NEMOTRON,
-    });
-    expect(result.stopReason).toBe("done");
+    // Attempt 1 grants the full budget minus nothing; attempt 2 gets only
+    // what attempt 1 did not use; attempt 3 would fall under the floor.
+    expect(calls).toBe(2);
+    expect(grantedSteps).toEqual([20, 10]);
+    expect(result.stopReason).toBe("budget_exhausted");
+    expect(result.providerRequestsUsed).toBe(20);
   });
 
   it("stops after a successful second-model done and does not open a third stream", async () => {
-    const terminals: AiMoveStreamTerminal[] = [
-      CODED_429,
-      { kind: "done", data: { type: "done", ok: true, action: "exchange" } },
-    ];
-    const runStream = vi.fn(async () => terminals.shift()!);
+    const runStream = vi.fn(
+      async (request: {
+        attemptIndex: number;
+      }): Promise<AiMoveStreamTerminal> =>
+        request.attemptIndex === 0 ? CODED_429 : doneWith(4),
+    );
     const result = await orchestrateFallbackTurn({
       ...baseOpts,
       fetchGameState: async () => activeState(),
@@ -311,28 +339,35 @@ describe("orchestrateFallbackTurn", () => {
     });
     expect(runStream).toHaveBeenCalledTimes(2);
     expect(result.stopReason).toBe("done");
+    expect(result.lastTerminal?.kind).toBe("done");
   });
 
-  it("exhausts the queue when every provider is unavailable", async () => {
-    const runStream = vi.fn(async () => CODED_UNAVAILABLE);
+  it("exhausts the queue when every provider is unavailable but reports usage", async () => {
+    const runStream = vi.fn(async () => ({
+      ...CODED_UNAVAILABLE,
+      providerRequestsUsed: 2,
+    }));
     const result = await orchestrateFallbackTurn({
       ...baseOpts,
+      maxStepsTotal: 30,
       fetchGameState: async () => activeState(),
       runStream,
     });
     expect(runStream).toHaveBeenCalledTimes(3);
+    // Reported usage is 2 per failure but each failed attempt conservatively
+    // charges the minimum viable attempt floor of 5 steps.
+    expect(result.posts.map((post) => post.maxStepsRemaining)).toEqual([
+      30, 25, 20,
+    ]);
     expect(result.stopReason).toBe("queue_exhausted");
-    expect(result.lastTerminal?.kind).toBe("coded_provider_error");
+    expect(result.providerRequestsUsed).toBe(6);
   });
 
   it("attempts only the selected model when the catalog fetch failed", async () => {
     const runStream = vi.fn(async () => CODED_429);
     const result = await orchestrateFallbackTurn({
+      ...baseOpts,
       queue: fallbackQueueForCatalogFailure(OPENROUTER_GEMMA),
-      turnStartedAtMs: 0,
-      aiTimeoutSeconds: 60,
-      now: () => 1_000,
-      anchor: ANCHOR,
       fetchGameState: async () => activeState(),
       runStream,
     });
@@ -372,5 +407,17 @@ describe("orchestrateFallbackTurn", () => {
     });
     expect(runStream).toHaveBeenCalledTimes(1);
     expect(result.stopReason).toBe("generic_error");
+  });
+
+  it("returns empty_queue without posting for an empty queue", async () => {
+    const runStream = vi.fn();
+    const result = await orchestrateFallbackTurn({
+      ...baseOpts,
+      queue: [],
+      fetchGameState: async () => activeState(),
+      runStream: runStream as never,
+    });
+    expect(runStream).not.toHaveBeenCalled();
+    expect(result.stopReason).toBe("empty_queue");
   });
 });

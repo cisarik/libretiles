@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { api } from "@/lib/api";
-import { DEFAULT_FREE_MODEL_ID } from "@/lib/free-rivals";
+import { resolveEligibleModelId } from "@/lib/model-catalog";
 import { useGameStore } from "@/hooks/useGameStore";
 import type { AIModel } from "@/lib/types";
 import {
@@ -50,16 +50,11 @@ export default function Home() {
       ]);
       const eligibleIds = catalog.map((model) => model.model_id);
       const preferredId = profile.preferred_ai_model_id ?? "";
-      const resolvedSelection =
-        (preferredId && eligibleIds.includes(preferredId) ? preferredId : null) ??
-        (selectedModelId && eligibleIds.includes(selectedModelId)
-          ? selectedModelId
-          : null) ??
-        (eligibleIds.includes(DEFAULT_FREE_MODEL_ID)
-          ? DEFAULT_FREE_MODEL_ID
-          : null) ??
-        eligibleIds[0] ??
-        null;
+      const resolvedSelection = resolveEligibleModelId(
+        eligibleIds,
+        preferredId,
+        selectedModelId,
+      );
 
       if (resolvedSelection && resolvedSelection !== selectedModelId) {
         setSelectedModelId(resolvedSelection);
