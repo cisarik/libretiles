@@ -335,10 +335,19 @@ class CatalogAPITest(TestCase):
                     "id": "meta-llama/llama-3.3-70b-instruct:free",
                     "name": "Llama 3.3 70B Instruct",
                     "description": "Eligible extra",
-                    "pricing": {"prompt": "0.000001", "completion": "0.000002"},
+                    "pricing": {"prompt": "0", "completion": "0"},
                     "supported_parameters": ["tools", "temperature"],
                     "architecture": {"output_modalities": ["text"]},
                     "context_length": 128000,
+                },
+                {
+                    "id": "paid-vendor/paid-tools:free",
+                    "name": "Paid suffix",
+                    "description": "Free suffix with non-zero price",
+                    "pricing": {"prompt": "0.000001", "completion": "0"},
+                    "supported_parameters": ["tools"],
+                    "architecture": {"output_modalities": ["text"]},
+                    "context_length": 8192,
                 },
                 {
                     "id": "google/gemma-2-9b-it:free",
@@ -397,16 +406,17 @@ class CatalogAPITest(TestCase):
         extra = AIModel.objects.get(model_id="meta-llama/llama-3.3-70b-instruct:free")
         assert extra.openrouter_managed is True
         assert extra.openrouter_available is True
-        assert extra.is_active is False
+        assert extra.is_active is True
         assert not hasattr(extra, "pricing")
         assert not hasattr(extra, "cost_per_game")
+        assert not AIModel.objects.filter(model_id="paid-vendor/paid-tools:free").exists()
         default = AIModel.objects.get(model_id=DEFAULT_FREE_MODEL_ID)
         assert default.is_active is True
         assert default.openrouter_managed is True
         assert default.sort_order == 10
         retired.refresh_from_db()
         assert retired.openrouter_available is False
-        assert retired.is_active is False
+        assert retired.is_active is True
         assert AIModel.objects.filter(pk=retired.pk).exists()
 
     def test_nim_row_is_selectable_without_openrouter_available(self) -> None:

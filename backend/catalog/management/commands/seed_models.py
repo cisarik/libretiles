@@ -85,7 +85,7 @@ class Command(BaseCommand):
             if existing is not None and existing.provider != provider:
                 skipped += 1
                 continue
-            defaults = {
+            fields = {
                 "provider": provider,
                 "display_name": data["display_name"],
                 "description": data["description"],
@@ -94,17 +94,16 @@ class Command(BaseCommand):
                 "openrouter_available": data["openrouter_available"],
                 "model_type": "language",
                 "tags": ["tools"],
-                "is_active": True,
                 "sort_order": SHORTLIST_SORT_ORDER[model_id],
             }
-            _, was_created = AIModel.objects.update_or_create(
-                model_id=model_id,
-                defaults=defaults,
-            )
-            if was_created:
+            if existing is None:
+                AIModel.objects.create(model_id=model_id, is_active=True, **fields)
                 created += 1
-            else:
-                updated += 1
+                continue
+            for field_name, value in fields.items():
+                setattr(existing, field_name, value)
+            existing.save()
+            updated += 1
 
         assert {(item["provider"], item["model_id"]) for item in CURATED_MODELS} == set(
             FREE_RIVAL_PAIRS

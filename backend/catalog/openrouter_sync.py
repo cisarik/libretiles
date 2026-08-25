@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 import httpx
@@ -9,8 +10,11 @@ from django.utils import timezone as django_timezone
 
 from .models import AIModel
 from .selection import (
+    EXCLUDED_MODEL_IDS,
+    MAX_FUTURE_RELEASE_SKEW,
     NVIDIA_NIM_MODEL_ID,
     NVIDIA_NIM_PROVIDER,
+    OPENROUTER_PROVIDER,
     OPENROUTER_SHORTLIST_IDS,
     SHORTLIST_SORT_ORDER,
     TOOLS_TAG,
@@ -18,7 +22,20 @@ from .selection import (
 
 OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 AUTO_SORT_ORDER_START = 1000
-EXCLUDED_MODEL_IDS = frozenset({"openrouter/free"})
+
+
+class CatalogSyncAborted(Exception):
+    """Raised when OpenRouter sync refuses to write an unsafe cohort."""
+
+    def __init__(self, *, reason: str, previous_count: int, new_count: int) -> None:
+        self.reason = reason
+        self.previous_count = previous_count
+        self.new_count = new_count
+        super().__init__(
+            "OpenRouter sync aborted "
+            f"({reason}): previous available cohort {previous_count}, "
+            f"new eligible {new_count}."
+        )
 
 
 @dataclass(frozen=True)
@@ -52,7 +69,30 @@ def fetch_openrouter_models(
     return models
 
 
-def sync_openrouter_models(*, models: list[OpenRouterModelRecord]) -> dict[str, int]:
+def sync_openrouter_models(
+    *,
+    models: list[OpenRouterModelRecord],
+    allow_large_drop: bool = False,
+) -> dict[str, int]:
+    previous_count = AIModel.objects.filter(
+        provider=OPENROUTER_PROVIDER,
+        openrouter_managed=True,
+        openrouter_available=True,
+    ).count()
+    new_count = len(models)
+    if new_count == 0:
+        raise CatalogSyncAborted(
+            reason="empty-cohort",
+            previous_count=previous_count,
+            new_count=new_count,
+        )
+    if not allow_large_drop and previous_count > 0 and new_count * 2 < previous_count:
+        raise CatalogSyncAborted(
+            reason="large-drop",
+            previous_count=previous_count,
+            new_count=new_count,
+        )
+
     now = django_timezone.now()
     seen_model_ids = {model.model_id for model in models}
 
@@ -75,7 +115,7 @@ def sync_openrouter_models(*, models: list[OpenRouterModelRecord]) -> dict[str, 
             continue
         if obj is None:
             AIModel.objects.create(
-                provider="openrouter",
+                provider=OPENROUTER_PROVIDER,
                 model_id=remote.model_id,
                 display_name=remote.display_name,
                 description=remote.description,
@@ -88,14 +128,14 @@ def sync_openrouter_models(*, models: list[OpenRouterModelRecord]) -> dict[str, 
                 tags=remote.tags,
                 released_at=remote.released_at,
                 last_synced_at=now,
-                is_active=is_shortlist,
+                is_active=True,
                 sort_order=sort_order,
             )
             created += 1
             continue
 
         changed_fields: list[str] = []
-        changed_fields.extend(_set_if_changed(obj, "provider", "openrouter"))
+        changed_fields.extend(_set_if_changed(obj, "provider", OPENROUTER_PROVIDER))
         changed_fields.extend(_set_if_changed(obj, "openrouter_available", True))
         changed_fields.extend(_set_if_changed(obj, "openrouter_managed", True))
         changed_fields.extend(_set_if_changed(obj, "model_type", remote.model_type))
@@ -104,7 +144,6 @@ def sync_openrouter_models(*, models: list[OpenRouterModelRecord]) -> dict[str, 
         changed_fields.extend(_set_if_changed(obj, "tags", remote.tags))
         changed_fields.extend(_set_if_changed(obj, "released_at", remote.released_at))
         changed_fields.extend(_set_if_changed(obj, "last_synced_at", now))
-        changed_fields.extend(_set_if_changed(obj, "is_active", is_shortlist))
         if is_shortlist:
             changed_fields.extend(_set_if_changed(obj, "sort_order", sort_order))
         changed_fields.extend(_set_if_changed(obj, "display_name", remote.display_name))
@@ -123,7 +162,6 @@ def sync_openrouter_models(*, models: list[OpenRouterModelRecord]) -> dict[str, 
     )
     for obj in missing:
         changed_fields = _set_if_changed(obj, "openrouter_available", False)
-        changed_fields.extend(_set_if_changed(obj, "is_active", False))
         changed_fields.extend(_set_if_changed(obj, "last_synced_at", now))
         if changed_fields:
             obj.save(update_fields=changed_fields)
@@ -148,6 +186,8 @@ def normalize_openrouter_model(item: Any) -> OpenRouterModelRecord | None:
     if model_id == NVIDIA_NIM_MODEL_ID:
         return None
     if model_id in EXCLUDED_MODEL_IDS or not model_id.endswith(":free"):
+        return None
+    if not _has_zero_prompt_and_completion_pricing(item.get("pricing")):
         return None
 
     tags = _normalize_tags(item.get("supported_parameters"))
@@ -176,12 +216,25 @@ def normalize_openrouter_model(item: Any) -> OpenRouterModelRecord | None:
     )
 
 
+def _has_zero_prompt_and_completion_pricing(pricing: Any) -> bool:
+    if not isinstance(pricing, dict):
+        return False
+    return _parses_to_zero(pricing.get("prompt")) and _parses_to_zero(pricing.get("completion"))
+
+
+def _parses_to_zero(value: Any) -> bool:
+    if value is None or isinstance(value, bool):
+        return False
+    try:
+        return Decimal(str(value)) == 0
+    except (InvalidOperation, ValueError):
+        return False
+
+
 def _has_text_output(architecture: Any) -> bool:
     if not isinstance(architecture, dict):
         return False
     output_modalities = architecture.get("output_modalities")
-    if output_modalities is None:
-        output_modalities = architecture.get("output_modalities")
     if isinstance(output_modalities, list):
         return any(str(item).lower() == "text" for item in output_modalities)
     if isinstance(output_modalities, str) and "text" in output_modalities.lower():
@@ -216,9 +269,12 @@ def _as_optional_int(value: Any) -> int | None:
 
 
 def _parse_unix_timestamp(value: Any) -> datetime | None:
-    if isinstance(value, int) and not isinstance(value, bool):
-        return datetime.fromtimestamp(value, tz=timezone.utc)
-    return None
+    if not isinstance(value, int) or isinstance(value, bool):
+        return None
+    released_at = datetime.fromtimestamp(value, tz=timezone.utc)
+    if released_at > datetime.now(timezone.utc) + MAX_FUTURE_RELEASE_SKEW:
+        return None
+    return released_at
 
 
 def _set_if_changed(obj: AIModel, field_name: str, value: Any) -> list[str]:

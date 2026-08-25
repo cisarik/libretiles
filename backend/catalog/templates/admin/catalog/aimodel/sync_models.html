@@ -83,7 +83,11 @@
 
     <div class="sync-panel">
       <h2>Run sync</h2>
-      <p>Fetch the latest OpenRouter free catalog. Code owns shortlist activation.</p>
+      <p>
+        Fetch the latest OpenRouter free catalog. Newly discovered eligible rows
+        start active. Admin <code>is_active</code> is the kill switch and is never
+        flipped by sync. Empty results or a drop of more than 50% abort without writes.
+      </p>
       <form method="post" action="{{ sync_url }}">
         {% csrf_token %}
         <div class="sync-actions">

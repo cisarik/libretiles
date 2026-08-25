@@ -25,9 +25,11 @@ class AdminUITest(TestCase):
     def test_ai_model_sync_view_runs_command(self, mock_call_command) -> None:
         resp = self.client.post(
             reverse("admin:catalog_aimodel_sync"),
-            {"activate_new": "1"},
+            {"activate_new": "1", "allow_large_drop": "1"},
         )
         assert resp.status_code == 302
         mock_call_command.assert_called_once()
-        _, kwargs = mock_call_command.call_args
-        assert kwargs["activate_new"] is True
+        args, kwargs = mock_call_command.call_args
+        assert args == ("sync_openrouter_models",)
+        assert "activate_new" not in kwargs
+        assert "allow_large_drop" not in kwargs

@@ -1,5 +1,4 @@
 from io import StringIO
-from typing import Any
 
 from django.contrib import admin, messages
 from django.core.management import call_command
@@ -23,6 +22,7 @@ class AIModelAdmin(admin.ModelAdmin):
         "quality_tier",
         "is_active",
         "sort_order",
+        "released_at",
         "last_synced_at",
     )
     list_filter = (
@@ -35,7 +35,7 @@ class AIModelAdmin(admin.ModelAdmin):
     list_editable = ("is_active", "sort_order")
     search_fields = ("display_name", "model_id")
     ordering = ("sort_order", "display_name")
-    readonly_fields = ("created_at", "updated_at", "last_synced_at")
+    readonly_fields = ("created_at", "updated_at", "last_synced_at", "released_at")
 
     def get_urls(self):
         custom_urls = [
@@ -50,11 +50,8 @@ class AIModelAdmin(admin.ModelAdmin):
     def sync_models_view(self, request: HttpRequest) -> HttpResponse:
         if request.method == "POST":
             stdout = StringIO()
-            command_kwargs: dict[str, Any] = {"stdout": stdout}
-            if "activate_new" in request.POST:
-                command_kwargs["activate_new"] = request.POST.get("activate_new") == "1"
             try:
-                call_command("sync_openrouter_models", **command_kwargs)
+                call_command("sync_openrouter_models", stdout=stdout)
             except Exception as exc:  # pragma: no cover - defensive admin UX
                 self.message_user(
                     request,
@@ -80,7 +77,11 @@ class AIModelAdmin(admin.ModelAdmin):
             **self.admin_site.each_context(request),
             "opts": self.model._meta,
             "title": "Sync OpenRouter free catalog",
-            "subtitle": "Refresh the backend catalog from the OpenRouter free model list. Shortlist activation is owned by code.",
+            "subtitle": (
+                "Refresh the backend catalog from the OpenRouter free model list. "
+                "is_active is the Admin kill switch; newly discovered eligible rows "
+                "start active. Empty or >50% cohort drops abort without writes."
+            ),
             "sync_url": reverse("admin:catalog_aimodel_sync"),
             "changelist_url": reverse("admin:catalog_aimodel_changelist"),
             "stats": {

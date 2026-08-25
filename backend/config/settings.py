@@ -154,3 +154,9 @@ PRIMARY_DICTIONARY_PATH = DICTS_DIR / os.getenv("PRIMARY_DICTIONARY_FILE", "coll
 # AI budget (unified, same as scrabgpt)
 AI_MOVE_MAX_OUTPUT_TOKENS = int(os.getenv("AI_MOVE_MAX_OUTPUT_TOKENS", "15000"))
 AI_MOVE_TIMEOUT_SECONDS = int(os.getenv("AI_MOVE_TIMEOUT_SECONDS", "120"))
+
+# When false, /api/catalog/models/ returns the curated bootstrap pairs only.
+# When true, returns the four newest eligible OpenRouter models plus seeded NIM.
+DYNAMIC_FREE_MODEL_CATALOG_ENABLED = os.getenv(
+    "DYNAMIC_FREE_MODEL_CATALOG_ENABLED", "false"
+).lower() in ("true", "1", "yes")

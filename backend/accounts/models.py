@@ -3,7 +3,7 @@ from django.db import models
 
 
 class User(AbstractUser):
-    """Extended user with preferred AI model and credit balance."""
+    """Extended user with a preferred AI model."""
 
     preferred_ai_model_id = models.CharField(
         max_length=200,

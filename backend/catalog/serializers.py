@@ -1,11 +1,11 @@
 from rest_framework import serializers
 
-from .selection import DEFAULT_FREE_MODEL_ID
 from .models import AIModel, AIPrompt
 
 
 class AIModelSerializer(serializers.ModelSerializer):
     is_flagship = serializers.SerializerMethodField()
+    recommended = serializers.SerializerMethodField()
 
     class Meta:
         model = AIModel
@@ -18,11 +18,16 @@ class AIModelSerializer(serializers.ModelSerializer):
             "quality_tier",
             "context_window",
             "max_tokens",
+            "released_at",
             "is_flagship",
+            "recommended",
         )
 
     def get_is_flagship(self, obj: AIModel) -> bool:
-        return obj.model_id == DEFAULT_FREE_MODEL_ID
+        return obj.pk == self.context.get("flagship_pk")
+
+    def get_recommended(self, obj: AIModel) -> bool:
+        return self.get_is_flagship(obj)
 
 
 class AIPromptSerializer(serializers.ModelSerializer):

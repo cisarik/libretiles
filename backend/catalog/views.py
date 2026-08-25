@@ -12,7 +12,12 @@ class AIModelListView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def get(self, request):  # type: ignore[no-untyped-def]
-        serializer = AIModelSerializer(get_selectable_models(), many=True)
+        models = get_selectable_models()
+        serializer = AIModelSerializer(
+            models,
+            many=True,
+            context={"flagship_pk": models[0].pk if models else None},
+        )
         return Response(serializer.data)
 
 
