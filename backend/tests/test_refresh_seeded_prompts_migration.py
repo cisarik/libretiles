@@ -108,13 +108,15 @@ class RefreshSeededPromptsRoundTripTests(TestCase):
 
 
 class RefreshedLivePresetContentTests(TestCase):
-    """After a full migrate the seeded rows must carry the refreshed content."""
+    """0010 NEW_PROMPTS remain money-free and floor/budget-aware.
 
-    def test_post_migrate_rows_hold_refreshed_money_free_presets(self) -> None:
+    Live HEAD rows are owned by later prompt-refresh migrations; these
+    assertions pin the 0010 constants themselves, not the latest catalog.
+    """
+
+    def test_0010_prompt_constants_remain_money_free_and_authoritative(self) -> None:
         for name, text in NEW_PROMPTS.items():
-            row = AIPrompt.objects.get(name=name)
-            self.assertEqual(row.prompt, text)
-            self.assertIsNone(_MONEY_PATTERN.search(text))
+            self.assertIsNone(_MONEY_PATTERN.search(text), name)
             self.assertIn('"action"', text)  # strict JSON output contract
             self.assertRegex(text, r"OUTPUT FORMAT \(strict JSON")
             self.assertTrue(
@@ -127,7 +129,7 @@ class RefreshedLivePresetContentTests(TestCase):
             )
             self.assertIn("step budget", text.lower())
 
-    def test_refreshed_presets_keep_floor_and_budget_language(self) -> None:
+    def test_0010_prompt_constants_keep_floor_and_budget_language(self) -> None:
         for name, text in NEW_PROMPTS.items():
             self.assertIn("floor", text.lower(), f"{name} lacks scoring-floor language")
             self.assertNotIn("at least 4", text)
@@ -154,7 +156,7 @@ class RefreshSeededPromptsMigrateCommandTests(TransactionTestCase):
             else:
                 self.assertEqual(row.prompt, PRIOR_PROMPTS[name])
 
-        call_command("migrate", "catalog", verbosity=0)
+        call_command("migrate", "catalog", "0010_refresh_seeded_prompts", verbosity=0)
         for name, text in NEW_PROMPTS.items():
             row = AIPrompt.objects.get(name=name)
             if name == "Short Hooks":

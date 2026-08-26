@@ -2,20 +2,17 @@
  * AI Move Generation API Route — SSE Streaming
  *
  * Streams real-time progress events to the frontend while the AI agent
- * searches for the best Scrabble move. This mirrors the desktop scrabgpt
- * agent's tool-calling workflow with live feedback.
+ * searches for a backend-validated placement. Free-form model text has no
+ * authority over pass, exchange, or place; only tracked validateMove results
+ * and the Slice-1 playability probe may terminate the turn.
  *
  * SSE Event Flow:
  *   thinking    → AI started, timeout set
- *   tool_use    → AI called validateMove / validateWords
+ *   tool_use    → AI called validateMove / finishMove
  *   tool_result → Tool returned a result
  *   candidate   → Valid move candidate found (word, score, isBest)
- *   done        → Final move applied (or pass/exchange fallback)
- *   error       → Something went wrong
- *
- * Timeout:
- *   When the timeout expires, the best candidate found so far is used.
- *   If no valid candidate exists, AI exchanges or passes.
+ *   done        → Final move applied (or genuine no-move exchange/pass)
+ *   error       → Something went wrong; turn unchanged
  */
 
 import { NextRequest } from "next/server";
@@ -32,7 +29,8 @@ import {
   parseCatalogModelRows,
 } from "@/lib/ai-runtimes";
 import {
-  MOVE_SYSTEM_PROMPT,
+  MOVE_PROMPT_VERSION,
+  composeMoveSystemPrompt,
   buildMoveUserPrompt,
 } from "@/lib/prompts";
 
@@ -48,6 +46,18 @@ const AUTO_FINALIZE_GRACE_MS = 2500;
 const AUTO_FINALIZE_VALID_CAP = 4;
 const EXTENDED_AUTO_FINALIZE_GRACE_MS = 6000;
 const EXTENDED_AUTO_FINALIZE_VALID_CAP = 7;
+const REPAIR_RESERVE_STEPS = 2;
+const REPAIR_MIN_REMAINING_SECONDS = 2;
+const SEARCH_TEMPERATURE = 0.15;
+const REPAIR_TEMPERATURE = 0;
+
+type CompletionSource =
+  | "provider_candidate"
+  | "repair_candidate"
+  | "backend_witness_rescue"
+  | "genuine_no_move_exchange"
+  | "genuine_no_move_pass";
+type AbortReason = "timeout" | "auto_finalize" | "finish";
 
 function summarizeBackendBody(body: string) {
   return body.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 220);
@@ -130,6 +140,16 @@ type UsageLike = {
   outputTokenDetails?: { textTokens?: number; reasoningTokens?: number };
   totalTokens?: number;
   raw?: unknown;
+};
+
+type PlayabilityPayload = {
+  status?: unknown;
+  witness?: unknown;
+  exchange_allowed?: unknown;
+  exchange_letters?: unknown;
+  ok?: unknown;
+  code?: unknown;
+  error?: unknown;
 };
 
 function sseEvent(data: Record<string, unknown>): string {
@@ -270,68 +290,21 @@ function normalizePlacementArray(value: unknown): PlacementData[] {
     .filter((item): item is PlacementData => item !== null);
 }
 
-function extractLocalPlacementArray(parsed: unknown): PlacementData[] {
-  if (!isRecord(parsed)) return [];
-
-  const directPlacements = normalizePlacementArray(parsed.placements);
-  if (directPlacements.length > 0) return directPlacements;
-
-  const tilePlacements = normalizePlacementArray(parsed.tiles);
-  if (tilePlacements.length > 0) return tilePlacements;
-
-  if (isRecord(parsed.move)) {
-    const movePlacements = normalizePlacementArray(parsed.move.placements);
-    if (movePlacements.length > 0) return movePlacements;
-  }
-
-  for (const value of Object.values(parsed)) {
-    const placements = normalizePlacementArray(value);
-    if (placements.length > 0) return placements;
-  }
-
-  return [];
+function placementKey(placements: PlacementData[]): string {
+  return JSON.stringify(placements);
 }
 
-function extractJsonObject(text: string, requireAction: boolean): unknown | null {
-  for (let start = text.indexOf("{"); start >= 0; start = text.indexOf("{", start + 1)) {
-    let depth = 0;
-    let inString = false;
-    let escaped = false;
+function stepCountFromResult(result: { steps?: unknown[] } | null | undefined): number {
+  return Array.isArray(result?.steps) ? result.steps.length : 0;
+}
 
-    for (let index = start; index < text.length; index += 1) {
-      const char = text[index];
-
-      if (inString) {
-        if (escaped) {
-          escaped = false;
-        } else if (char === "\\") {
-          escaped = true;
-        } else if (char === "\"") {
-          inString = false;
-        }
-        continue;
-      }
-
-      if (char === "\"") {
-        inString = true;
-      } else if (char === "{") {
-        depth += 1;
-      } else if (char === "}") {
-        depth -= 1;
-        if (depth === 0) {
-          const candidate = text.slice(start, index + 1);
-          if (requireAction && !candidate.includes("\"action\"")) break;
-          try {
-            return JSON.parse(candidate);
-          } catch {
-            break;
-          }
-        }
-      }
-    }
-  }
-
-  return null;
+function usageForMetadata(usage: ReturnType<typeof normalizeUsage>) {
+  if (!usage) return undefined;
+  return {
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    totalTokens: usage.totalTokens,
+  };
 }
 
 export async function POST(req: NextRequest) {
@@ -353,6 +326,7 @@ export async function POST(req: NextRequest) {
       MAX_STEPS,
     ),
   );
+  const searchStepCap = maxSteps - REPAIR_RESERVE_STEPS;
   const startTime = Date.now();
   const requestedModelId = typeof model_id === "string" && model_id ? model_id : null;
   const requestedRuntimeModelId =
@@ -387,30 +361,37 @@ export async function POST(req: NextRequest) {
       let providerPath = "";
       let runtimeModelId = requestedRuntimeModelId || requestedModelId || "";
 
-      // Track candidates across all tool calls
       const candidates: Candidate[] = [];
       let bestScore = -1;
       let autoFinalized = false;
       let autoFinalizeTimer: ReturnType<typeof setTimeout> | null = null;
       const abortController = new AbortController();
+      let abortReason: AbortReason | null = null;
       let autoFinalizeGraceMs = AUTO_FINALIZE_GRACE_MS;
       let autoFinalizeValidCap = AUTO_FINALIZE_VALID_CAP;
       let accumulatedUsage: ReturnType<typeof normalizeUsage> = null;
       let completedStepCount = 0;
-      let completedToolCallCount = 0;
-      const completedStepModels: Array<{
-        step: number;
-        provider: string;
-        model_id: string;
-        response_model: string | undefined;
-      }> = [];
       let lastResponseModelId: string | undefined;
+      let repairAttempted = false;
+      let probeStatus: string | null = null;
+      let completionSource: CompletionSource | null = null;
+      let terminalCause = "";
+      let recordedProviderRequests = 0;
+
+      function abortGeneration(reason: AbortReason) {
+        if (abortReason === null) abortReason = reason;
+        abortController.abort();
+      }
 
       function clearAutoFinalizeTimer() {
         if (autoFinalizeTimer) {
           clearTimeout(autoFinalizeTimer);
           autoFinalizeTimer = null;
         }
+      }
+
+      function remainingSeconds(): number {
+        return timeoutS - (Date.now() - startTime) / 1000;
       }
 
       function trackCandidate(
@@ -456,11 +437,11 @@ export async function POST(req: NextRequest) {
 
             if (validCount >= autoFinalizeValidCap) {
               autoFinalized = true;
-              abortController.abort();
+              abortGeneration("auto_finalize");
             } else {
               autoFinalizeTimer = setTimeout(() => {
                 autoFinalized = true;
-                abortController.abort();
+                abortGeneration("auto_finalize");
               }, autoFinalizeGraceMs);
             }
           }
@@ -484,6 +465,17 @@ export async function POST(req: NextRequest) {
         return valid[0];
       }
 
+      function noteGenerationResult(result: { steps?: unknown[] } | null | undefined) {
+        const fromResult = stepCountFromResult(result);
+        if (fromResult > 0) {
+          recordedProviderRequests += fromResult;
+        }
+      }
+
+      function attemptProviderRequests(): number {
+        return Math.max(recordedProviderRequests, completedStepCount);
+      }
+
       try {
         const catalogRows = await fetchCatalogModelRows();
         if (catalogRows === null) {
@@ -499,7 +491,6 @@ export async function POST(req: NextRequest) {
           return;
         }
 
-        // 1. Fetch game context before any preference PATCH.
         const context = await backendGet(
           `/api/game/${game_id}/ai-context/`,
           token,
@@ -532,8 +523,6 @@ export async function POST(req: NextRequest) {
         }
         const resolvedModelId = resolvedPair.model_id;
 
-        // Only a catalog-confirmed explicit preference may PATCH the session
-        // model; stale ids are repaired by falling back to the catalog order.
         if (
           requestedModelId &&
           requestedModelId === resolvedPair.model_id &&
@@ -602,11 +591,11 @@ export async function POST(req: NextRequest) {
           ? EXTENDED_AUTO_FINALIZE_VALID_CAP
           : AUTO_FINALIZE_VALID_CAP;
 
-        const activeMovePrompt =
-          typeof context.ai_prompt_text === "string" && context.ai_prompt_text.trim().length > 0
-            ? context.ai_prompt_text
-            : MOVE_SYSTEM_PROMPT;
-        let model;
+        const systemPrompt = composeMoveSystemPrompt(
+          typeof context.ai_prompt_text === "string" ? context.ai_prompt_text : null,
+        );
+        const userPrompt = buildMoveUserPrompt(context);
+        let model: ReturnType<typeof getLanguageModel>;
         try {
           model = getLanguageModel(runtimePair.provider, runtimePair.model_id);
         } catch (err) {
@@ -644,414 +633,492 @@ export async function POST(req: NextRequest) {
           runtime_model: runtimeModelId,
         });
 
-        const runGeneration = (activeModel: ReturnType<typeof getLanguageModel>) =>
+        const tools = {
+          validateMove: tool({
+            description:
+              "Validate a proposed tile placement on the board. Returns " +
+              "legality, all words formed, per-word scores, and total score. " +
+              "Call this FIRST with your best candidate. Only use it for " +
+              "plausible English candidates, hooks, extensions, or premium shots, " +
+              "not random dictionary guesses.",
+            inputSchema: z.object({
+              placements: z
+                .array(placementSchema)
+                .min(1)
+                .max(7)
+                .describe("Tiles to place on the board"),
+            }),
+            execute: async ({ placements }) => {
+              emit({
+                type: "tool_use",
+                tool: "validateMove",
+                tileCount: placements.length,
+              });
+
+              const result = await backendPost(
+                `/api/game/${game_id}/validate-move/`,
+                { placements },
+                token,
+              );
+
+              emit({
+                type: "tool_result",
+                tool: "validateMove",
+                valid: result.valid,
+                score: result.total_score,
+                words: result.words,
+              });
+
+              trackCandidate(result, placements);
+              return result;
+            },
+          }),
+
+          finishMove: tool({
+            description:
+              "Signal that a backend-validated placement is ready to finalize. " +
+              "Call only after validateMove has returned a valid result. " +
+              "This tool has no other side effects.",
+            inputSchema: z.object({
+              ready: z.literal(true).describe("Must be true to finalize"),
+            }),
+            execute: async () => {
+              emit({
+                type: "tool_use",
+                tool: "finishMove",
+              });
+              queueMicrotask(() => abortGeneration("finish"));
+              return { ok: true };
+            },
+          }),
+        };
+
+        const forceValidateMove = {
+          activeTools: ["validateMove"] as Array<keyof typeof tools>,
+          toolChoice: { type: "tool" as const, toolName: "validateMove" as const },
+        };
+
+        function prepareSearchStep({ stepNumber }: { stepNumber: number }) {
+          if (stepNumber === 0 || getBestCandidate() === null) {
+            return forceValidateMove;
+          }
+          return {
+            activeTools: ["validateMove", "finishMove"] as Array<keyof typeof tools>,
+          };
+        }
+
+        const runGeneration = (
+          activeModel: ReturnType<typeof getLanguageModel>,
+          args: {
+            temperature: number;
+            stepCap: number;
+            prompt: string;
+            abortSignal: AbortSignal;
+            prepareStep: (options: { stepNumber: number }) => {
+              activeTools: Array<keyof typeof tools>;
+              toolChoice?: { type: "tool"; toolName: "validateMove" };
+            };
+          },
+        ) =>
           Promise.race([
             generateText({
               model: activeModel,
               maxOutputTokens,
-              temperature: 0.15,
+              temperature: args.temperature,
               maxRetries: 0,
-              system: activeMovePrompt,
-              prompt: buildMoveUserPrompt(context),
-              abortSignal: abortController.signal,
-              tools: {
-                validateMove: tool({
-                  description:
-                    "Validate a proposed tile placement on the board. Returns " +
-                    "legality, all words formed, per-word scores, and total score. " +
-                    "Call this BEFORE finalizing any move. Only use it for " +
-                    "plausible English candidates, hooks, extensions, or premium shots, " +
-                    "not random dictionary guesses.",
-                  inputSchema: z.object({
-                    placements: z
-                      .array(placementSchema)
-                      .min(1)
-                      .max(7)
-                      .describe("Tiles to place on the board"),
-                  }),
-                  execute: async ({ placements }) => {
-                    emit({
-                      type: "tool_use",
-                      tool: "validateMove",
-                      tileCount: placements.length,
-                    });
-
-                    const result = await backendPost(
-                      `/api/game/${game_id}/validate-move/`,
-                      { placements },
-                      token,
-                    );
-
-                    emit({
-                      type: "tool_result",
-                      tool: "validateMove",
-                      valid: result.valid,
-                      score: result.total_score,
-                      words: result.words,
-                    });
-
-                    trackCandidate(result, placements);
-                    return result;
-                  },
-                }),
-
-                validateWords: tool({
-                  description:
-                    "Check if words are valid in the Collins Scrabble Words " +
-                    "(2019) English dictionary (279,496 words). Use this only " +
-                    "to confirm words formed by a plausible legal placement, never to brainstorm random strings.",
-                  inputSchema: z.object({
-                    words: z
-                      .array(z.string())
-                      .min(1)
-                      .describe("Words to check"),
-                  }),
-                  execute: async ({ words }) => {
-                    emit({
-                      type: "tool_use",
-                      tool: "validateWords",
-                      words,
-                    });
-
-                    const result = await backendPost(
-                      `/api/game/${game_id}/validate-words/`,
-                      { words },
-                      token,
-                    );
-
-                    emit({
-                      type: "tool_result",
-                      tool: "validateWords",
-                      results: result.results,
-                    });
-
-                    return result;
-                  },
-                }),
-              },
-              stopWhen: stepCountIs(maxSteps),
+              system: systemPrompt,
+              prompt: args.prompt,
+              abortSignal: args.abortSignal,
+              tools,
+              prepareStep: args.prepareStep,
+              stopWhen: stepCountIs(args.stepCap),
               onStepFinish: (step) => {
                 completedStepCount += 1;
-                completedToolCallCount += step.toolCalls.length;
                 accumulatedUsage = mergeUsage(
                   accumulatedUsage,
                   normalizeUsage(step.usage as UsageLike | undefined),
                 );
-                completedStepModels.push({
-                  step: step.stepNumber,
-                  provider: step.model.provider,
-                  model_id: step.model.modelId,
-                  response_model: step.response.modelId,
-                });
                 lastResponseModelId = step.response.modelId;
               },
             }),
             new Promise<never>((_, reject) => {
-              abortController.signal.addEventListener("abort", () => {
-                reject(new DOMException("Timeout", "AbortError"));
-              });
+              args.abortSignal.addEventListener(
+                "abort",
+                () => {
+                  reject(new DOMException("Timeout", "AbortError"));
+                },
+                { once: true },
+              );
             }),
           ]);
 
-        // 2. Race: generateText vs timeout
         const timeoutId = setTimeout(() => {
-          abortController.abort();
+          abortGeneration("timeout");
         }, timeoutS * 1000);
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         let aiResult: any = null;
-        let timedOut = false;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let repairResult: any = null;
 
         try {
-          aiResult = await runGeneration(model);
-        } catch (err) {
-          if (err instanceof DOMException && err.name === "AbortError") {
-            timedOut = true;
-          } else {
-            throw err;
+          try {
+            aiResult = await runGeneration(model, {
+              temperature: SEARCH_TEMPERATURE,
+              stepCap: searchStepCap,
+              prompt: userPrompt,
+              abortSignal: abortController.signal,
+              prepareStep: prepareSearchStep,
+            });
+          } catch (err) {
+            if (err instanceof DOMException && err.name === "AbortError") {
+              // timeout / auto-finalize / finishMove — continue with tracked candidates
+            } else {
+              throw err;
+            }
+          } finally {
+            clearAutoFinalizeTimer();
+            noteGenerationResult(aiResult);
           }
+
+          const elapsedMs = Date.now() - startTime;
+          const timedOut = abortReason === "timeout";
+          const normalizedUsage =
+            normalizeUsage(
+              (aiResult?.totalUsage as UsageLike | undefined) ??
+                (aiResult?.usage as UsageLike | undefined) ??
+                null,
+            ) ?? accumulatedUsage;
+
+          function runtimeFields() {
+            const used = attemptProviderRequests();
+            return {
+              provider_path: providerPath,
+              runtime_model: runtimeModelId,
+              provider_requests_used: used,
+              turn_provider_requests_used: used,
+            };
+          }
+
+          function boundedAiMetadata(source: CompletionSource) {
+            const used = attemptProviderRequests();
+            const meta: Record<string, unknown> = {
+              prompt_version: MOVE_PROMPT_VERSION,
+              requested_model_id: requestedModelId,
+              runtime_provider: providerPath,
+              runtime_model_id: runtimeModelId,
+              completion_source: source,
+              repair_attempted: repairAttempted,
+              terminal_cause: terminalCause,
+              provider_requests_used: used,
+              turn_provider_requests: used,
+              valid_candidate_count: candidates.filter((c) => c.valid).length,
+            };
+            if (typeof context.ai_prompt_id === "number") {
+              meta.prompt_id = context.ai_prompt_id;
+            }
+            if (typeof context.ai_prompt_name === "string") {
+              meta.prompt_name = context.ai_prompt_name;
+            }
+            if (probeStatus) meta.probe_status = probeStatus;
+            const usage = usageForMetadata(normalizedUsage);
+            if (usage) meta.usage = usage;
+            return meta;
+          }
+
+          function emitDone(
+            action: "place" | "pass" | "exchange",
+            payload: Record<string, unknown>,
+            extra: Record<string, unknown> = {},
+          ) {
+            emit({
+              type: "done",
+              action,
+              ...payload,
+              requested_model: requestedModelId,
+              session_model: sessionModelId,
+              response_model: aiResult?.response?.modelId ?? lastResponseModelId,
+              elapsed_ms: elapsedMs,
+              candidates_found: candidates.length,
+              timed_out: timedOut,
+              auto_finalized: autoFinalized,
+              completion_source: completionSource,
+              probe_status: probeStatus,
+              repair_attempted: repairAttempted,
+              terminal_cause: terminalCause,
+              ...runtimeFields(),
+              ...extra,
+            });
+          }
+
+          function emitTerminalError(
+            message: string,
+            extra: Record<string, unknown> = {},
+          ) {
+            emit({
+              type: "error",
+              error: message,
+              completion_source: completionSource,
+              probe_status: probeStatus,
+              repair_attempted: repairAttempted,
+              terminal_cause: terminalCause || "error",
+              ...runtimeFields(),
+              ...extra,
+            });
+          }
+
+          function conflictCode(result: unknown): string | undefined {
+            if (!isRecord(result)) return undefined;
+            return typeof result.code === "string" ? result.code : undefined;
+          }
+
+          async function postAiMove(
+            placements: PlacementData[],
+            source: CompletionSource,
+          ): Promise<Record<string, unknown> | null> {
+            completionSource = source;
+            const moveResult = await backendPost(
+              `/api/game/${game_id}/ai-move/`,
+              { placements, ai_metadata: boundedAiMetadata(source) },
+              token,
+            );
+            if (!isLegalBackendTerminal(moveResult)) return null;
+            return moveResult as Record<string, unknown>;
+          }
+
+          async function commitBestTracked(
+            source: CompletionSource,
+          ): Promise<boolean> {
+            const sortedValid = candidates
+              .filter((c) => c.valid)
+              .sort((a, b) => b.score - a.score);
+            if (sortedValid.length === 0) return false;
+            terminalCause = source;
+            for (const candidate of sortedValid) {
+              const moveResult = await postAiMove(candidate.placements, source);
+              if (!moveResult) continue;
+              const appliedWords = Array.isArray(moveResult.words)
+                ? (moveResult.words as Array<{ word?: string; score?: number }>)
+                : [];
+              emitDone("place", moveResult, {
+                best_word: appliedWords[0]?.word ?? candidate.word,
+                best_score:
+                  moveResult.points ?? appliedWords[0]?.score ?? candidate.score,
+              });
+              return true;
+            }
+            return false;
+          }
+
+          async function runRepair(witnessPlacements: PlacementData[]): Promise<void> {
+            if (remainingSeconds() < REPAIR_MIN_REMAINING_SECONDS) return;
+            const remainingSteps = maxSteps - attemptProviderRequests();
+            if (remainingSteps < REPAIR_RESERVE_STEPS) return;
+
+            repairAttempted = true;
+            const repairAbort = new AbortController();
+            const repairMs = Math.max(remainingSeconds() * 1000, 0);
+            const repairTimer = setTimeout(() => repairAbort.abort(), repairMs);
+            const repairPrompt =
+              `${userPrompt}\n\nREPAIR WITNESS (authoritative placements; call validateMove ` +
+              `exactly on these tiles):\n${JSON.stringify({ placements: witnessPlacements })}`;
+            try {
+              repairResult = await runGeneration(model, {
+                temperature: REPAIR_TEMPERATURE,
+                stepCap: REPAIR_RESERVE_STEPS,
+                prompt: repairPrompt,
+                abortSignal: repairAbort.signal,
+                prepareStep: () => forceValidateMove,
+              });
+            } catch (err) {
+              if (!(err instanceof DOMException && err.name === "AbortError")) {
+                throw err;
+              }
+            } finally {
+              clearTimeout(repairTimer);
+              noteGenerationResult(repairResult);
+            }
+          }
+
+          async function probeAndResolve(cause: string): Promise<void> {
+            terminalCause = cause;
+            let playability: PlayabilityPayload;
+            try {
+              playability = (await backendGet(
+                `/api/game/${game_id}/ai-playability/`,
+                token,
+              )) as PlayabilityPayload;
+            } catch {
+              probeStatus = "failed";
+              emitTerminalError("Playability could not be determined.", {
+                code: "playability_unknown",
+              });
+              return;
+            }
+
+            if (playability.ok === false || typeof playability.status !== "string") {
+              probeStatus =
+                typeof playability.code === "string" ? playability.code : "failed";
+              emitTerminalError(
+                typeof playability.error === "string"
+                  ? playability.error
+                  : "Playability could not be determined.",
+                {
+                  code:
+                    typeof playability.code === "string"
+                      ? playability.code
+                      : "playability_unknown",
+                },
+              );
+              return;
+            }
+
+            probeStatus = playability.status;
+
+            if (playability.status === "found") {
+              const witnessPlacements = normalizePlacementArray(
+                isRecord(playability.witness) ? playability.witness.placements : null,
+              );
+              if (witnessPlacements.length === 0) {
+                emitTerminalError("Playability witness was missing.", {
+                  code: "playability_unknown",
+                });
+                return;
+              }
+
+              const knownKeys = new Set(
+                candidates.filter((c) => c.valid).map((c) => placementKey(c.placements)),
+              );
+              const remainingSteps = maxSteps - attemptProviderRequests();
+              if (
+                remainingSteps >= REPAIR_RESERVE_STEPS &&
+                remainingSeconds() >= REPAIR_MIN_REMAINING_SECONDS
+              ) {
+                await runRepair(witnessPlacements);
+                const repairCandidates = candidates
+                  .filter((c) => c.valid)
+                  .filter((c) => !knownKeys.has(placementKey(c.placements)))
+                  .sort((a, b) => b.score - a.score);
+                for (const candidate of repairCandidates) {
+                  terminalCause = "repair_candidate";
+                  const moveResult = await postAiMove(
+                    candidate.placements,
+                    "repair_candidate",
+                  );
+                  if (!moveResult) continue;
+                  const appliedWords = Array.isArray(moveResult.words)
+                    ? (moveResult.words as Array<{ word?: string; score?: number }>)
+                    : [];
+                  emitDone("place", moveResult, {
+                    best_word: appliedWords[0]?.word ?? candidate.word,
+                    best_score:
+                      moveResult.points ?? appliedWords[0]?.score ?? candidate.score,
+                  });
+                  return;
+                }
+              }
+
+              terminalCause = "backend_witness_rescue";
+              const rescue = await postAiMove(
+                witnessPlacements,
+                "backend_witness_rescue",
+              );
+              if (!rescue) {
+                emitTerminalError("The AI action was not accepted.", {
+                  code: "stale_witness",
+                });
+                return;
+              }
+              const appliedWords = Array.isArray(rescue.words)
+                ? (rescue.words as Array<{ word?: string; score?: number }>)
+                : [];
+              emitDone("place", rescue, {
+                best_word: appliedWords[0]?.word,
+                best_score: rescue.points ?? appliedWords[0]?.score,
+              });
+              return;
+            }
+
+            if (playability.status === "none") {
+              if (playability.exchange_allowed === true) {
+                const letters = Array.isArray(playability.exchange_letters)
+                  ? playability.exchange_letters.filter(
+                      (letter: unknown): letter is string =>
+                        typeof letter === "string" && letter.length === 1,
+                    )
+                  : [];
+                terminalCause = "genuine_no_move_exchange";
+                completionSource = "genuine_no_move_exchange";
+                const exchangeResult = await backendPost(
+                  `/api/game/${game_id}/ai-exchange/`,
+                  {
+                    letters,
+                    ai_metadata: boundedAiMetadata("genuine_no_move_exchange"),
+                  },
+                  token,
+                );
+                if (!isLegalBackendTerminal(exchangeResult)) {
+                  emitTerminalError("The AI action was not accepted.", {
+                    code: conflictCode(exchangeResult),
+                  });
+                  return;
+                }
+                emitDone("exchange", exchangeResult as Record<string, unknown>);
+                return;
+              }
+
+              terminalCause = "genuine_no_move_pass";
+              completionSource = "genuine_no_move_pass";
+              const passResult = await backendPost(
+                `/api/game/${game_id}/ai-pass/`,
+                { ai_metadata: boundedAiMetadata("genuine_no_move_pass") },
+                token,
+              );
+              if (!isLegalBackendTerminal(passResult)) {
+                emitTerminalError("The AI action was not accepted.", {
+                  code: conflictCode(passResult),
+                });
+                return;
+              }
+              emitDone("pass", passResult as Record<string, unknown>);
+              return;
+            }
+
+            emitTerminalError("Playability could not be determined.", {
+              code: "playability_unknown",
+            });
+          }
+
+          const best = getBestCandidate();
+          if (best) {
+            if (timedOut) {
+              emit({
+                type: "candidate",
+                word: best.word,
+                score: best.score,
+                valid: true,
+                isBest: true,
+                allWords: best.allWords,
+                isTimeout: true,
+                auto_finalized: autoFinalized,
+                timestamp: Date.now() - startTime,
+              });
+            }
+            const committed = await commitBestTracked("provider_candidate");
+            if (committed) {
+              closeStream();
+              return;
+            }
+            await probeAndResolve("commit_rejected");
+            closeStream();
+            return;
+          }
+
+          await probeAndResolve(timedOut ? "timeout_no_candidate" : "no_valid_candidate");
         } finally {
           clearTimeout(timeoutId);
           clearAutoFinalizeTimer();
         }
-
-        // 3. Determine final move
-        const elapsedMs = Date.now() - startTime;
-        let finalPlacements: PlacementData[] = [];
-        let finalAction = "place";
-        let exchangeLetters: string[] = [];
-
-        if (timedOut) {
-          // Use best tracked candidate
-          const best = getBestCandidate();
-          if (best) {
-            finalPlacements = best.placements;
-            emit({
-              type: "candidate",
-              word: best.word,
-              score: best.score,
-              valid: true,
-              isBest: true,
-              allWords: best.allWords,
-              isTimeout: true,
-              auto_finalized: autoFinalized,
-              timestamp: Date.now() - startTime,
-            });
-          } else {
-            finalAction = "pass";
-          }
-        } else if (aiResult) {
-          // Parse AI response text
-          const parsed = extractJsonObject(aiResult.text, true);
-          if (isRecord(parsed)) {
-            if (typeof parsed.action === "string") {
-              finalAction = parsed.action;
-            }
-
-            const parsedPlacements = extractLocalPlacementArray(parsed);
-            if (parsedPlacements.length > 0) {
-              finalPlacements = parsedPlacements;
-            }
-
-            if (
-              finalAction === "exchange" &&
-              Array.isArray(parsed.exchange_letters)
-            ) {
-              exchangeLetters = parsed.exchange_letters.filter(
-                (letter: unknown): letter is string =>
-                  typeof letter === "string" && letter.length === 1,
-              );
-            }
-          }
-
-          // Fallback: last validateMove tool call
-          if (finalPlacements.length === 0 && aiResult.steps) {
-            for (let i = aiResult.steps.length - 1; i >= 0; i--) {
-              const step = aiResult.steps[i];
-              for (const tc of step.toolCalls) {
-                if (tc.toolName === "validateMove" && "input" in tc) {
-                  const input = tc.input as {
-                    placements?: PlacementData[];
-                  };
-                  if (input.placements && input.placements.length > 0) {
-                    finalPlacements = input.placements;
-                    break;
-                  }
-                }
-              }
-              if (finalPlacements.length > 0) break;
-            }
-          }
-
-          // If AI returned placements but we also have a better tracked candidate, prefer tracked
-          const best = getBestCandidate();
-          if (best && best.score > 0) {
-            const currentScore = candidates.find(
-              (c) =>
-                c.valid &&
-                JSON.stringify(c.placements) ===
-                  JSON.stringify(finalPlacements),
-            )?.score;
-
-            if (!currentScore || best.score > currentScore) {
-              finalPlacements = best.placements;
-            }
-          }
-        }
-
-        const normalizedUsage = normalizeUsage(
-          (aiResult?.totalUsage as UsageLike | undefined) ??
-            (aiResult?.usage as UsageLike | undefined) ??
-            null,
-        ) ?? accumulatedUsage;
-
-        const aiMeta = {
-          requested_model: requestedModelId,
-          session_model: sessionModelId,
-          model: resolvedModelId,
-          runtime_model: runtimeModelId,
-          provider_path: providerPath,
-          max_output_tokens: maxOutputTokens,
-          requested_max_output_tokens: requestedMaxOutputTokens,
-          response_model: aiResult?.response?.modelId ?? lastResponseModelId,
-          response_id: aiResult?.response?.id,
-          response_headers: aiResult?.response?.headers,
-          provider_metadata: aiResult?.providerMetadata,
-          usage: normalizedUsage,
-          steps: aiResult?.steps?.length ?? completedStepCount,
-          provider_requests_used: aiResult?.steps?.length ?? completedStepCount,
-          max_steps: maxSteps,
-          auto_finalize_grace_ms: autoFinalizeGraceMs,
-          auto_finalize_valid_cap: autoFinalizeValidCap,
-          elapsed_ms: elapsedMs,
-          candidates_found: candidates.length,
-          best_score: bestScore,
-          timed_out: timedOut,
-          auto_finalized: autoFinalized,
-          step_models:
-            aiResult?.steps?.map(
-              (step: {
-                stepNumber: number;
-                model: { provider: string; modelId: string };
-                response: { modelId: string };
-              }) => ({
-                step: step.stepNumber,
-                provider: step.model.provider,
-                model_id: step.model.modelId,
-                response_model: step.response.modelId,
-              }),
-            ) ?? completedStepModels,
-          tool_calls_count:
-            aiResult?.steps?.reduce(
-              (sum: number, s: { toolCalls: unknown[] }) =>
-                sum + s.toolCalls.length,
-              0,
-            ) ?? completedToolCallCount,
-        };
-
-        // 4. Apply the final move
-        const providerRequestsUsed = aiResult?.steps?.length ?? completedStepCount;
-        const runtimeFields = {
-          provider_path: providerPath,
-          runtime_model: runtimeModelId,
-          provider_requests_used: providerRequestsUsed,
-        };
-
-        function emitUnacceptedAction() {
-          emit({
-            type: "error",
-            error: "The AI action was not accepted.",
-            ...runtimeFields,
-          });
-        }
-
-        if (finalAction === "exchange" && exchangeLetters.length > 0) {
-          const exchangeResult = await backendPost(
-            `/api/game/${game_id}/ai-exchange/`,
-            { letters: exchangeLetters },
-            token,
-          );
-          if (!isLegalBackendTerminal(exchangeResult)) {
-            emitUnacceptedAction();
-            closeStream();
-            return;
-          }
-          emit({
-            type: "done",
-            action: "exchange",
-            ...exchangeResult,
-            requested_model: requestedModelId,
-            session_model: sessionModelId,
-            response_model: aiResult?.response?.modelId,
-            elapsed_ms: elapsedMs,
-            candidates_found: candidates.length,
-            timed_out: timedOut,
-            auto_finalized: autoFinalized,
-            ...runtimeFields,
-          });
-          closeStream();
-          return;
-        }
-
-        if (finalPlacements.length === 0 || finalAction === "pass") {
-          const passResult = await backendPost(
-            `/api/game/${game_id}/ai-pass/`,
-            {},
-            token,
-          );
-          if (!isLegalBackendTerminal(passResult)) {
-            emitUnacceptedAction();
-            closeStream();
-            return;
-          }
-          emit({
-            type: "done",
-            action: "pass",
-            ...passResult,
-            requested_model: requestedModelId,
-            session_model: sessionModelId,
-            response_model: aiResult?.response?.modelId,
-            elapsed_ms: elapsedMs,
-            candidates_found: candidates.length,
-            timed_out: timedOut,
-            auto_finalized: autoFinalized,
-            ...runtimeFields,
-          });
-          closeStream();
-          return;
-        }
-
-        // Try the chosen placements; if rejected (invalid words), try next best
-        let moveResult = await backendPost(
-          `/api/game/${game_id}/ai-move/`,
-          { placements: finalPlacements, ai_metadata: aiMeta },
-          token,
-        );
-
-        if (!isLegalBackendTerminal(moveResult)) {
-          const sortedValid = candidates
-            .filter((c) => c.valid)
-            .sort((a, b) => b.score - a.score);
-          for (const alt of sortedValid) {
-            if (JSON.stringify(alt.placements) === JSON.stringify(finalPlacements)) continue;
-            moveResult = await backendPost(
-              `/api/game/${game_id}/ai-move/`,
-              { placements: alt.placements, ai_metadata: { ...aiMeta, fallback: true } },
-              token,
-            );
-            if (isLegalBackendTerminal(moveResult)) break;
-          }
-        }
-
-        if (!isLegalBackendTerminal(moveResult)) {
-          const passResult = await backendPost(
-            `/api/game/${game_id}/ai-pass/`,
-            {},
-            token,
-          );
-          if (!isLegalBackendTerminal(passResult)) {
-            emitUnacceptedAction();
-            closeStream();
-            return;
-          }
-          emit({
-            type: "done",
-            action: "pass",
-            ...passResult,
-            reason: "no valid move accepted",
-            requested_model: requestedModelId,
-            session_model: sessionModelId,
-            response_model: aiResult?.response?.modelId,
-            elapsed_ms: elapsedMs,
-            candidates_found: candidates.length,
-            auto_finalized: autoFinalized,
-            ...runtimeFields,
-          });
-          closeStream();
-          return;
-        }
-
-        const best = getBestCandidate();
-        const appliedWords = Array.isArray(moveResult.words)
-          ? (moveResult.words as Array<{ word?: string; score?: number }>)
-          : [];
-        const appliedWord = appliedWords[0]?.word ?? best?.word;
-        const appliedScore = moveResult.points ?? appliedWords[0]?.score ?? best?.score;
-        emit({
-          type: "done",
-          action: "place",
-          ...moveResult,
-          requested_model: requestedModelId,
-          session_model: sessionModelId,
-          response_model: aiResult?.response?.modelId,
-          best_word: appliedWord,
-          best_score: appliedScore,
-          elapsed_ms: elapsedMs,
-          candidates_found: candidates.length,
-          timed_out: timedOut,
-          auto_finalized: autoFinalized,
-          ...runtimeFields,
-        });
       } catch (error) {
         const normalizedError = normalizeProviderError(error);
         if (normalizedError) {
@@ -1061,7 +1128,11 @@ export async function POST(req: NextRequest) {
             error: normalizedError.message,
             provider_path: providerPath,
             runtime_model: runtimeModelId,
-            provider_requests_used: completedStepCount,
+            provider_requests_used: attemptProviderRequests(),
+            turn_provider_requests_used: attemptProviderRequests(),
+            repair_attempted: repairAttempted,
+            probe_status: probeStatus,
+            terminal_cause: "provider_error",
           });
           closeStream();
           return;
@@ -1070,9 +1141,18 @@ export async function POST(req: NextRequest) {
         const best = candidates.filter((c) => c.valid).sort((a, b) => b.score - a.score)[0];
         if (best) {
           try {
+            completionSource = "provider_candidate";
+            terminalCause = "generic_error_fallback";
             const moveResult = await backendPost(
               `/api/game/${game_id}/ai-move/`,
-              { placements: best.placements, ai_metadata: { fallback: true } },
+              {
+                placements: best.placements,
+                ai_metadata: {
+                  completion_source: "provider_candidate",
+                  repair_attempted: repairAttempted,
+                  provider_requests_used: attemptProviderRequests(),
+                },
+              },
               token,
             );
             if (!isLegalBackendTerminal(moveResult)) {
@@ -1081,7 +1161,10 @@ export async function POST(req: NextRequest) {
                 error: "The AI action was not accepted.",
                 provider_path: providerPath,
                 runtime_model: runtimeModelId,
-                provider_requests_used: completedStepCount,
+                provider_requests_used: attemptProviderRequests(),
+                turn_provider_requests_used: attemptProviderRequests(),
+                repair_attempted: repairAttempted,
+                terminal_cause: "commit_rejected",
               });
             } else {
               const appliedWords = Array.isArray(moveResult.words)
@@ -1094,9 +1177,13 @@ export async function POST(req: NextRequest) {
                 best_word: appliedWords[0]?.word ?? best.word,
                 best_score: moveResult.points ?? appliedWords[0]?.score ?? best.score,
                 fallback: true,
+                completion_source: "provider_candidate",
+                repair_attempted: repairAttempted,
+                terminal_cause: "generic_error_fallback",
                 provider_path: providerPath,
                 runtime_model: runtimeModelId,
-                provider_requests_used: completedStepCount,
+                provider_requests_used: attemptProviderRequests(),
+                turn_provider_requests_used: attemptProviderRequests(),
               });
             }
           } catch {
@@ -1105,7 +1192,10 @@ export async function POST(req: NextRequest) {
               error: "AI move failed",
               provider_path: providerPath,
               runtime_model: runtimeModelId,
-              provider_requests_used: completedStepCount,
+              provider_requests_used: attemptProviderRequests(),
+              turn_provider_requests_used: attemptProviderRequests(),
+              repair_attempted: repairAttempted,
+              terminal_cause: "error",
             });
           }
         } else {
@@ -1114,7 +1204,10 @@ export async function POST(req: NextRequest) {
             error: "AI move failed",
             provider_path: providerPath,
             runtime_model: runtimeModelId,
-            provider_requests_used: completedStepCount,
+            provider_requests_used: attemptProviderRequests(),
+            turn_provider_requests_used: attemptProviderRequests(),
+            repair_attempted: repairAttempted,
+            terminal_cause: "error",
           });
         }
       } finally {
