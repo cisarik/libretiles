@@ -286,6 +286,141 @@ describe("IBM IAM and Chat Completions wire translation", () => {
 });
 
 describe("IBM IAM cache lifecycle", () => {
+  it("propagates sole-caller abort into uncached IAM and prevents inference", async () => {
+    const callerAbort = new AbortController();
+    let iamSignal: AbortSignal | null = null;
+    const fetchMock = installFetch(async (input, init) => {
+      if (callUrl(input) !== IAM_URL) return chatResponse("must-not-run");
+      iamSignal = init?.signal ?? null;
+      return new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal;
+        if (!signal) return;
+        const rejectAbort = () => reject(signal.reason);
+        if (signal.aborted) rejectAbort();
+        else signal.addEventListener("abort", rejectAbort, { once: true });
+      });
+    });
+    const { model, tracker } = await runtimeWithTracker();
+    const generation = generateText({
+      model,
+      prompt: "ping",
+      maxRetries: 0,
+      abortSignal: callerAbort.signal,
+    });
+
+    await vi.waitFor(() => expect(iamSignal).not.toBeNull());
+    expect((iamSignal as AbortSignal | null)?.aborted).toBe(false);
+    callerAbort.abort(
+      new Error(`${API_KEY} ${PROJECT_ID} raw-iam-response-data`),
+    );
+
+    let caught: unknown;
+    try {
+      await generation;
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(DOMException);
+    expect(caught).toMatchObject({ name: "AbortError" });
+    expect((iamSignal as AbortSignal | null)?.aborted).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(
+      fetchMock.mock.calls.filter(([input]) => callUrl(input) === INFERENCE_URL),
+    ).toHaveLength(0);
+    expect(tracker.snapshot().provider_requests).toBe(1);
+    const rendered = String(caught);
+    expect(rendered).not.toContain(API_KEY);
+    expect(rendered).not.toContain(PROJECT_ID);
+    expect(rendered).not.toContain("raw-iam-response-data");
+  });
+
+  it("lets an aborted same-key joiner leave while a surviving caller completes", async () => {
+    let resolveIam: ((response: Response) => void) | undefined;
+    let iamSignal: AbortSignal | null = null;
+    const pendingIam = new Promise<Response>((resolve) => {
+      resolveIam = resolve;
+    });
+    const fetchMock = installFetch(async (input, init) => {
+      if (callUrl(input) !== IAM_URL) return chatResponse();
+      iamSignal = init?.signal ?? null;
+      return pendingIam;
+    });
+    const survivorAbort = new AbortController();
+    const joinerAbort = new AbortController();
+    const survivorRuntime = await runtimeWithTracker();
+    const joinerRuntime = await runtimeWithTracker();
+    const survivor = generateText({
+      model: survivorRuntime.model,
+      prompt: "survivor",
+      maxRetries: 0,
+      abortSignal: survivorAbort.signal,
+    });
+    const joiner = generateText({
+      model: joinerRuntime.model,
+      prompt: "joiner",
+      maxRetries: 0,
+      abortSignal: joinerAbort.signal,
+    });
+
+    await vi.waitFor(() =>
+      expect(
+        fetchMock.mock.calls.filter(([input]) => callUrl(input) === IAM_URL),
+      ).toHaveLength(1),
+    );
+    joinerAbort.abort();
+    await expect(joiner).rejects.toMatchObject({ name: "AbortError" });
+    expect((iamSignal as AbortSignal | null)?.aborted).toBe(false);
+
+    resolveIam?.(iamResponse("surviving-shared-token"));
+    await expect(survivor).resolves.toMatchObject({ text: "pong" });
+    expect((iamSignal as AbortSignal | null)?.aborted).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(
+      survivorRuntime.tracker.snapshot().provider_requests +
+        joinerRuntime.tracker.snapshot().provider_requests,
+    ).toBe(2);
+  });
+
+  it("clears an aborted IAM flight so a later same-key generation recovers", async () => {
+    const firstAbort = new AbortController();
+    let iamCalls = 0;
+    const fetchMock = installFetch(async (input, init) => {
+      if (callUrl(input) !== IAM_URL) return chatResponse("recovered");
+      iamCalls += 1;
+      if (iamCalls > 1) return iamResponse("recovered-after-abort-token");
+      return new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal;
+        if (!signal) return;
+        const rejectAbort = () => reject(signal.reason);
+        if (signal.aborted) rejectAbort();
+        else signal.addEventListener("abort", rejectAbort, { once: true });
+      });
+    });
+    const abortedRuntime = await runtimeWithTracker();
+    const aborted = generateText({
+      model: abortedRuntime.model,
+      prompt: "abort",
+      maxRetries: 0,
+      abortSignal: firstAbort.signal,
+    });
+    await vi.waitFor(() => expect(iamCalls).toBe(1));
+    firstAbort.abort();
+    await expect(aborted).rejects.toMatchObject({ name: "AbortError" });
+
+    const recoveredRuntime = await runtimeWithTracker();
+    await expect(
+      generateText({
+        model: recoveredRuntime.model,
+        prompt: "recover",
+        maxRetries: 0,
+      }),
+    ).resolves.toMatchObject({ text: "recovered" });
+    expect(iamCalls).toBe(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(abortedRuntime.tracker.snapshot().provider_requests).toBe(1);
+    expect(recoveredRuntime.tracker.snapshot().provider_requests).toBe(2);
+  });
+
   it("isolates sequential runtimes by exact API-key identity", async () => {
     const keyA = "ibm-account-a-api-key";
     const keyB = "ibm-account-b-api-key";

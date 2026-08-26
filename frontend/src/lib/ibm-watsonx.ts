@@ -48,8 +48,16 @@ type CachedIamToken = {
   expiresAtMs: number;
 };
 
+type IamTokenFlight = {
+  controller: AbortController;
+  promise: Promise<CachedIamToken>;
+  waiters: number;
+  settled: boolean;
+  abandoned: boolean;
+};
+
 const cachedIamTokens = new Map<string, CachedIamToken>();
-const iamTokenPromises = new Map<string, Promise<CachedIamToken>>();
+const iamTokenFlights = new Map<string, IamTokenFlight>();
 let nowForRuntime = () => Date.now();
 let fetchForRuntime: typeof globalThis.fetch = (input, init) =>
   globalThis.fetch(input, init);
@@ -90,6 +98,14 @@ function isAbortError(error: unknown): boolean {
     error instanceof DOMException &&
     (error.name === "AbortError" || error.name === "TimeoutError")
   );
+}
+
+function safeAbortError(): DOMException {
+  return new DOMException("The operation was aborted.", "AbortError");
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw safeAbortError();
 }
 
 async function trackedFetch(
@@ -139,6 +155,7 @@ function boundedExpiry(payload: Record<string, unknown>, nowMs: number): number 
 async function requestIamToken(
   apiKey: string,
   tracker: ProviderRequestTracker,
+  signal: AbortSignal,
 ): Promise<CachedIamToken> {
   const body = new URLSearchParams({
     grant_type: "urn:ibm:params:oauth:grant-type:apikey",
@@ -151,6 +168,7 @@ async function requestIamToken(
       "Content-Type": "application/x-www-form-urlencoded",
     },
     body: body.toString(),
+    signal,
   });
 
   if (!response.ok) {
@@ -199,28 +217,85 @@ function freshCachedToken(
 async function acquireIamToken(
   apiKey: string,
   tracker: ProviderRequestTracker,
+  signal: AbortSignal | undefined,
 ): Promise<CachedIamToken> {
+  throwIfAborted(signal);
   const cached = freshCachedToken(apiKey, nowForRuntime());
   if (cached) return cached;
-  const inFlight = iamTokenPromises.get(apiKey);
-  if (inFlight) return inFlight;
+  let flight = iamTokenFlights.get(apiKey);
+  if (!flight) {
+    const controller = new AbortController();
+    const currentFlight: IamTokenFlight = {
+      controller,
+      promise: requestIamToken(apiKey, tracker, controller.signal)
+        .then((token) => {
+          if (
+            !currentFlight.abandoned &&
+            iamTokenFlights.get(apiKey) === currentFlight
+          ) {
+            cachedIamTokens.set(apiKey, token);
+          }
+          return token;
+        })
+        .catch((error) => {
+          if (iamTokenFlights.get(apiKey) === currentFlight) {
+            cachedIamTokens.delete(apiKey);
+          }
+          throw error;
+        })
+        .finally(() => {
+          currentFlight.settled = true;
+          if (iamTokenFlights.get(apiKey) === currentFlight) {
+            iamTokenFlights.delete(apiKey);
+          }
+        }),
+      waiters: 0,
+      settled: false,
+      abandoned: false,
+    };
+    iamTokenFlights.set(apiKey, currentFlight);
+    flight = currentFlight;
+  }
 
-  const pending = requestIamToken(apiKey, tracker)
-    .then((token) => {
-      cachedIamTokens.set(apiKey, token);
-      return token;
-    })
-    .catch((error) => {
-      cachedIamTokens.delete(apiKey);
-      throw error;
-    })
-    .finally(() => {
-      if (iamTokenPromises.get(apiKey) === pending) {
-        iamTokenPromises.delete(apiKey);
+  const joinedFlight = flight;
+  joinedFlight.waiters += 1;
+  return new Promise<CachedIamToken>((resolve, reject) => {
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      signal?.removeEventListener("abort", onAbort);
+      joinedFlight.waiters -= 1;
+      if (joinedFlight.waiters === 0 && !joinedFlight.settled) {
+        joinedFlight.abandoned = true;
+        cachedIamTokens.delete(apiKey);
+        if (iamTokenFlights.get(apiKey) === joinedFlight) {
+          iamTokenFlights.delete(apiKey);
+        }
+        joinedFlight.controller.abort(safeAbortError());
       }
-    });
-  iamTokenPromises.set(apiKey, pending);
-  return pending;
+    };
+    const onAbort = () => {
+      release();
+      reject(safeAbortError());
+    };
+
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) {
+      onAbort();
+      return;
+    }
+    joinedFlight.promise.then(
+      (token) => {
+        release();
+        resolve(token);
+      },
+      (error) => {
+        release();
+        reject(error);
+      },
+    );
+  });
 }
 
 function invalidateIamToken(apiKey: string, accessToken: string): void {
@@ -233,6 +308,14 @@ function requestUrl(input: string | URL | Request): string {
   if (typeof input === "string") return input;
   if (input instanceof URL) return input.toString();
   return input.url;
+}
+
+function requestAbortSignal(
+  input: string | URL | Request,
+  init: RequestInit | undefined,
+): AbortSignal | undefined {
+  if (init?.signal) return init.signal;
+  return input instanceof Request ? input.signal : undefined;
 }
 
 function translateRequestBody(
@@ -332,7 +415,8 @@ function createIbmInferenceFetch(
   return async (input, init) => {
     if (requestUrl(input) !== SDK_CHAT_URL) throw unavailable();
     const body = translateRequestBody(init, config.projectId);
-    let token = await acquireIamToken(config.apiKey, tracker);
+    const abortSignal = requestAbortSignal(input, init);
+    let token = await acquireIamToken(config.apiKey, tracker, abortSignal);
     let response = await trackedFetch(
       tracker,
       config.inferenceUrl,
@@ -341,7 +425,7 @@ function createIbmInferenceFetch(
 
     if (response.status === 401) {
       invalidateIamToken(config.apiKey, token.accessToken);
-      token = await acquireIamToken(config.apiKey, tracker);
+      token = await acquireIamToken(config.apiKey, tracker, abortSignal);
       response = await trackedFetch(
         tracker,
         config.inferenceUrl,
@@ -373,7 +457,11 @@ export async function getIbmWatsonxModel(
 export const __ibmWatsonxRuntimeTestOnly = {
   reset(): void {
     cachedIamTokens.clear();
-    iamTokenPromises.clear();
+    for (const flight of iamTokenFlights.values()) {
+      flight.abandoned = true;
+      flight.controller.abort(safeAbortError());
+    }
+    iamTokenFlights.clear();
     nowForRuntime = () => Date.now();
     fetchForRuntime = (input, init) => globalThis.fetch(input, init);
   },
