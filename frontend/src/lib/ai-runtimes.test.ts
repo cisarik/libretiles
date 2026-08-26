@@ -184,14 +184,16 @@ describe("getLanguageRuntime", () => {
     }
   });
 
-  it("dispatches the exact IBM pair through IAM before returning its chat model", async () => {
+  it("constructs the exact IBM runtime without fetch, then tracks IAM plus inference", async () => {
     vi.stubEnv("IBM_CLOUD_API_KEY", "ibm-test-api-key");
     vi.stubEnv("IBM_WATSONX_PROJECT_ID", "project-test-1234");
     vi.stubEnv("IBM_WATSONX_REGION", "eu-de");
     const fetchMock = vi.fn<
       (input: string | URL | Request, init?: RequestInit) => Promise<Response>
-    >(async () =>
-      Response.json({ access_token: "iam-test-token", expires_in: 3600 }),
+    >(async (input) =>
+      String(input) === "https://iam.cloud.ibm.com/identity/token"
+        ? Response.json({ access_token: "iam-test-token", expires_in: 3600 })
+        : openAiChatResponse(IBM_WATSONX_MODEL_ID),
     );
     vi.stubGlobal("fetch", fetchMock);
     const runtime = await getLanguageRuntime(
@@ -199,11 +201,62 @@ describe("getLanguageRuntime", () => {
       IBM_WATSONX_MODEL_ID,
     );
     assertChatModel(runtime.model, IBM_WATSONX_PROVIDER, IBM_WATSONX_MODEL_ID);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(runtime.tracker.snapshot().provider_requests).toBe(0);
+
+    const generated = await generateText({
+      model: runtime.model,
+      prompt: "ping",
+      maxRetries: 0,
+    });
+    expect(generated.text).toBe("pong");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls[0][0]).toBe(
       "https://iam.cloud.ibm.com/identity/token",
     );
-    expect(runtime.tracker.snapshot().provider_requests).toBe(1);
+    expect(runtime.tracker.snapshot().provider_requests).toBe(2);
+  });
+
+  it("keeps failed lazy IAM accounting observable and sanitized", async () => {
+    const apiKey = "ibm-private-account-key";
+    vi.stubEnv("IBM_CLOUD_API_KEY", apiKey);
+    vi.stubEnv("IBM_WATSONX_PROJECT_ID", "project-test-1234");
+    vi.stubEnv("IBM_WATSONX_REGION", "eu-de");
+    const fetchMock = vi.fn(async () =>
+      new Response(`${apiKey} raw provider body`, {
+        status: 429,
+        headers: { "Retry-After": "17" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const runtime = await getLanguageRuntime(
+      IBM_WATSONX_PROVIDER,
+      IBM_WATSONX_MODEL_ID,
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    let caught: unknown;
+    try {
+      await generateText({
+        model: runtime.model,
+        prompt: "ping",
+        maxRetries: 0,
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(normalizeProviderError(caught)).toEqual({
+      code: "provider_rate_limited",
+      message:
+        "This free rival is rate limited. Switch to another free rival or retry later.",
+    });
+    expect(String(caught)).not.toContain(apiKey);
+    expect(String(caught)).not.toContain("raw provider body");
+    expect(runtime.tracker.snapshot()).toEqual({
+      provider_requests: 1,
+      retry_after_seconds: 17,
+    });
   });
 
   it("throws sanitized auth errors and performs zero fetches for missing/placeholders", async () => {

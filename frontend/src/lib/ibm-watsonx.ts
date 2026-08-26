@@ -18,7 +18,7 @@ const SDK_BASE_URL = "https://ibm-watsonx.invalid/v1";
 const SDK_CHAT_URL = `${SDK_BASE_URL}/chat/completions`;
 const SDK_PLACEHOLDER_KEY = "ibm-iam-managed-by-runtime";
 const TOKEN_REFRESH_SKEW_MS = 60_000;
-const MAX_TOKEN_LIFETIME_MS = 86_400_000;
+const MAX_TOKEN_LIFETIME_MS = 3_600_000;
 
 const ALLOWED_REGIONS = new Set([
   "eu-de",
@@ -48,8 +48,8 @@ type CachedIamToken = {
   expiresAtMs: number;
 };
 
-let cachedIamToken: CachedIamToken | null = null;
-let iamTokenPromise: Promise<CachedIamToken> | null = null;
+const cachedIamTokens = new Map<string, CachedIamToken>();
+const iamTokenPromises = new Map<string, Promise<CachedIamToken>>();
 let nowForRuntime = () => Date.now();
 let fetchForRuntime: typeof globalThis.fetch = (input, init) =>
   globalThis.fetch(input, init);
@@ -157,6 +157,9 @@ async function requestIamToken(
     if ([400, 401, 403].includes(response.status)) {
       throw new ProviderRuntimeError("provider_auth_failed");
     }
+    if (response.status === 429) {
+      throw new ProviderRuntimeError("provider_rate_limited");
+    }
     throw unavailable();
   }
 
@@ -181,41 +184,49 @@ async function requestIamToken(
   };
 }
 
-function freshCachedToken(nowMs: number): CachedIamToken | null {
-  return (
-    cachedIamToken !== null &&
-    cachedIamToken.expiresAtMs - TOKEN_REFRESH_SKEW_MS > nowMs
-      ? cachedIamToken
-      : null
-  );
+function freshCachedToken(
+  apiKey: string,
+  nowMs: number,
+): CachedIamToken | null {
+  const cached = cachedIamTokens.get(apiKey) ?? null;
+  if (cached?.expiresAtMs && cached.expiresAtMs - TOKEN_REFRESH_SKEW_MS > nowMs) {
+    return cached;
+  }
+  cachedIamTokens.delete(apiKey);
+  return null;
 }
 
 async function acquireIamToken(
   apiKey: string,
   tracker: ProviderRequestTracker,
 ): Promise<CachedIamToken> {
-  const cached = freshCachedToken(nowForRuntime());
+  const cached = freshCachedToken(apiKey, nowForRuntime());
   if (cached) return cached;
-  if (iamTokenPromise) return iamTokenPromise;
+  const inFlight = iamTokenPromises.get(apiKey);
+  if (inFlight) return inFlight;
 
   const pending = requestIamToken(apiKey, tracker)
     .then((token) => {
-      cachedIamToken = token;
+      cachedIamTokens.set(apiKey, token);
       return token;
     })
     .catch((error) => {
-      cachedIamToken = null;
+      cachedIamTokens.delete(apiKey);
       throw error;
     })
     .finally(() => {
-      if (iamTokenPromise === pending) iamTokenPromise = null;
+      if (iamTokenPromises.get(apiKey) === pending) {
+        iamTokenPromises.delete(apiKey);
+      }
     });
-  iamTokenPromise = pending;
+  iamTokenPromises.set(apiKey, pending);
   return pending;
 }
 
-function invalidateIamToken(accessToken: string): void {
-  if (cachedIamToken?.accessToken === accessToken) cachedIamToken = null;
+function invalidateIamToken(apiKey: string, accessToken: string): void {
+  if (cachedIamTokens.get(apiKey)?.accessToken === accessToken) {
+    cachedIamTokens.delete(apiKey);
+  }
 }
 
 function requestUrl(input: string | URL | Request): string {
@@ -329,7 +340,7 @@ function createIbmInferenceFetch(
     );
 
     if (response.status === 401) {
-      invalidateIamToken(token.accessToken);
+      invalidateIamToken(config.apiKey, token.accessToken);
       token = await acquireIamToken(config.apiKey, tracker);
       response = await trackedFetch(
         tracker,
@@ -349,7 +360,6 @@ export async function getIbmWatsonxModel(
 ): Promise<LanguageModel> {
   if (modelId !== IBM_WATSONX_MODEL_ID) throw unavailable();
   const config = readConfig();
-  await acquireIamToken(config.apiKey, tracker);
   const compatible = createOpenAI({
     baseURL: SDK_BASE_URL,
     apiKey: SDK_PLACEHOLDER_KEY,
@@ -362,8 +372,8 @@ export async function getIbmWatsonxModel(
 /** Deterministic cache/clock/fetch controls. Never use outside unit tests. */
 export const __ibmWatsonxRuntimeTestOnly = {
   reset(): void {
-    cachedIamToken = null;
-    iamTokenPromise = null;
+    cachedIamTokens.clear();
+    iamTokenPromises.clear();
     nowForRuntime = () => Date.now();
     fetchForRuntime = (input, init) => globalThis.fetch(input, init);
   },

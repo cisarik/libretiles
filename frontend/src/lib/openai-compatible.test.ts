@@ -157,4 +157,13 @@ describe("credential validation", () => {
       expect(serialized).not.toMatch(/[A-Z_]+=/);
     }
   });
+
+  it("constructs a sanitized provider rate-limit runtime error", () => {
+    const error = new ProviderRuntimeError("provider_rate_limited");
+    expect(error).toMatchObject({ code: "provider_rate_limited" });
+    expect(String(error)).toBe(
+      "ProviderRuntimeError: This free rival is rate limited. Switch to another free rival or retry later.",
+    );
+    expect(String(error)).not.toMatch(/[A-Z_]+=/);
+  });
 });

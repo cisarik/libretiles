@@ -176,14 +176,19 @@ describe("IBM watsonx configuration boundary", () => {
     const fetchMock = installFetch(async () =>
       new Response(`${API_KEY} ${PROJECT_ID} eu-de`, { status: 401 }),
     );
+    const { model, tracker } = await runtimeWithTracker();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(tracker.snapshot().provider_requests).toBe(0);
+
     let caught: unknown;
     try {
-      await runtimeWithTracker();
+      await generateText({ model, prompt: "ping", maxRetries: 0 });
     } catch (error) {
       caught = error;
     }
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(tracker.snapshot().provider_requests).toBe(1);
     expect(caught).toMatchObject({ code: "provider_auth_failed" });
     const rendered = String(caught);
     expect(rendered).not.toContain(API_KEY);
@@ -203,6 +208,8 @@ describe("IBM IAM and Chat Completions wire translation", () => {
       });
     });
     const { model, tracker } = await runtimeWithTracker();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(tracker.snapshot().provider_requests).toBe(0);
 
     const result = await generateText({
       model,
@@ -262,82 +269,289 @@ describe("IBM IAM and Chat Completions wire translation", () => {
 
   it("accepts documented absolute expiration", async () => {
     const expiration = Math.floor(NOW_MS / 1000) + 3600;
-    const fetchMock = installFetch(async () =>
-      iamResponse("absolute-expiry-token", { expiration }),
+    const fetchMock = installFetch(async (input) =>
+      callUrl(input) === IAM_URL
+        ? iamResponse("absolute-expiry-token", { expiration })
+        : chatResponse(),
     );
-    await runtimeWithTracker();
-    await runtimeWithTracker();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const first = await runtimeWithTracker();
+    const second = await runtimeWithTracker();
+    await generateText({ model: first.model, prompt: "ping", maxRetries: 0 });
+    await generateText({ model: second.model, prompt: "ping", maxRetries: 0 });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(
+      fetchMock.mock.calls.filter(([input]) => callUrl(input) === IAM_URL),
+    ).toHaveLength(1);
   });
 });
 
 describe("IBM IAM cache lifecycle", () => {
-  it("shares one in-flight IAM exchange across concurrent runtime construction", async () => {
+  it("isolates sequential runtimes by exact API-key identity", async () => {
+    const keyA = "ibm-account-a-api-key";
+    const keyB = "ibm-account-b-api-key";
+    const fetchMock = installFetch(async (input, init) => {
+      if (callUrl(input) === IAM_URL) {
+        const apiKey = new URLSearchParams(String(init?.body)).get("apikey");
+        if (apiKey === keyA) return iamResponse("token-a");
+        if (apiKey === keyB) return iamResponse("token-b");
+        throw new Error("unexpected synthetic credential identity");
+      }
+      return chatResponse();
+    });
+
+    vi.stubEnv("IBM_CLOUD_API_KEY", keyA);
+    const runtimeA = await runtimeWithTracker();
+    vi.stubEnv("IBM_CLOUD_API_KEY", keyB);
+    const runtimeB = await runtimeWithTracker();
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    await generateText({ model: runtimeA.model, prompt: "ping", maxRetries: 0 });
+    await generateText({ model: runtimeB.model, prompt: "ping", maxRetries: 0 });
+
+    const iamBodies = fetchMock.mock.calls
+      .filter(([input]) => callUrl(input) === IAM_URL)
+      .map(([, init]) => new URLSearchParams(String(init?.body)).get("apikey"));
+    expect(iamBodies).toEqual([keyA, keyB]);
+    const inferenceAuthorization = fetchMock.mock.calls
+      .filter(([input]) => callUrl(input) === INFERENCE_URL)
+      .map(([, init]) => new Headers(init?.headers).get("authorization"));
+    expect(inferenceAuthorization).toEqual(["Bearer token-a", "Bearer token-b"]);
+  });
+
+  it("does not join concurrent IAM exchanges for different API keys", async () => {
+    const keyA = "ibm-concurrent-a-api-key";
+    const keyB = "ibm-concurrent-b-api-key";
+    let resolveA: ((response: Response) => void) | undefined;
+    let resolveB: ((response: Response) => void) | undefined;
+    const pendingA = new Promise<Response>((resolve) => {
+      resolveA = resolve;
+    });
+    const pendingB = new Promise<Response>((resolve) => {
+      resolveB = resolve;
+    });
+    const fetchMock = installFetch(async (input, init) => {
+      if (callUrl(input) !== IAM_URL) return chatResponse();
+      const apiKey = new URLSearchParams(String(init?.body)).get("apikey");
+      if (apiKey === keyA) return pendingA;
+      if (apiKey === keyB) return pendingB;
+      throw new Error("unexpected synthetic credential identity");
+    });
+
+    vi.stubEnv("IBM_CLOUD_API_KEY", keyA);
+    const runtimeA = await runtimeWithTracker();
+    vi.stubEnv("IBM_CLOUD_API_KEY", keyB);
+    const runtimeB = await runtimeWithTracker();
+    const generationA = generateText({
+      model: runtimeA.model,
+      prompt: "ping",
+      maxRetries: 0,
+    });
+    const generationB = generateText({
+      model: runtimeB.model,
+      prompt: "ping",
+      maxRetries: 0,
+    });
+
+    await vi.waitFor(() =>
+      expect(
+        fetchMock.mock.calls.filter(([input]) => callUrl(input) === IAM_URL),
+      ).toHaveLength(2),
+    );
+    resolveA?.(iamResponse("concurrent-token-a"));
+    resolveB?.(iamResponse("concurrent-token-b"));
+    await Promise.all([generationA, generationB]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    const inferenceAuthorization = fetchMock.mock.calls
+      .filter(([input]) => callUrl(input) === INFERENCE_URL)
+      .map(([, init]) => new Headers(init?.headers).get("authorization"));
+    expect(inferenceAuthorization).toEqual(
+      expect.arrayContaining([
+        "Bearer concurrent-token-a",
+        "Bearer concurrent-token-b",
+      ]),
+    );
+  });
+
+  it("shares one in-flight IAM exchange across concurrent same-key generation", async () => {
     let resolveIam: ((response: Response) => void) | undefined;
     const pendingIam = new Promise<Response>((resolve) => {
       resolveIam = resolve;
     });
-    const fetchMock = installFetch(async () => pendingIam);
+    const fetchMock = installFetch(async (input) =>
+      callUrl(input) === IAM_URL ? pendingIam : chatResponse(),
+    );
 
-    const first = runtimeWithTracker();
-    const second = runtimeWithTracker();
-    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const firstRuntime = await runtimeWithTracker();
+    const secondRuntime = await runtimeWithTracker();
+    const first = generateText({
+      model: firstRuntime.model,
+      prompt: "ping",
+      maxRetries: 0,
+    });
+    const second = generateText({
+      model: secondRuntime.model,
+      prompt: "ping",
+      maxRetries: 0,
+    });
+    await vi.waitFor(() =>
+      expect(
+        fetchMock.mock.calls.filter(([input]) => callUrl(input) === IAM_URL),
+      ).toHaveLength(1),
+    );
     resolveIam?.(iamResponse("shared-token"));
-    const [firstRuntime, secondRuntime] = await Promise.all([first, second]);
+    await Promise.all([first, second]);
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(
       firstRuntime.tracker.snapshot().provider_requests +
         secondRuntime.tracker.snapshot().provider_requests,
-    ).toBe(1);
+    ).toBe(3);
   });
 
   it("reuses a cached token before the early-refresh threshold", async () => {
-    const fetchMock = installFetch(async () => iamResponse("cached-token"));
+    const fetchMock = installFetch(async (input) =>
+      callUrl(input) === IAM_URL ? iamResponse("cached-token") : chatResponse(),
+    );
     const first = await runtimeWithTracker();
     const second = await runtimeWithTracker();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(first.tracker.snapshot().provider_requests).toBe(1);
-    expect(second.tracker.snapshot().provider_requests).toBe(0);
+    await generateText({ model: first.model, prompt: "ping", maxRetries: 0 });
+    await generateText({ model: second.model, prompt: "ping", maxRetries: 0 });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(first.tracker.snapshot().provider_requests).toBe(2);
+    expect(second.tracker.snapshot().provider_requests).toBe(1);
   });
 
-  it("refreshes once the cached token is within 60 seconds of expiry", async () => {
+  it.each([
+    ["expires_in", () => ({ expires_in: 7200 })],
+    ["expiration", (nowMs: number) => ({ expiration: nowMs / 1000 + 7200 })],
+  ])("caps a two-hour %s token to one hour", async (_field, expiryPayload) => {
     let nowMs = NOW_MS;
     __ibmWatsonxRuntimeTestOnly.setNow(() => nowMs);
     let tokenNumber = 0;
-    const fetchMock = installFetch(async () => {
+    const fetchMock = installFetch(async (input) => {
+      if (callUrl(input) !== IAM_URL) return chatResponse();
       tokenNumber += 1;
-      return iamResponse(`token-${tokenNumber}`);
+      return Response.json({
+        access_token: `token-${tokenNumber}`,
+        token_type: "Bearer",
+        ...expiryPayload(nowMs),
+      });
     });
 
-    await runtimeWithTracker();
-    nowMs += 3_541_000;
-    await runtimeWithTracker();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const runtime = await runtimeWithTracker();
+    await generateText({ model: runtime.model, prompt: "ping", maxRetries: 0 });
+    nowMs += 3_540_000;
+    await generateText({ model: runtime.model, prompt: "ping", maxRetries: 0 });
+    expect(tokenNumber).toBe(2);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it("rejects a token already inside the 60-second refresh window", async () => {
+    const fetchMock = installFetch(async () =>
+      iamResponse("near-expiry-token", { expiresIn: 60 }),
+    );
+    const { model, tracker } = await runtimeWithTracker();
+
+    await expect(
+      generateText({ model, prompt: "ping", maxRetries: 0 }),
+    ).rejects.toMatchObject({ code: "provider_unavailable" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(tracker.snapshot().provider_requests).toBe(1);
   });
 
   it("clears a failed singleflight so the next acquisition can recover", async () => {
     let call = 0;
-    const fetchMock = installFetch(async () => {
+    const fetchMock = installFetch(async (input) => {
+      if (callUrl(input) !== IAM_URL) return chatResponse();
       call += 1;
       return call === 1 ? apiError(503) : iamResponse("recovered-token");
     });
 
-    const failed = runtimeWithTracker();
-    await expect(failed).rejects.toMatchObject({
-      code: "provider_unavailable",
-    });
+    const failed = await runtimeWithTracker();
+    await expect(
+      generateText({ model: failed.model, prompt: "ping", maxRetries: 0 }),
+    ).rejects.toMatchObject({ code: "provider_unavailable" });
     const recovered = await runtimeWithTracker();
     expect(recovered.model).not.toBeTypeOf("string");
     if (typeof recovered.model !== "string") {
       expect(recovered.model.modelId).toBe(IBM_WATSONX_MODEL_ID);
     }
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(recovered.tracker.snapshot().provider_requests).toBe(1);
+    await generateText({
+      model: recovered.model,
+      prompt: "ping",
+      maxRetries: 0,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(recovered.tracker.snapshot().provider_requests).toBe(2);
+  });
+
+  it("a 401 invalidates only the matching credential token", async () => {
+    const keyA = "ibm-invalidation-a-api-key";
+    const keyB = "ibm-invalidation-b-api-key";
+    const iamCounts = new Map<string, number>();
+    let tokenAOneInferenceCount = 0;
+    const fetchMock = installFetch(async (input, init) => {
+      if (callUrl(input) === IAM_URL) {
+        const apiKey = new URLSearchParams(String(init?.body)).get("apikey");
+        if (apiKey !== keyA && apiKey !== keyB) {
+          throw new Error("unexpected synthetic credential identity");
+        }
+        const next = (iamCounts.get(apiKey) ?? 0) + 1;
+        iamCounts.set(apiKey, next);
+        return iamResponse(apiKey === keyA ? `token-a-${next}` : `token-b-${next}`);
+      }
+      const authorization = new Headers(init?.headers).get("authorization");
+      if (authorization === "Bearer token-a-1") {
+        tokenAOneInferenceCount += 1;
+        if (tokenAOneInferenceCount === 2) return apiError(401);
+      }
+      return chatResponse();
+    });
+
+    vi.stubEnv("IBM_CLOUD_API_KEY", keyA);
+    const runtimeA = await runtimeWithTracker();
+    vi.stubEnv("IBM_CLOUD_API_KEY", keyB);
+    const runtimeB = await runtimeWithTracker();
+    await generateText({ model: runtimeA.model, prompt: "a1", maxRetries: 0 });
+    await generateText({ model: runtimeB.model, prompt: "b1", maxRetries: 0 });
+    await generateText({ model: runtimeA.model, prompt: "a2", maxRetries: 0 });
+    await generateText({ model: runtimeB.model, prompt: "b2", maxRetries: 0 });
+
+    expect(iamCounts.get(keyA)).toBe(2);
+    expect(iamCounts.get(keyB)).toBe(1);
+    const bAuthorization = fetchMock.mock.calls
+      .filter(([, init]) =>
+        new Headers(init?.headers).get("authorization")?.includes("token-b"),
+      )
+      .map(([, init]) => new Headers(init?.headers).get("authorization"));
+    expect(bAuthorization).toEqual(["Bearer token-b-1", "Bearer token-b-1"]);
   });
 });
 
 describe("IBM inference retry and accounting", () => {
+  it("classifies IAM 429 with bounded Retry-After and one tracked request", async () => {
+    const fetchMock = installFetch(async () => apiError(429, "999999"));
+    const { model, tracker } = await runtimeWithTracker();
+
+    let caught: unknown;
+    try {
+      await generateText({ model, prompt: "ping", maxRetries: 0 });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(caught).toMatchObject({ code: "provider_rate_limited" });
+    expect(String(caught)).toBe(
+      "ProviderRuntimeError: This free rival is rate limited. Switch to another free rival or retry later.",
+    );
+    expect(tracker.snapshot()).toEqual({
+      provider_requests: 1,
+      retry_after_seconds: 86_400,
+    });
+  });
+
   it("performs exactly IAM + inference + IAM + inference after one 401", async () => {
     const sequence = [
       iamResponse("token-one"),
@@ -430,14 +644,16 @@ describe("IBM inference retry and accounting", () => {
     const fetchMock = installFetch(async () => {
       throw new Error(`${API_KEY} ${PROJECT_ID} eu-de bearer-secret`);
     });
+    const { model, tracker } = await runtimeWithTracker();
     let caught: unknown;
     try {
-      await runtimeWithTracker();
+      await generateText({ model, prompt: "ping", maxRetries: 0 });
     } catch (error) {
       caught = error;
     }
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(tracker.snapshot().provider_requests).toBe(1);
     expect(caught).toMatchObject({ code: "provider_unavailable" });
     const rendered = String(caught);
     expect(rendered).not.toContain(API_KEY);

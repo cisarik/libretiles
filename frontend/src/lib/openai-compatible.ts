@@ -19,6 +19,8 @@ import {
 
 const AUTH_MESSAGE =
   "This free rival could not authenticate. Switch to another free rival or retry later.";
+const RATE_LIMIT_MESSAGE =
+  "This free rival is rate limited. Switch to another free rival or retry later.";
 const UNAVAILABLE_MESSAGE =
   "This free rival is temporarily unavailable. Switch to another free rival or retry later.";
 
@@ -26,13 +28,22 @@ const MAX_TRACKED_REQUESTS = 10_000;
 const MAX_TRACKED_TOKENS = 1_000_000_000;
 const MAX_RETRY_AFTER_SECONDS = 86_400;
 
-type RuntimeErrorCode = "provider_auth_failed" | "provider_unavailable";
+type RuntimeErrorCode =
+  | "provider_auth_failed"
+  | "provider_rate_limited"
+  | "provider_unavailable";
 
 export class ProviderRuntimeError extends Error {
   readonly code: RuntimeErrorCode;
 
   constructor(code: RuntimeErrorCode) {
-    super(code === "provider_auth_failed" ? AUTH_MESSAGE : UNAVAILABLE_MESSAGE);
+    super(
+      code === "provider_auth_failed"
+        ? AUTH_MESSAGE
+        : code === "provider_rate_limited"
+          ? RATE_LIMIT_MESSAGE
+          : UNAVAILABLE_MESSAGE,
+    );
     this.name = "ProviderRuntimeError";
     this.code = code;
   }
