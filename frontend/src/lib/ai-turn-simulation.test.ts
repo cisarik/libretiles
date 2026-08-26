@@ -40,6 +40,7 @@ export type ProviderScript =
   | "timeout_witness_rescue"
   | "commit_reject_reprobe_rescue"
   | "retryable_429_fallback"
+  | "retryable_no_endpoints_fallback"
   | "highest_score_retained"
   | "genuine_exchange"
   | "genuine_pass"
@@ -641,6 +642,15 @@ async function runScriptedGeneration(
   if (script === "retryable_429_fallback" && engine.searchCalls === 1) {
     throw Object.assign(new Error("rate limit"), { statusCode: 429 });
   }
+  if (
+    script === "retryable_no_endpoints_fallback" &&
+    engine.searchCalls === 1
+  ) {
+    throw Object.assign(
+      new Error("No endpoints found for stealth/example:free"),
+      { name: "AI_APICallError", statusCode: 404 },
+    );
+  }
   if (script === "timeout_witness_rescue") {
     throw new DOMException("Timeout", "AbortError");
   }
@@ -895,5 +905,27 @@ describe("playable-free-rivals 300-turn causal simulation", () => {
     expect(outcome.django.snapshot().board.join("|")).toBe(turn.board.join("|"));
     expect(outcome.django.snapshot().rack.join("")).toBe(turn.rack.join(""));
     expect(outcome.stopReason).not.toBe("done");
+  });
+
+  it("reconciles once and advances to rival 2 after a no-endpoints provider 404", async () => {
+    const turn = buildFoundTurn(
+      "no-endpoints-fallback-0",
+      "retryable_no_endpoints_fallback",
+    );
+    const outcome = await runTurn(
+      turn,
+      DATA.bootstrap_rivals[0],
+      DATA.bootstrap_rivals,
+    );
+
+    expect(outcome.stopReason).toBe("done");
+    expect(outcome.posts).toBe(2);
+    expect(outcome.reconcilations).toBe(1);
+    expect(outcome.engine.searchCalls).toBe(2);
+    expect(outcome.engine.distinctPairs).toHaveLength(2);
+    expect(new Set(outcome.engine.distinctPairs).size).toBe(2);
+    expect(outcome.django.terminalPersisted).toBe(1);
+    expect(outcome.django.persistedInvalid).toBe(0);
+    expect(outcome.lastAction).toBe("place");
   });
 });

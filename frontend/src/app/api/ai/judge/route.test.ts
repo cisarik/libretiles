@@ -105,6 +105,44 @@ describe("POST /api/ai/judge", () => {
     vi.unstubAllGlobals();
   });
 
+  it("advances after a no-endpoints AI provider 404 and returns rival 2's strict result", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify(NEWEST_CATALOG), { status: 200 })),
+    );
+    generateTextMock
+      .mockRejectedValueOnce(
+        Object.assign(
+          new Error("No endpoints found for stealth/example:free"),
+          { name: "AI_APICallError", statusCode: 404 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        validPayload(
+          JSON.stringify({
+            results: [
+              { word: "QI", valid: true, reason: "Collins 2019" },
+              { word: "ZA", valid: true, reason: "Collins 2019" },
+            ],
+          }),
+        ),
+      );
+
+    const response = await POST(judgeRequest());
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      provider: "openrouter",
+      model: "nvidia/nemotron-3-super-120b-a12b:free",
+      results: [
+        { word: "QI", valid: true },
+        { word: "ZA", valid: true },
+      ],
+    });
+    expect(generateTextMock).toHaveBeenCalledTimes(2);
+    expect(getLanguageModelMock).toHaveBeenCalledTimes(2);
+    vi.unstubAllGlobals();
+  });
+
   it("honours a valid preference as attempt 1 via the shared queue", async () => {
     vi.stubGlobal(
       "fetch",

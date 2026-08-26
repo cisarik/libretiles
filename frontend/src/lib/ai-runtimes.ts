@@ -80,10 +80,12 @@ export function isLegalBackendTerminal(result: unknown): boolean {
 function collectErrorGraph(error: unknown): {
   statuses: number[];
   haystack: string;
+  hasProviderNotFound: boolean;
 } {
   const statuses: number[] = [];
   const messages: string[] = [];
   const seen = new Set<unknown>();
+  let hasProviderNotFound = false;
 
   function visit(node: unknown): void {
     if (node === null || node === undefined) return;
@@ -103,6 +105,12 @@ function collectErrorGraph(error: unknown): {
     if (typeof rec.statusCode === "number") statuses.push(rec.statusCode);
     if (typeof rec.status === "number") statuses.push(rec.status);
     if (typeof rec.message === "string") messages.push(rec.message);
+    if (
+      rec.name === "AI_APICallError" &&
+      (rec.statusCode === 404 || rec.status === 404)
+    ) {
+      hasProviderNotFound = true;
+    }
 
     visit(rec.lastError);
     visit(rec.cause);
@@ -112,13 +120,17 @@ function collectErrorGraph(error: unknown): {
   }
 
   visit(error);
-  return { statuses, haystack: messages.join(" ").toLowerCase() };
+  return {
+    statuses,
+    haystack: messages.join(" ").toLowerCase(),
+    hasProviderNotFound,
+  };
 }
 
 export function normalizeProviderError(
   error: unknown,
 ): NormalizedProviderError | null {
-  const { statuses, haystack } = collectErrorGraph(error);
+  const { statuses, haystack, hasProviderNotFound } = collectErrorGraph(error);
 
   if (
     statuses.includes(401) ||
@@ -145,8 +157,15 @@ export function normalizeProviderError(
     (haystack.includes("unsupported") && haystack.includes("tool")) ||
     haystack.includes("tool use is not supported") ||
     haystack.includes("unsupported-tools");
+  const endpointRoutingUnavailable =
+    haystack.includes("no endpoints found") ||
+    haystack.includes(
+      "no allowed providers are available for the selected model",
+    );
   if (
     unavailableStatus ||
+    hasProviderNotFound ||
+    endpointRoutingUnavailable ||
     unsupportedTools ||
     haystack.includes("overloaded") ||
     haystack.includes("overload") ||

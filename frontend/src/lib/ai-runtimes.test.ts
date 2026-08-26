@@ -40,6 +40,20 @@ function retryErrorWithStatus(statusCode: number) {
   );
 }
 
+function providerNotFoundError(message: string) {
+  const lastError = Object.assign(new Error(message), {
+    name: "AI_APICallError",
+    statusCode: 404,
+    responseBody: "secret-provider-response-sk-live-do-not-leak",
+    responseHeaders: { authorization: "Bearer secret-key-value" },
+  });
+  return Object.assign(new Error("Provider request failed"), {
+    name: "AI_RetryError",
+    lastError,
+    cause: { errors: [lastError] },
+  });
+}
+
 function assertChatModel(
   model: LanguageModel,
   providerNeedle: string,
@@ -180,6 +194,35 @@ describe("normalizeProviderError", () => {
     );
   });
 
+  it("classifies nested AI SDK 404 endpoint failures without leaking provider text", () => {
+    const classified = normalizeProviderError(
+      providerNotFoundError("No endpoints found for stealth/example:free"),
+    );
+    expect(classified).toEqual({
+      code: "provider_unavailable",
+      message:
+        "This free rival is temporarily unavailable. Switch to another free rival or retry later.",
+    });
+    expect(JSON.stringify(classified)).not.toContain("stealth/example:free");
+    expect(JSON.stringify(classified)).not.toContain("No endpoints found");
+    expect(JSON.stringify(classified)).not.toContain("sk-live");
+    expect(JSON.stringify(classified)).not.toContain("secret-key-value");
+  });
+
+  it("classifies the official no-allowed-providers wording without wrapper status", () => {
+    expect(
+      normalizeProviderError(
+        new Error(
+          "No allowed providers are available for the selected model",
+        ),
+      ),
+    ).toEqual({
+      code: "provider_unavailable",
+      message:
+        "This free rival is temporarily unavailable. Switch to another free rival or retry later.",
+    });
+  });
+
   it("classifies direct statusCode values", () => {
     expect(
       normalizeProviderError({ statusCode: 401, message: "nope" })?.code,
@@ -210,6 +253,32 @@ describe("normalizeProviderError", () => {
       responseBody: "sk-live-raw-body",
     };
     expect(normalizeProviderError(raw)).toBeNull();
+  });
+
+  it("does not classify arbitrary application 404 or plain model-not-found errors", () => {
+    expect(
+      normalizeProviderError({
+        statusCode: 404,
+        message: "Django page not found",
+      }),
+    ).toBeNull();
+    expect(normalizeProviderError(new Error("model not found"))).toBeNull();
+  });
+
+  it("preserves auth and rate-limit precedence over endpoint unavailability", () => {
+    expect(
+      normalizeProviderError({
+        statusCode: 429,
+        message: "No endpoints found",
+      })?.code,
+    ).toBe("provider_rate_limited");
+    expect(
+      normalizeProviderError({
+        statusCode: 429,
+        message: "No endpoints found",
+        cause: { statusCode: 401, message: "invalid API key" },
+      })?.code,
+    ).toBe("provider_auth_failed");
   });
 
   it("walks cyclic graphs without throwing", () => {
