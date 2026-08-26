@@ -134,22 +134,23 @@ Browser           Next.js /api/ai/move           AI Model              Django Ba
 | Tool | Description | Django Endpoint |
 |------|-------------|-----------------|
 | `validateMove` | Check placement legality, extract words, calculate score | `POST /api/game/{id}/validate-move/` |
+| `finishMove` | Signal that a backend-validated placement is ready to finalize | (no Django call; aborts search) |
 | `validateWords` | Check words against the Collins 2019 dictionary | `POST /api/game/{id}/validate-words/` |
 
 ### AI Prompt Structure
 
-The system prompt (`frontend/src/lib/prompts.ts`) includes:
+The system prompt (`frontend/src/lib/prompts.ts`) is a non-overridable TypeScript CORE. Database presets are composed around it as an advisory SEARCH_PROFILE block and cannot change action authority:
 
 - **Legality-first anchor search** -- scan anchors, form candidates from held tiles, rank by EV, never brute-force nonsense strings
 - **Early validated scoring floor** -- secure one backend-validated legal scoring move first, then climb
 - **Budget-bounded diversity** -- explore different families only while the shared step budget remains; no arbitrary candidate quota
 - **Backend validation authority** -- Collins Scrabble Words (2019) decides legality; intuition only proposes
-- **Blank policy / game phase / anti-blunder / no-scoring fallback**
-- **Output format** -- strict JSON schema for the response
+- **Blank policy / game phase / anti-blunder / genuine no-move fallback** -- pass or exchange only after `GET /api/game/{id}/ai-playability/` returns `none`
+- **Action authority** -- tools only (`validateMove`, then `finishMove`). Free-form JSON cannot choose pass, exchange, or place.
 
 The judge system prompt treats Collins 2019 as the sole validity authority, is conservative on uncertain recall, forbids natural-usage/corpus/idiom overrides, and requires strict JSON `{results:[…]}` with exactly one result per requested word.
 
-Database prompt presets (Initial, Fast Search, Short Hooks, Grandmaster) refresh through reversible migration `0010_refresh_seeded_prompts`: SHA-256 hash-gated updates of unmodified seed rows only. Admin-customized rows are never overwritten. Reverse restores prior text only for rows the forward step updated.
+Database prompt presets (Initial, Fast Search, Short Hooks, Grandmaster) refresh through reversible hash-gated migrations `0010_refresh_seeded_prompts` then `0011_playable_seeded_prompts` (advisory SEARCH_PROFILE text). Admin-customized rows are never overwritten. Reverse restores prior text only for rows the forward step updated.
 
 The user prompt provides:
 - Current rack letters
@@ -181,7 +182,7 @@ Frontend Settings ──► create game request (`ai_model_model_id`)
 
 - **Runtime**: two server-only Next.js keys, `OPENROUTER_API_KEY` and `NVIDIA_API_KEY`. Bases are hardcoded in `frontend/src/lib/openrouter.ts` and `frontend/src/lib/nvidia-nim.ts`. Do not put those keys in backend env.
 - **Catalog flag**: `DYNAMIC_FREE_MODEL_CATALOG_ENABLED` in `backend/config/settings.py` (default false). False = `FREE_RIVAL_PAIRS` bootstrap order. True = four newest eligible OpenRouter models plus seeded NIM last. `/api/catalog/models/` serializes that list, exposes `released_at`, and marks only row 1 `is_flagship` / `recommended`.
-- **Fallback**: Play and Judge call the same `buildFallbackQueue` (`frontend/src/lib/ai-fallback.ts`), capped at three distinct pairs. A valid explicit preference is attempt 1; remaining attempts follow untouched catalog order. Preference `model_id` is unchanged; Play `runtime_model_id` is the attempt. Terminal SSE metadata includes `provider_requests_used`; `max_steps` is the remaining whole-turn provider-call budget. Collins 2019 on Django remains the persisted-move validator.
+- **Fallback**: Play and Judge call the same `buildFallbackQueue` (`frontend/src/lib/ai-fallback.ts`), capped at three distinct pairs. A valid explicit preference is attempt 1; remaining attempts follow untouched catalog order. Preference `model_id` is unchanged; Play `runtime_model_id` is the attempt. Per-attempt SSE metadata includes `provider_requests_used`; `turn_provider_requests_used` is the orchestrator sum across attempts including the successful one. `max_steps` is the remaining whole-turn provider-call budget. Collins 2019 on Django remains the persisted-move validator. `GET /api/game/{id}/ai-playability/` is the authoritative witness for whether a legal scoring placement exists before any pass/exchange.
 - **Judge**: up to three sequential attempts, AI SDK `maxRetries: 0`, 10 seconds per attempt, 30 seconds overall. HTTP 503 on exhaustion. Malformed output is never synthesized into false invalid verdicts.
 - **Store default**: Zustand `selectedModelId` starts empty; pages resolve via `resolveEligibleModelId` in `frontend/src/lib/model-catalog.ts` (valid server preference, then valid stored id, then catalog row 1). There is no `NEXT_PUBLIC_DEFAULT_MODEL`.
 - **Catalog seed**: `python manage.py seed_models` writes the five-pair offline shortlist and is required for local boot. It must not flip Admin `is_active` on existing rows.
@@ -322,7 +323,8 @@ These notes are for the next coding agent continuing AI gameplay work.
   - Django exposes `AI_MOVE_MAX_OUTPUT_TOKENS` and `AI_MOVE_TIMEOUT_SECONDS` via `/api/game/{id}/ai-context/`
   - the AI route clamps and uses the backend-provided output-token budget as the source of truth
   - longer searches also get a less aggressive auto-finalize window to avoid cutting candidate exploration too early
-- Play fallback shares one whole-turn provider-call budget; terminal SSE events include `provider_requests_used`.
+- Play fallback shares one whole-turn provider-call budget; terminal SSE events include `provider_requests_used` per attempt and `turn_provider_requests_used` as the whole-turn sum.
+- Move-route terminals also carry `completion_source`, `probe_status`, `repair_attempted`, and `terminal_cause`. The thinking overlay renders those as transient human states inside the attempt-progress surface; they are not written to Zustand persist / localStorage.
 - The game header now exposes a lightweight audit trail:
   - requested model (frontend selection)
   - session model (backend game source of truth)
@@ -331,7 +333,10 @@ These notes are for the next coding agent continuing AI gameplay work.
   - `frontend/src/app/game/[id]/page.tsx`
   - `frontend/src/app/api/ai/move/route.ts`
   - `frontend/src/lib/ai-fallback.ts`
+  - `frontend/src/lib/ai-turn-simulation.test.ts`
   - `backend/game/services.py`
+  - `backend/gamecore/legality.py`
+  - `backend/gamecore/move_search.py`
 
 ### Current model catalog policy
 
@@ -355,19 +360,21 @@ These notes are for the next coding agent continuing AI gameplay work.
 
 ### Current AI UX guardrails
 
-- The thinking overlay renders ordered fallback-rival pills from store attempt state (`data-attempt-status`, `title=modelId`). Exactly one gold/black ping-pong tile mounts while `isAttemptPingPongActive` is true; it disappears when the index clears or the attempt is marked failed. `pingPongTileMotion` uses `delay: 0` and returns `null` under reduced motion (static tile). Premium Look off uses flat amber; pills remain readable.
-- The move prompt is legality-first:
+- The thinking overlay renders ordered fallback-rival pills from store attempt state (`data-attempt-status`, `title=modelId`). Exactly one gold/black ping-pong tile mounts while `isAttemptPingPongActive` is true; it disappears when the index clears or the attempt is marked failed. `pingPongTileMotion` uses `delay: 0` and returns `null` under reduced motion (static tile). Premium Look off uses flat amber; pills remain readable. Transient telemetry copy sits in the same progress surface.
+- The move prompt is a TypeScript CORE plus advisory SEARCH_PROFILE:
   - anchor-based search workflow
   - early backend-validated scoring floor
   - diverse alternatives only while the shared step budget remains
   - explicit ban on random string generation / arbitrary candidate quotas
   - absolute Collins 2019 backend authority
+  - tools-only action authority (no free-form JSON pass/exchange/place)
 - The judge prompt is Collins-2019-only with no natural-usage override and strict one-result-per-word JSON.
 - Relevant files:
   - `frontend/src/components/game/AIThinkingOverlay.tsx`
   - `frontend/src/lib/premiumSurface.ts`
   - `frontend/src/lib/prompts.ts`
   - `backend/catalog/migrations/0010_refresh_seeded_prompts.py`
+  - `backend/catalog/migrations/0011_playable_seeded_prompts.py`
 
 ### Current admin operations surface
 

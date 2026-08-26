@@ -1,0 +1,50 @@
+{
+  "bootstrap_rivals": [
+    { "provider": "openrouter", "model_id": "google/gemma-4-31b-it:free" },
+    { "provider": "nvidia-nim", "model_id": "nvidia/nemotron-3-super-120b-a12b" },
+    { "provider": "openrouter", "model_id": "nvidia/nemotron-3-super-120b-a12b:free" },
+    { "provider": "openrouter", "model_id": "z-ai/glm-5.2:free" },
+    { "provider": "openrouter", "model_id": "google/gemma-4-26b-a4b-it:free" }
+  ],
+  "games_per_rival": 10,
+  "ai_turns_per_game": 6,
+  "found_games_per_rival": 9,
+  "found_scripts": [
+    "valid_placement",
+    "valid_then_pass_text",
+    "malformed_output",
+    "invalid_then_repair",
+    "timeout_witness_rescue",
+    "commit_reject_reprobe_rescue",
+    "retryable_429_fallback",
+    "highest_score_retained"
+  ],
+  "tiles": {
+    "found_rack": ["R", "A", "T", "E", "I", "N", "S"],
+    "rate": {
+      "placements": [
+        { "row": 7, "col": 7, "letter": "R" },
+        { "row": 7, "col": 8, "letter": "A" },
+        { "row": 7, "col": 9, "letter": "T" },
+        { "row": 7, "col": 10, "letter": "E" }
+      ],
+      "word": "RATE",
+      "score": 8
+    },
+    "rates": {
+      "placements": [
+        { "row": 7, "col": 7, "letter": "R" },
+        { "row": 7, "col": 8, "letter": "A" },
+        { "row": 7, "col": 9, "letter": "T" },
+        { "row": 7, "col": 10, "letter": "E" },
+        { "row": 7, "col": 11, "letter": "S" }
+      ],
+      "word": "RATES",
+      "score": 10
+    },
+    "invalid_placement": [{ "row": 0, "col": 0, "letter": "Q" }],
+    "exchange_rack": ["Q", "J", "X", "Z", "Q", "J", "X"],
+    "exchange_after_rack": ["A", "E", "I", "N", "O", "R", "T"],
+    "pass_rack": ["Q"]
+  }
+}

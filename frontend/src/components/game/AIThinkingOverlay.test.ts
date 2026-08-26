@@ -127,4 +127,57 @@ describe("AIThinkingOverlay fallback attempt pills", () => {
     expect(markup).toMatch(/linear-gradient\(135deg/);
     expect(markup).toContain('data-pingpong="active"');
   });
+
+  it("renders transient telemetry inside the attempt-progress surface", () => {
+    primeStore([pending(GEMMA)], 0, {
+      aiTurnTelemetry: {
+        probeStatus: "found",
+        repairAttempted: true,
+        humanState: "backend found a legal rescue; repairing",
+      },
+    });
+    const markup = renderOverlay();
+    expect(markup).toContain("ai-turn-telemetry");
+    expect(markup).toContain("backend found a legal rescue; repairing");
+    expect(markup).toContain("ai-fallback-progress");
+    expect(markup.indexOf(GEMMA)).toBeGreaterThan(-1);
+  });
+
+  it("renders genuine-dead and exhausted states without touching ping-pong", () => {
+    primeStore(
+      [
+        { provider: "openrouter", modelId: GEMMA, status: "failed" },
+        pending(GLM),
+      ],
+      1,
+      {
+        aiTurnTelemetry: { humanState: "genuine dead rack — exchanging" },
+      },
+    );
+    let markup = renderOverlay();
+    expect(markup).toContain("genuine dead rack — exchanging");
+    expect(markup.match(/data-pingpong="active"/g)?.length).toBe(1);
+
+    primeStore([{ provider: "openrouter", modelId: GEMMA, status: "failed" }], 0, {
+      aiTurnTelemetry: { humanState: "providers exhausted" },
+    });
+    markup = renderOverlay();
+    expect(markup).toContain("providers exhausted");
+    expect(markup).not.toContain('data-pingpong="active"');
+    expect(markup).not.toContain('data-pingpong="static"');
+  });
+
+  it("keeps reduced-motion static tile when telemetry is present", () => {
+    motionMock.reduced = true;
+    primeStore([pending(GEMMA)], 0, {
+      aiTurnTelemetry: {
+        humanState: "backend found a legal rescue; repairing",
+      },
+    });
+    const markup = renderOverlay();
+    expect(markup).toContain("backend found a legal rescue; repairing");
+    expect(markup).toContain('data-pingpong="static"');
+    expect(markup).not.toContain('data-pingpong="active"');
+    expect(markup).toContain('data-attempt-status="active"');
+  });
 });

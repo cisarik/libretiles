@@ -199,21 +199,33 @@ function FallbackAttemptPill({
 export function FallbackAttemptProgress() {
   const aiFallbackAttempts = useGameStore((s) => s.aiFallbackAttempts);
   const activeIndex = useGameStore((s) => s.aiFallbackActiveIndex);
+  const humanState = useGameStore((s) => s.aiTurnTelemetry?.humanState ?? null);
 
   if (aiFallbackAttempts.length === 0) return null;
 
   return (
     <div
       data-testid="ai-fallback-progress"
-      className="flex flex-wrap items-center gap-1.5 border-t border-stone-800/50 pt-2"
+      className="flex flex-col gap-1.5 border-t border-stone-800/50 pt-2"
     >
-      {aiFallbackAttempts.map((attempt, i) => (
-        <FallbackAttemptPill
-          key={`${attempt.provider}-${attempt.modelId}-${i}`}
-          attempt={attempt}
-          isActive={isAttemptPingPongActive(attempt.status, i === activeIndex)}
-        />
-      ))}
+      <div className="flex flex-wrap items-center gap-1.5">
+        {aiFallbackAttempts.map((attempt, i) => (
+          <FallbackAttemptPill
+            key={`${attempt.provider}-${attempt.modelId}-${i}`}
+            attempt={attempt}
+            isActive={isAttemptPingPongActive(attempt.status, i === activeIndex)}
+          />
+        ))}
+      </div>
+      {humanState ? (
+        <p
+          data-testid="ai-turn-telemetry"
+          aria-live="polite"
+          className="text-[10px] leading-snug text-stone-400"
+        >
+          {humanState}
+        </p>
+      ) : null}
     </div>
   );
 }

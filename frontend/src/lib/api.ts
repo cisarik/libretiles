@@ -2,6 +2,7 @@ import { useGameStore } from "@/hooks/useGameStore";
 import type {
   AIModel,
   AIPrompt,
+  AiTurnTelemetry,
   GameHistoryFilter,
   GameHistoryResponse,
   GameHistorySort,
@@ -10,6 +11,7 @@ import type {
   UserProfile,
   WSTicketResponse,
 } from "@/lib/types";
+import { telemetryFromSsePayload } from "./ai-move-stream";
 
 const DEFAULT_API_BASE = "http://localhost:8000";
 
@@ -314,3 +316,11 @@ export const api = {
     }),
 
 };
+
+/** Transient AI-turn diagnostics from an SSE payload. Never persisted. */
+export function readAiTurnTelemetry(
+  payload: Record<string, unknown> | null | undefined,
+): AiTurnTelemetry | null {
+  if (!payload) return null;
+  return telemetryFromSsePayload(payload);
+}

@@ -228,3 +228,78 @@ export interface AIProgressEvent {
   type: AIProgressEventType;
   data: Record<string, unknown>;
 }
+
+/** Slice-2 terminal diagnostics. Transient UI only — never persist. */
+export type AiCompletionSource =
+  | "provider_candidate"
+  | "repair_candidate"
+  | "backend_witness_rescue"
+  | "genuine_no_move_exchange"
+  | "genuine_no_move_pass";
+
+export interface AiTurnTelemetry {
+  completionSource?: AiCompletionSource | null;
+  probeStatus?: string | null;
+  repairAttempted?: boolean | null;
+  terminalCause?: string | null;
+  humanState?: string | null;
+}
+
+const COMPLETION_SOURCES: ReadonlySet<string> = new Set([
+  "provider_candidate",
+  "repair_candidate",
+  "backend_witness_rescue",
+  "genuine_no_move_exchange",
+  "genuine_no_move_pass",
+]);
+
+export function asAiCompletionSource(
+  value: unknown,
+): AiCompletionSource | null {
+  return typeof value === "string" && COMPLETION_SOURCES.has(value)
+    ? (value as AiCompletionSource)
+    : null;
+}
+
+/**
+ * Concise overlay copy for turn diagnostics. Unknown combinations stay silent
+ * so provider-candidate noise does not replace the live search status.
+ */
+export function describeAiTurnTelemetry(input: {
+  completionSource?: string | null;
+  probeStatus?: string | null;
+  repairAttempted?: boolean | null;
+  terminalCause?: string | null;
+  thinkingStatus?: string | null;
+  message?: string | null;
+  providersExhausted?: boolean;
+}): string | null {
+  if (input.providersExhausted) return "providers exhausted";
+  const message = input.message?.trim() ?? "";
+  if (message === "backend found a legal rescue; repairing") return message;
+  if (message === "genuine dead rack — exchanging") return message;
+  if (message === "genuine dead rack — passing") return message;
+  if (message === "providers exhausted") return message;
+  if (
+    input.thinkingStatus === "probe_found" ||
+    (input.probeStatus === "found" &&
+      (input.repairAttempted === true ||
+        input.completionSource === "repair_candidate" ||
+        input.completionSource === "backend_witness_rescue"))
+  ) {
+    return "backend found a legal rescue; repairing";
+  }
+  if (
+    input.completionSource === "genuine_no_move_exchange" ||
+    input.thinkingStatus === "genuine_exchange"
+  ) {
+    return "genuine dead rack — exchanging";
+  }
+  if (
+    input.completionSource === "genuine_no_move_pass" ||
+    input.thinkingStatus === "genuine_pass"
+  ) {
+    return "genuine dead rack — passing";
+  }
+  return null;
+}

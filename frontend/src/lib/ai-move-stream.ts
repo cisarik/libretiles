@@ -1,4 +1,9 @@
-import type { AICandidate } from "./types";
+import {
+  asAiCompletionSource,
+  describeAiTurnTelemetry,
+  type AICandidate,
+  type AiTurnTelemetry,
+} from "./types";
 
 export const CODED_PROVIDER_ERROR_CODES = [
   "provider_auth_failed",
@@ -29,7 +34,46 @@ export type ConsumeAIStreamCallbacks = {
   onCandidate: (candidate: AICandidate) => void;
   onDone?: (data: Record<string, unknown>) => void;
   onStatus: (message: string) => void;
+  onTelemetry?: (telemetry: AiTurnTelemetry) => void;
 };
+
+export function telemetryFromSsePayload(
+  json: Record<string, unknown>,
+): AiTurnTelemetry | null {
+  const completionSource = asAiCompletionSource(json.completion_source);
+  const probeStatus =
+    typeof json.probe_status === "string" ? json.probe_status : null;
+  const repairAttempted =
+    typeof json.repair_attempted === "boolean" ? json.repair_attempted : null;
+  const terminalCause =
+    typeof json.terminal_cause === "string" ? json.terminal_cause : null;
+  const thinkingStatus = typeof json.status === "string" ? json.status : null;
+  const message = typeof json.message === "string" ? json.message : null;
+  const humanState = describeAiTurnTelemetry({
+    completionSource,
+    probeStatus,
+    repairAttempted,
+    terminalCause,
+    thinkingStatus,
+    message,
+  });
+  if (
+    !completionSource &&
+    !probeStatus &&
+    repairAttempted === null &&
+    !terminalCause &&
+    !humanState
+  ) {
+    return null;
+  }
+  return {
+    completionSource,
+    probeStatus,
+    repairAttempted,
+    terminalCause,
+    humanState,
+  };
+}
 
 function isCodedProviderErrorCode(value: string): value is CodedProviderErrorCode {
   return (CODED_PROVIDER_ERROR_CODES as readonly string[]).includes(value);
@@ -93,6 +137,8 @@ function applySseEvent(
     } else if (typeof json.model === "string") {
       callbacks.onStatus(`Thinking with ${json.model}`);
     }
+    const telemetry = telemetryFromSsePayload(json);
+    if (telemetry) callbacks.onTelemetry?.(telemetry);
     return;
   }
   if (type === "tool_use") {
@@ -116,11 +162,15 @@ function applySseEvent(
   if (type === "done") {
     state.doneData = json;
     callbacks.onDone?.(json);
+    const telemetry = telemetryFromSsePayload(json);
+    if (telemetry) callbacks.onTelemetry?.(telemetry);
     return;
   }
   if (type === "error") {
     if (state.doneData) return;
     state.lastError = recordErrorEvent(json);
+    const telemetry = telemetryFromSsePayload(json);
+    if (telemetry) callbacks.onTelemetry?.(telemetry);
   }
 }
 

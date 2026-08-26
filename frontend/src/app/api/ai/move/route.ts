@@ -994,6 +994,12 @@ export async function POST(req: NextRequest) {
                 remainingSteps >= REPAIR_RESERVE_STEPS &&
                 remainingSeconds() >= REPAIR_MIN_REMAINING_SECONDS
               ) {
+                emit({
+                  type: "thinking",
+                  status: "probe_found",
+                  message: "backend found a legal rescue; repairing",
+                  probe_status: "found",
+                });
                 await runRepair(witnessPlacements);
                 const repairCandidates = candidates
                   .filter((c) => c.valid)
@@ -1049,6 +1055,12 @@ export async function POST(req: NextRequest) {
                   : [];
                 terminalCause = "genuine_no_move_exchange";
                 completionSource = "genuine_no_move_exchange";
+                emit({
+                  type: "thinking",
+                  status: "genuine_exchange",
+                  message: "genuine dead rack — exchanging",
+                  probe_status: "none",
+                });
                 const exchangeResult = await backendPost(
                   `/api/game/${game_id}/ai-exchange/`,
                   {
@@ -1069,6 +1081,12 @@ export async function POST(req: NextRequest) {
 
               terminalCause = "genuine_no_move_pass";
               completionSource = "genuine_no_move_pass";
+              emit({
+                type: "thinking",
+                status: "genuine_pass",
+                message: "genuine dead rack — passing",
+                probe_status: "none",
+              });
               const passResult = await backendPost(
                 `/api/game/${game_id}/ai-pass/`,
                 { ai_metadata: boundedAiMetadata("genuine_no_move_pass") },

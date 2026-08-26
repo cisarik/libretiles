@@ -7,6 +7,7 @@ import type {
   StartingDraw,
   AICandidate,
   AiFallbackAttempt,
+  AiTurnTelemetry,
 } from "@/lib/types";
 
 interface PendingTile extends Placement {
@@ -84,6 +85,10 @@ interface GameStore {
   setAIFallbackActiveIndex: (index: number | null) => void;
   markAIFallbackFailed: (index: number) => void;
   clearAIFallbackProgress: () => void;
+
+  // Transient turn telemetry (never persisted)
+  aiTurnTelemetry: AiTurnTelemetry | null;
+  patchAITurnTelemetry: (patch: AiTurnTelemetry) => void;
 
   // AI countdown (seconds remaining)
   aiCountdown: number;
@@ -194,7 +199,17 @@ export const useGameStore = create<GameStore>()(
           ),
         })),
       clearAIFallbackProgress: () =>
-        set({ aiFallbackAttempts: [], aiFallbackActiveIndex: null }),
+        set({
+          aiFallbackAttempts: [],
+          aiFallbackActiveIndex: null,
+          aiTurnTelemetry: null,
+        }),
+
+      aiTurnTelemetry: null,
+      patchAITurnTelemetry: (patch) =>
+        set((s) => ({
+          aiTurnTelemetry: { ...s.aiTurnTelemetry, ...patch },
+        })),
 
       aiCountdown: 0,
       setAICountdown: (aiCountdown) => set({ aiCountdown }),
@@ -222,6 +237,7 @@ export const useGameStore = create<GameStore>()(
           aiStatusMessage: null,
           aiFallbackAttempts: [],
           aiFallbackActiveIndex: null,
+          aiTurnTelemetry: null,
           aiCountdown: 0,
           lastMoveResult: null,
           phase: "idle",

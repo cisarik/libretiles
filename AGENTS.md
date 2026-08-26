@@ -78,6 +78,9 @@ npm run build
 | Catalog pair resolution | `frontend/src/lib/model-catalog.ts` |
 | Shared Play/Judge fallback queue | `frontend/src/lib/ai-fallback.ts` |
 | SSE terminal + `provider_requests_used` | `frontend/src/lib/ai-move-stream.ts` |
+| Authoritative AI legality / playability | `backend/gamecore/legality.py` |
+| Bounded witness search | `backend/gamecore/move_search.py` |
+| 300-turn causal simulation | `frontend/src/lib/ai-turn-simulation.test.ts` |
 | Catalog seed | `backend/catalog/management/commands/seed_models.py` |
 | Optional catalog sync | `backend/catalog/management/commands/sync_openrouter_models.py` |
 | Catalog selection (flag + ranking) | `backend/catalog/selection.py` |
@@ -105,6 +108,10 @@ npm run build
   - used by settings plus the game header/footer
   - controlled by the persisted `premiumLookEnabled` store flag
 - Libre Tiles is a **free-only** product: it does not handle money, app credits, USD balances, token prices, or per-game charges. Play and Judge share one preference-first fallback queue over the selectable free-rival catalog (flag-off: five curated bootstrap pairs; flag-on: four newest eligible OpenRouter models plus the seeded NIM tuple). Provider quotas or trial terms are external and may change; they are not Libre Tiles credits or charges. Stripe is rejected for this product direction.
+- Authoritative playability: `GET /api/game/{id}/ai-playability/` returns `found|none|indeterminate` plus an optional witness. AI pass/exchange are rejected with 409 `legal_scoring_move_exists` | `playability_unknown` | `exchange_required` when a legal scoring placement exists or playability is unknown. Bounded sanitized `ai_metadata` is stored on every AI terminal.
+- Tool-only move pipeline: `/api/ai/move` gives free-form model text no authority over pass/exchange/place. The first step is forced `validateMove`; `finishMove({ready:true})` may run only after a backend-valid candidate. A 2-step repair reserve stays inside the same granted `max_steps`. `completion_source` is one of `provider_candidate` | `repair_candidate` | `backend_witness_rescue` | `genuine_no_move_exchange` | `genuine_no_move_pass`.
+- Seeded SEARCH_PROFILE prompts: migration `0011_playable_seeded_prompts` hash-gates the four seed rows (Initial, Fast Search, Short Hooks, Grandmaster) into advisory SEARCH_PROFILE blocks around the TypeScript CORE. Admin-customized rows are never overwritten.
+- Transient turn telemetry: overlay attempt-progress may show `completion_source`, `probe_status`, `repair_attempted`, and `terminal_cause` as human states such as "backend found a legal rescue; repairing", "genuine dead rack — exchanging", or "providers exhausted". These fields are not persisted to localStorage.
 
 ## Word validation (important)
 
@@ -121,12 +128,12 @@ npm run build
   - Flag on: the four newest eligible OpenRouter `:free` models (zero prompt and completion pricing, tools, text output, OpenRouter-managed and currently available) plus the fixed seeded NIM tuple last. Missing `released_at` ranks after dated rows; bootstrap `sort_order` then `model_id` break ties.
   - Django Admin `is_active` is the durable kill switch. Neither `seed_models` nor `sync_openrouter_models` may reactivate or deactivate an existing row. Do not buy a paid catalog tier for this cut.
 - **Preference**: a valid explicit preference is attempt 1; remaining attempts follow untouched catalog order. New users and empty Zustand `selectedModelId` receive catalog row 1. Returning valid preferences stay; stale ids are repaired against the live catalog. There is no `NEXT_PUBLIC_DEFAULT_MODEL`.
-- **Fallback**: Play and Judge call the same `buildFallbackQueue` in `frontend/src/lib/ai-fallback.ts`, capped at three distinct pairs. Preference `model_id` is unchanged; `runtime_model_id` is the Play attempt. Play retries only retryable provider failures after unchanged-turn reconciliation. Terminal SSE metadata includes `provider_requests_used`; `max_steps` is the remaining whole-turn provider-call budget shared across attempts (not a fresh budget per stream).
+- **Fallback**: Play and Judge call the same `buildFallbackQueue` in `frontend/src/lib/ai-fallback.ts`, capped at three distinct pairs. Preference `model_id` is unchanged; `runtime_model_id` is the Play attempt. Play retries only retryable provider failures after unchanged-turn reconciliation. Per-attempt SSE metadata includes `provider_requests_used`; the orchestrator sums `turn_provider_requests_used` across attempts including the finally-successful one. `max_steps` is the remaining whole-turn provider-call budget shared across attempts (not a fresh budget per stream).
 - **Judge**: up to three sequential attempts, AI SDK `maxRetries: 0`, 10 seconds per attempt, 30 seconds overall. HTTP 503 on exhaustion. Never invent false invalid verdicts.
-- **Presentation**: `AIThinkingOverlay` shows ordered provider/model pills bound to attempt lifecycle (`data-attempt-status`). Exactly one gold/black ping-pong tile mounts on the active attempt (`pingPongTileMotion` delay is always `0`). Reduced motion yields a static tile. With Premium Look off, pills stay readable via flat amber chrome.
+- **Presentation**: `AIThinkingOverlay` shows ordered provider/model pills bound to attempt lifecycle (`data-attempt-status`). Exactly one gold/black ping-pong tile mounts on the active attempt (`pingPongTileMotion` delay is always `0`). Reduced motion yields a static tile. With Premium Look off, pills stay readable via flat amber chrome. Transient telemetry copy renders inside that same progress surface and is cleared with the turn.
 - **Time / search**: `aiTimeout` and `aiMaxSteps` in the Zustand store / Settings, consumed by the SSE move route.
-- **Prompt**: `frontend/src/lib/prompts.ts` — legality-first anchor search, early backend-validated scoring floor, budget-bounded diversity, Collins-2019-only judge authority, no natural-usage override, strict JSON. Change carefully and test against backend validation.
-- **Seeded-prompt migration**: `0010_refresh_seeded_prompts` is reversible and SHA-256 hash-gated. It refreshes only unmodified seed rows (Initial, Fast Search, Short Hooks, Grandmaster). Admin-customized rows are never overwritten.
+- **Prompt**: `frontend/src/lib/prompts.ts` — non-overridable TypeScript CORE plus an advisory SEARCH_PROFILE from the selected DB preset. Legality-first anchor search, early backend-validated scoring floor, budget-bounded diversity, Collins-2019-only judge authority, no natural-usage override. Free-form JSON does not choose pass/exchange/place. Change carefully and test against backend validation plus `frontend/src/lib/ai-turn-simulation.test.ts`.
+- **Seeded-prompt migration**: `0010_refresh_seeded_prompts` then `0011_playable_seeded_prompts` are reversible and SHA-256 hash-gated. They refresh only unmodified seed rows (Initial, Fast Search, Short Hooks, Grandmaster). Admin-customized rows are never overwritten.
 - Hardcoded bases: OpenRouter `https://openrouter.ai/api/v1`; NVIDIA NIM `https://integrate.api.nvidia.com/v1`. No base-URL env vars.
 
 ## Operations and rollout

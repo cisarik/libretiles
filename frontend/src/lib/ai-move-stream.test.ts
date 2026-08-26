@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { consumeAIStream, type AiMoveStreamTerminal } from "./ai-move-stream";
-import type { AICandidate } from "./types";
+import type { AICandidate, AiTurnTelemetry } from "./types";
 
 function sseResponse(chunks: string[]): Response {
   const encoder = new TextEncoder();
@@ -218,5 +218,47 @@ describe("consumeAIStream terminals", () => {
       kind: "generic_error",
       message: "No response stream",
     });
+  });
+
+  it("forwards terminal telemetry without persisting private payloads", async () => {
+    const events: AiTurnTelemetry[] = [];
+    const terminal = await consumeAIStream(
+      sseResponse([
+        eventLine({
+          type: "thinking",
+          status: "genuine_exchange",
+          message: "genuine dead rack — exchanging",
+          probe_status: "none",
+        }),
+        eventLine({
+          type: "done",
+          ok: true,
+          action: "exchange",
+          completion_source: "genuine_no_move_exchange",
+          probe_status: "none",
+          repair_attempted: false,
+          terminal_cause: "genuine_no_move_exchange",
+        }),
+      ]),
+      {
+        onCandidate: () => {},
+        onStatus: () => {},
+        onTelemetry: (item) => {
+          events.push(item);
+        },
+      },
+    );
+    expect(terminal.kind).toBe("done");
+    expect(events.map((item) => item.humanState)).toEqual([
+      "genuine dead rack — exchanging",
+      "genuine dead rack — exchanging",
+    ]);
+    expect(events[1]).toMatchObject({
+      completionSource: "genuine_no_move_exchange",
+      probeStatus: "none",
+      repairAttempted: false,
+      terminalCause: "genuine_no_move_exchange",
+    });
+    expect(JSON.stringify(events)).not.toMatch(/sk-live|Bearer |api[_-]?key/i);
   });
 });

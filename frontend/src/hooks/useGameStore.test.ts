@@ -41,18 +41,40 @@ describe("fallback progress store state", () => {
   it("clears progress completely", () => {
     useGameStore.getState().setAIFallbackAttempts([attempt("a")]);
     useGameStore.getState().setAIFallbackActiveIndex(0);
+    useGameStore.getState().patchAITurnTelemetry({
+      humanState: "providers exhausted",
+    });
     useGameStore.getState().clearAIFallbackProgress();
 
     expect(useGameStore.getState().aiFallbackAttempts).toEqual([]);
     expect(useGameStore.getState().aiFallbackActiveIndex).toBeNull();
+    expect(useGameStore.getState().aiTurnTelemetry).toBeNull();
   });
 
   it("resets fallback progress with the game UI", () => {
     useGameStore.getState().setAIFallbackAttempts([attempt("a")]);
     useGameStore.getState().setAIFallbackActiveIndex(0);
+    useGameStore.getState().patchAITurnTelemetry({
+      completionSource: "genuine_no_move_pass",
+      humanState: "genuine dead rack — passing",
+    });
     useGameStore.getState().resetGameUi();
 
     expect(useGameStore.getState().aiFallbackAttempts).toEqual([]);
     expect(useGameStore.getState().aiFallbackActiveIndex).toBeNull();
+    expect(useGameStore.getState().aiTurnTelemetry).toBeNull();
+  });
+
+  it("keeps turn telemetry out of the persisted slice", () => {
+    useGameStore.getState().patchAITurnTelemetry({
+      humanState: "backend found a legal rescue; repairing",
+    });
+    const partialize = useGameStore.persist.getOptions().partialize;
+    expect(partialize).toBeTypeOf("function");
+    const sliced = partialize!(useGameStore.getState());
+    expect(sliced).not.toHaveProperty("aiTurnTelemetry");
+    expect(sliced).not.toHaveProperty("aiFallbackAttempts");
+    expect(sliced).not.toHaveProperty("aiCandidates");
+    expect(sliced).not.toHaveProperty("aiStatusMessage");
   });
 });

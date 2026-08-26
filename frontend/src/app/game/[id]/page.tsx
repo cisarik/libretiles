@@ -40,7 +40,7 @@ import {
   providerBadgeLabel,
 } from "@/lib/ai-fallback";
 import { consumeAIStream } from "@/lib/ai-move-stream";
-import { api } from "@/lib/api";
+import { api, readAiTurnTelemetry } from "@/lib/api";
 import { PREMIUM_FOOTER_STYLE, handlePremiumSurfacePointer } from "@/lib/premiumSurface";
 import { isPlausibleRack } from "@/lib/rack";
 import { buildGameWebSocketUrl } from "@/lib/ws";
@@ -465,6 +465,7 @@ export default function GamePage() {
   );
   const markAIFallbackFailed = useGameStore((s) => s.markAIFallbackFailed);
   const clearAIFallbackProgress = useGameStore((s) => s.clearAIFallbackProgress);
+  const patchAITurnTelemetry = useGameStore((s) => s.patchAITurnTelemetry);
   const resetGameUi = useGameStore((s) => s.resetGameUi);
 
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -989,9 +990,14 @@ export default function GamePage() {
               if (move.state) {
                 setGameState(move.state);
               }
+              const telemetry = readAiTurnTelemetry(data);
+              if (telemetry) patchAITurnTelemetry(telemetry);
             },
             onStatus: (msg) => {
               setAIStatusMessage(`${attemptLabel} — ${msg}`);
+            },
+            onTelemetry: (telemetry) => {
+              patchAITurnTelemetry(telemetry);
             },
           }).then((terminal) => {
             if (terminal.kind === "coded_provider_error") {
@@ -1037,6 +1043,7 @@ export default function GamePage() {
         || result.stopReason === "empty_queue"
         || result.stopReason === "budget_exhausted"
       ) {
+        patchAITurnTelemetry({ humanState: "providers exhausted" });
         setAiApproved(false);
         if (last?.kind === "coded_provider_error") {
           const blocker = normalizeAIBlocker(last.message, last.code);
@@ -1083,7 +1090,7 @@ export default function GamePage() {
     setAIThinking, setLastMoveResult, setGameState, setAIStatusMessage, syncState,
     clearAICandidates, addAICandidate, startCountdown, stopCountdown, showToast,
     setAIFallbackAttempts, setAIFallbackActiveIndex, markAIFallbackFailed,
-    clearAIFallbackProgress,
+    clearAIFallbackProgress, patchAITurnTelemetry,
   ]);
 
   useEffect(() => {

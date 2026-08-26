@@ -215,6 +215,37 @@ function stopReasonFromTerminal(
   return null;
 }
 
+function stampTurnProviderRequests(
+  terminal: AiMoveStreamTerminal | null,
+  used: number,
+): AiMoveStreamTerminal | null {
+  if (!terminal || terminal.kind !== "done") return terminal;
+  return {
+    kind: "done",
+    data: { ...terminal.data, turn_provider_requests_used: used },
+  };
+}
+
+/**
+ * Charge one attempt against the shared whole-turn budget. Reported provider
+ * HTTP is summed into `providerRequestsUsed` (including a finally-successful
+ * `done`). Failed streams without usage still consume the minimum viable
+ * attempt from remaining steps so a silent provider cannot spin forever.
+ */
+function chargeAttemptUsage(
+  terminal: AiMoveStreamTerminal | null,
+  remainingSteps: number,
+  providerRequestsUsed: number,
+): { remainingSteps: number; providerRequestsUsed: number } {
+  const reported = providerRequestsUsedFromTerminal(terminal);
+  const charged =
+    terminal?.kind === "done" ? reported : Math.max(reported, MIN_ATTEMPT_STEPS);
+  return {
+    remainingSteps: Math.max(remainingSteps - charged, 0),
+    providerRequestsUsed: providerRequestsUsed + reported,
+  };
+}
+
 /**
  * Sequential one-turn fallback with one shared provider-call budget across
  * attempts. Attempt 2+ never POSTs unless Django state still matches the
@@ -306,20 +337,26 @@ export async function orchestrateFallbackTurn(opts: {
       };
     }
 
-    const immediateStop = stopReasonFromTerminal(lastTerminal);
-    if (immediateStop) {
-      return { posts, stopReason: immediateStop, lastTerminal, providerRequestsUsed };
-    }
+    const charged = chargeAttemptUsage(
+      lastTerminal,
+      remainingSteps,
+      providerRequestsUsed,
+    );
+    remainingSteps = charged.remainingSteps;
+    providerRequestsUsed = charged.providerRequestsUsed;
+    lastTerminal = stampTurnProviderRequests(lastTerminal, providerRequestsUsed);
 
-    // A failed stream without reported usage conservatively charges the
-    // minimum viable attempt so unaccounted provider HTTP cannot spin forever.
-    const reported = providerRequestsUsedFromTerminal(lastTerminal);
-    const charged =
-      lastTerminal?.kind === "done"
-        ? reported
-        : Math.max(reported, MIN_ATTEMPT_STEPS);
-    remainingSteps = Math.max(remainingSteps - charged, 0);
-    providerRequestsUsed += reported;
+    const immediateStop = lastTerminal
+      ? stopReasonFromTerminal(lastTerminal)
+      : null;
+    if (immediateStop) {
+      return {
+        posts,
+        stopReason: immediateStop,
+        lastTerminal,
+        providerRequestsUsed,
+      };
+    }
   }
 
   return { posts, stopReason: "queue_exhausted", lastTerminal, providerRequestsUsed };

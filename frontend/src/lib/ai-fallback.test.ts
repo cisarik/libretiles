@@ -420,4 +420,116 @@ describe("orchestrateFallbackTurn", () => {
     expect(runStream).not.toHaveBeenCalled();
     expect(result.stopReason).toBe("empty_queue");
   });
+
+  it("sums every attempt including the finally-successful one before returning", async () => {
+    const runStream = vi.fn(
+      async (request: {
+        attemptIndex: number;
+      }): Promise<AiMoveStreamTerminal> =>
+        request.attemptIndex === 0
+          ? {
+              kind: "coded_provider_error",
+              code: "provider_rate_limited",
+              message: "429",
+              providerRequestsUsed: 3,
+            }
+          : doneWith(4),
+    );
+    const result = await orchestrateFallbackTurn({
+      ...baseOpts,
+      fetchGameState: async () => activeState(),
+      runStream,
+    });
+    expect(runStream).toHaveBeenCalledTimes(2);
+    expect(result.stopReason).toBe("done");
+    expect(result.providerRequestsUsed).toBe(7);
+    expect(result.lastTerminal).toEqual({
+      kind: "done",
+      data: {
+        type: "done",
+        ok: true,
+        action: "place",
+        provider_requests_used: 4,
+        turn_provider_requests_used: 7,
+      },
+    });
+  });
+
+  it("does not double-count usage across retried pairs", async () => {
+    const runStream = vi.fn(
+      async (request: {
+        attemptIndex: number;
+      }): Promise<AiMoveStreamTerminal> => {
+        if (request.attemptIndex === 0) {
+          return {
+            kind: "coded_provider_error",
+            code: "provider_rate_limited",
+            message: "429",
+            providerRequestsUsed: 6,
+          };
+        }
+        if (request.attemptIndex === 1) {
+          return {
+            kind: "coded_provider_error",
+            code: "provider_unavailable",
+            message: "down",
+            providerRequestsUsed: 2,
+          };
+        }
+        return doneWith(5);
+      },
+    );
+    const result = await orchestrateFallbackTurn({
+      ...baseOpts,
+      fetchGameState: async () => activeState(),
+      runStream,
+    });
+    expect(runStream).toHaveBeenCalledTimes(3);
+    expect(result.providerRequestsUsed).toBe(13);
+    expect(result.posts.map((post) => post.maxStepsRemaining)).toEqual([
+      30, 24, 19,
+    ]);
+    if (result.lastTerminal?.kind === "done") {
+      expect(result.lastTerminal.data.turn_provider_requests_used).toBe(13);
+      expect(result.lastTerminal.data.provider_requests_used).toBe(5);
+    }
+  });
+
+  it("reconciles the unchanged turn before every later pair and never before the first", async () => {
+    const events: string[] = [];
+    const fetchGameState = vi.fn(async () => {
+      events.push("reconcile");
+      return activeState();
+    });
+    const runStream = vi.fn(
+      async (request: {
+        attemptIndex: number;
+      }): Promise<AiMoveStreamTerminal> => {
+        events.push(`stream-${request.attemptIndex}`);
+        if (request.attemptIndex < 2) {
+          return {
+            kind: "coded_provider_error",
+            code: "provider_rate_limited",
+            message: "429",
+            providerRequestsUsed: 1,
+          };
+        }
+        return doneWith(1);
+      },
+    );
+    const result = await orchestrateFallbackTurn({
+      ...baseOpts,
+      fetchGameState,
+      runStream,
+    });
+    expect(events).toEqual([
+      "stream-0",
+      "reconcile",
+      "stream-1",
+      "reconcile",
+      "stream-2",
+    ]);
+    expect(result.providerRequestsUsed).toBe(3);
+    expect(result.stopReason).toBe("done");
+  });
 });
