@@ -8,18 +8,32 @@
 
 import { createOpenAI } from "@ai-sdk/openai";
 import type { LanguageModel } from "ai";
+import {
+  createProviderRequestTracker,
+  createTrackedProviderFetch,
+  requireServerCredential,
+  type ProviderRequestTracker,
+} from "./openai-compatible";
 
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
 export function isOpenRouterConfigured(): boolean {
-  return Boolean(process.env.OPENROUTER_API_KEY);
+  try {
+    requireServerCredential(process.env.OPENROUTER_API_KEY);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
-export function createOpenRouterProvider() {
+export function createOpenRouterProvider(
+  tracker: ProviderRequestTracker = createProviderRequestTracker(),
+) {
   return createOpenAI({
     baseURL: OPENROUTER_BASE_URL,
-    apiKey: process.env.OPENROUTER_API_KEY,
+    apiKey: requireServerCredential(process.env.OPENROUTER_API_KEY),
     name: "openrouter",
+    fetch: createTrackedProviderFetch(tracker),
   });
 }
 
@@ -27,12 +41,9 @@ export function createOpenRouterProvider() {
  * LanguageModel for Chat Completions. Throws a clear auth error when
  * the OpenRouter key is missing; never falls back to other vendor keys.
  */
-export function getOpenRouterModel(modelId: string): LanguageModel {
-  if (!isOpenRouterConfigured()) {
-    throw new Error(
-      "OpenRouter authentication failed: missing or invalid API key",
-    );
-  }
-
-  return createOpenRouterProvider().chat(modelId);
+export function getOpenRouterModel(
+  modelId: string,
+  tracker: ProviderRequestTracker,
+): LanguageModel {
+  return createOpenRouterProvider(tracker).chat(modelId);
 }

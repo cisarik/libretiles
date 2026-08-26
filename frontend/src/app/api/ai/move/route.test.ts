@@ -1,11 +1,33 @@
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { generateTextMock, getLanguageModelMock, stepCountIsMock } = vi.hoisted(() => ({
-  generateTextMock: vi.fn(),
-  getLanguageModelMock: vi.fn(() => ({ provider: "test", modelId: "test" })),
-  stepCountIsMock: vi.fn((n: number) => `stop-${n}`),
-}));
+const {
+  generateTextMock,
+  getLanguageRuntimeMock,
+  stepCountIsMock,
+  trackerRecordUsageMock,
+  trackerSnapshotMock,
+} = vi.hoisted(() => {
+  const trackerRecordUsageMock = vi.fn();
+  const trackerSnapshotMock = vi.fn<
+    () => { provider_requests: number; retry_after_seconds?: number }
+  >(() => ({ provider_requests: 0 }));
+  return {
+    generateTextMock: vi.fn(),
+    getLanguageRuntimeMock: vi.fn(async () => ({
+      model: { provider: "test", modelId: "test" },
+      tracker: {
+        noteProviderRequest: vi.fn(),
+        recordUsage: trackerRecordUsageMock,
+        recordRetryAfter: vi.fn(),
+        snapshot: trackerSnapshotMock,
+      },
+    })),
+    stepCountIsMock: vi.fn((n: number) => `stop-${n}`),
+    trackerRecordUsageMock,
+    trackerSnapshotMock,
+  };
+});
 
 vi.mock("ai", () => ({
   generateText: generateTextMock,
@@ -14,7 +36,7 @@ vi.mock("ai", () => ({
 }));
 
 vi.mock("@/lib/ai-runtimes", () => ({
-  getLanguageModel: getLanguageModelMock,
+  getLanguageRuntime: getLanguageRuntimeMock,
   isLegalBackendTerminal: (value: unknown) =>
     typeof value === "object" && value !== null && "ok" in value && value.ok === true,
   normalizeProviderError: vi.fn((error: unknown) => {
@@ -181,8 +203,11 @@ describe("POST /api/ai/move", () => {
   beforeEach(() => {
     generateTextMock.mockReset();
     stepCountIsMock.mockClear();
+    trackerRecordUsageMock.mockClear();
+    trackerSnapshotMock.mockReset();
+    trackerSnapshotMock.mockReturnValue({ provider_requests: 0 });
     generateTextMock.mockImplementation(searchWithPassText(true));
-    getLanguageModelMock.mockClear();
+    getLanguageRuntimeMock.mockClear();
   });
 
   afterEach(() => {
@@ -331,6 +356,27 @@ describe("POST /api/ai/move", () => {
     expect(done?.turn_provider_requests_used).toBe(2);
   });
 
+  it("uses tracked failed HTTP count and bounded Retry-After on provider errors", async () => {
+    trackerSnapshotMock.mockReturnValue({
+      provider_requests: 4,
+      retry_after_seconds: 17,
+    });
+    generateTextMock.mockRejectedValue(
+      Object.assign(new Error("rate limited"), { statusCode: 429 }),
+    );
+    mockBackend();
+
+    const { done, error } = await collectEvents();
+    expect(done).toBeUndefined();
+    expect(error).toMatchObject({
+      type: "error",
+      code: "provider_rate_limited",
+      provider_requests_used: 4,
+      turn_provider_requests_used: 4,
+      retry_after_seconds: 17,
+    });
+  });
+
   it("repairs a stale requested model onto catalog row 1 without PATCHing", async () => {
     const fetchMock = mockBackend({
       "/validate-move/": {
@@ -366,7 +412,7 @@ describe("POST /api/ai/move", () => {
     const events = parseSse(await response.text());
     expect(events.some((event) => event.type === "error")).toBe(true);
     expect(events.some((event) => event.type === "done")).toBe(false);
-    expect(getLanguageModelMock).not.toHaveBeenCalled();
+    expect(getLanguageRuntimeMock).not.toHaveBeenCalled();
   });
 
   it("applies a tracked candidate on timeout and does not probe", async () => {

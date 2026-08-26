@@ -2,7 +2,15 @@ import type { LanguageModel } from "ai";
 import { getOpenRouterModel } from "./openrouter";
 import { getNvidiaNimModel } from "./nvidia-nim";
 import {
+  ProviderRuntimeError,
+  createProviderRequestTracker,
+  getStandardOpenAICompatibleModel,
+  type ProviderRequestTracker,
+} from "./openai-compatible";
+import {
+  IBM_WATSONX_PROVIDER,
   NVIDIA_NIM_PROVIDER,
+  OPENROUTER_PROVIDER,
   isValidRuntimePair,
   type CatalogModelRow,
 } from "./model-catalog";
@@ -18,6 +26,11 @@ export type {
   AiRuntimeProvider,
   CatalogModelRow,
 } from "./model-catalog";
+export type {
+  NormalizedProviderUsage,
+  ProviderRequestSnapshot,
+  ProviderRequestTracker,
+} from "./openai-compatible";
 
 export type NormalizedProviderError = {
   code:
@@ -49,20 +62,34 @@ export function parseCatalogModelRows(data: unknown): CatalogModelRow[] {
 }
 
 /**
- * Runtime dispatch accepts only structurally valid free pairs: OpenRouter
- * native `vendor/model:free` IDs and the fixed NIM chat tuple.
+ * Server-only runtime dispatch. Pair validation happens before any provider
+ * configuration is read, and routes separately revalidate the same pair
+ * against the live Django catalog.
  */
-export function getLanguageModel(
+export async function getLanguageRuntime(
   provider: string,
   modelId: string,
-): LanguageModel {
+): Promise<{ model: LanguageModel; tracker: ProviderRequestTracker }> {
   if (!isValidRuntimePair(provider, modelId)) {
     throw new Error("Unknown free-rival pair");
   }
+
+  const tracker = createProviderRequestTracker();
   if (provider === NVIDIA_NIM_PROVIDER) {
-    return getNvidiaNimModel(modelId);
+    return { model: getNvidiaNimModel(modelId, tracker), tracker };
   }
-  return getOpenRouterModel(modelId);
+  if (provider === OPENROUTER_PROVIDER) {
+    return { model: getOpenRouterModel(modelId, tracker), tracker };
+  }
+  if (provider === IBM_WATSONX_PROVIDER) {
+    // The IAM-aware watsonx adapter is intentionally isolated to the next
+    // implementation slice. A prematurely activated row fails closed.
+    throw new ProviderRuntimeError("provider_unavailable");
+  }
+  return {
+    model: getStandardOpenAICompatibleModel(provider, modelId, tracker),
+    tracker,
+  };
 }
 
 /**
@@ -79,10 +106,12 @@ export function isLegalBackendTerminal(result: unknown): boolean {
 
 function collectErrorGraph(error: unknown): {
   statuses: number[];
+  codes: string[];
   haystack: string;
   hasProviderNotFound: boolean;
 } {
   const statuses: number[] = [];
+  const codes: string[] = [];
   const messages: string[] = [];
   const seen = new Set<unknown>();
   let hasProviderNotFound = false;
@@ -104,6 +133,7 @@ function collectErrorGraph(error: unknown): {
     const rec = node as Record<string, unknown>;
     if (typeof rec.statusCode === "number") statuses.push(rec.statusCode);
     if (typeof rec.status === "number") statuses.push(rec.status);
+    if (typeof rec.code === "string") codes.push(rec.code.toLowerCase());
     if (typeof rec.message === "string") messages.push(rec.message);
     if (
       rec.name === "AI_APICallError" &&
@@ -122,6 +152,7 @@ function collectErrorGraph(error: unknown): {
   visit(error);
   return {
     statuses,
+    codes,
     haystack: messages.join(" ").toLowerCase(),
     hasProviderNotFound,
   };
@@ -130,11 +161,15 @@ function collectErrorGraph(error: unknown): {
 export function normalizeProviderError(
   error: unknown,
 ): NormalizedProviderError | null {
-  const { statuses, haystack, hasProviderNotFound } = collectErrorGraph(error);
+  const { statuses, codes, haystack, hasProviderNotFound } =
+    collectErrorGraph(error);
 
   if (
     statuses.includes(401) ||
+    statuses.includes(403) ||
+    codes.includes("provider_auth_failed") ||
     haystack.includes("unauthorized") ||
+    haystack.includes("forbidden") ||
     haystack.includes("authentication failed") ||
     haystack.includes("invalid api key") ||
     haystack.includes("missing or invalid api key")
@@ -144,14 +179,17 @@ export function normalizeProviderError(
 
   if (
     statuses.includes(429) ||
+    codes.includes("provider_rate_limited") ||
     haystack.includes("rate limit") ||
-    haystack.includes("too many requests")
+    haystack.includes("too many requests") ||
+    haystack.includes("resource_exhausted") ||
+    haystack.includes("resource exhausted")
   ) {
     return { code: "provider_rate_limited", message: RATE_LIMIT_MESSAGE };
   }
 
   const unavailableStatus = statuses.some((status) =>
-    [402, 502, 503, 504].includes(status),
+    [402, 408, 502, 503, 504].includes(status),
   );
   const unsupportedTools =
     (haystack.includes("unsupported") && haystack.includes("tool")) ||
@@ -164,11 +202,19 @@ export function normalizeProviderError(
     );
   if (
     unavailableStatus ||
+    codes.includes("provider_unavailable") ||
     hasProviderNotFound ||
     endpointRoutingUnavailable ||
     unsupportedTools ||
     haystack.includes("overloaded") ||
     haystack.includes("overload") ||
+    haystack.includes("capacity") ||
+    haystack.includes("model is unavailable") ||
+    haystack.includes("model unavailable") ||
+    haystack.includes("model_not_found") ||
+    haystack.includes("deployment not found") ||
+    haystack.includes("timed out") ||
+    haystack.includes("timeout") ||
     haystack.includes("insufficient funds") ||
     haystack.includes("payment required") ||
     haystack.includes("temporarily unavailable") ||

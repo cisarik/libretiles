@@ -23,10 +23,11 @@ import {
   revalidateRuntimePair,
 } from "@/lib/model-catalog";
 import {
-  getLanguageModel,
+  getLanguageRuntime,
   isLegalBackendTerminal,
   normalizeProviderError,
   parseCatalogModelRows,
+  type ProviderRequestTracker,
 } from "@/lib/ai-runtimes";
 import {
   MOVE_PROMPT_VERSION,
@@ -377,6 +378,7 @@ export async function POST(req: NextRequest) {
       let completionSource: CompletionSource | null = null;
       let terminalCause = "";
       let recordedProviderRequests = 0;
+      let runtimeTracker: ProviderRequestTracker | null = null;
 
       function abortGeneration(reason: AbortReason) {
         if (abortReason === null) abortReason = reason;
@@ -473,7 +475,18 @@ export async function POST(req: NextRequest) {
       }
 
       function attemptProviderRequests(): number {
-        return Math.max(recordedProviderRequests, completedStepCount);
+        return Math.max(
+          runtimeTracker?.snapshot().provider_requests ?? 0,
+          recordedProviderRequests,
+          completedStepCount,
+        );
+      }
+
+      function retryAfterFields(): Record<string, number> {
+        const retryAfterSeconds = runtimeTracker?.snapshot().retry_after_seconds;
+        return retryAfterSeconds === undefined
+          ? {}
+          : { retry_after_seconds: retryAfterSeconds };
       }
 
       try {
@@ -595,9 +608,14 @@ export async function POST(req: NextRequest) {
           typeof context.ai_prompt_text === "string" ? context.ai_prompt_text : null,
         );
         const userPrompt = buildMoveUserPrompt(context);
-        let model: ReturnType<typeof getLanguageModel>;
+        let model: Awaited<ReturnType<typeof getLanguageRuntime>>["model"];
         try {
-          model = getLanguageModel(runtimePair.provider, runtimePair.model_id);
+          const runtime = await getLanguageRuntime(
+            runtimePair.provider,
+            runtimePair.model_id,
+          );
+          model = runtime.model;
+          runtimeTracker = runtime.tracker;
         } catch (err) {
           const normalizedError = normalizeProviderError(err) ?? {
             code: "provider_auth_failed" as const,
@@ -610,6 +628,7 @@ export async function POST(req: NextRequest) {
             error: normalizedError.message,
             provider_path: providerPath,
             runtime_model: runtimeModelId,
+            ...retryAfterFields(),
           });
           closeStream();
           return;
@@ -708,7 +727,7 @@ export async function POST(req: NextRequest) {
         }
 
         const runGeneration = (
-          activeModel: ReturnType<typeof getLanguageModel>,
+          activeModel: Awaited<ReturnType<typeof getLanguageRuntime>>["model"],
           args: {
             temperature: number;
             stepCap: number;
@@ -734,6 +753,7 @@ export async function POST(req: NextRequest) {
               stopWhen: stepCountIs(args.stepCap),
               onStepFinish: (step) => {
                 completedStepCount += 1;
+                runtimeTracker?.recordUsage(step.usage);
                 accumulatedUsage = mergeUsage(
                   accumulatedUsage,
                   normalizeUsage(step.usage as UsageLike | undefined),
@@ -797,6 +817,7 @@ export async function POST(req: NextRequest) {
               runtime_model: runtimeModelId,
               provider_requests_used: used,
               turn_provider_requests_used: used,
+              ...retryAfterFields(),
             };
           }
 
@@ -814,6 +835,7 @@ export async function POST(req: NextRequest) {
               turn_provider_requests: used,
               valid_candidate_count: candidates.filter((c) => c.valid).length,
             };
+            Object.assign(meta, retryAfterFields());
             if (typeof context.ai_prompt_id === "number") {
               meta.prompt_id = context.ai_prompt_id;
             }
@@ -1148,6 +1170,7 @@ export async function POST(req: NextRequest) {
             runtime_model: runtimeModelId,
             provider_requests_used: attemptProviderRequests(),
             turn_provider_requests_used: attemptProviderRequests(),
+            ...retryAfterFields(),
             repair_attempted: repairAttempted,
             probe_status: probeStatus,
             terminal_cause: "provider_error",
@@ -1169,6 +1192,7 @@ export async function POST(req: NextRequest) {
                   completion_source: "provider_candidate",
                   repair_attempted: repairAttempted,
                   provider_requests_used: attemptProviderRequests(),
+                  ...retryAfterFields(),
                 },
               },
               token,
@@ -1181,6 +1205,7 @@ export async function POST(req: NextRequest) {
                 runtime_model: runtimeModelId,
                 provider_requests_used: attemptProviderRequests(),
                 turn_provider_requests_used: attemptProviderRequests(),
+                ...retryAfterFields(),
                 repair_attempted: repairAttempted,
                 terminal_cause: "commit_rejected",
               });
@@ -1202,6 +1227,7 @@ export async function POST(req: NextRequest) {
                 runtime_model: runtimeModelId,
                 provider_requests_used: attemptProviderRequests(),
                 turn_provider_requests_used: attemptProviderRequests(),
+                ...retryAfterFields(),
               });
             }
           } catch {
@@ -1212,6 +1238,7 @@ export async function POST(req: NextRequest) {
               runtime_model: runtimeModelId,
               provider_requests_used: attemptProviderRequests(),
               turn_provider_requests_used: attemptProviderRequests(),
+              ...retryAfterFields(),
               repair_attempted: repairAttempted,
               terminal_cause: "error",
             });
@@ -1224,6 +1251,7 @@ export async function POST(req: NextRequest) {
             runtime_model: runtimeModelId,
             provider_requests_used: attemptProviderRequests(),
             turn_provider_requests_used: attemptProviderRequests(),
+            ...retryAfterFields(),
             repair_attempted: repairAttempted,
             terminal_cause: "error",
           });

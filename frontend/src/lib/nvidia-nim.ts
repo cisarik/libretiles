@@ -8,18 +8,32 @@
 
 import { createOpenAI } from "@ai-sdk/openai";
 import type { LanguageModel } from "ai";
+import {
+  createProviderRequestTracker,
+  createTrackedProviderFetch,
+  requireServerCredential,
+  type ProviderRequestTracker,
+} from "./openai-compatible";
 
 const NVIDIA_NIM_BASE_URL = "https://integrate.api.nvidia.com/v1";
 
 export function isNvidiaNimConfigured(): boolean {
-  return Boolean(process.env.NVIDIA_API_KEY);
+  try {
+    requireServerCredential(process.env.NVIDIA_API_KEY);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
-export function createNvidiaNimProvider() {
+export function createNvidiaNimProvider(
+  tracker: ProviderRequestTracker = createProviderRequestTracker(),
+) {
   return createOpenAI({
     baseURL: NVIDIA_NIM_BASE_URL,
-    apiKey: process.env.NVIDIA_API_KEY,
+    apiKey: requireServerCredential(process.env.NVIDIA_API_KEY),
     name: "nvidia-nim",
+    fetch: createTrackedProviderFetch(tracker),
   });
 }
 
@@ -27,12 +41,9 @@ export function createNvidiaNimProvider() {
  * LanguageModel for Chat Completions. Throws a sanitised auth error when
  * the NVIDIA key is missing; never interpolates the key value.
  */
-export function getNvidiaNimModel(modelId: string): LanguageModel {
-  if (!isNvidiaNimConfigured()) {
-    throw new Error(
-      "NVIDIA NIM authentication failed: missing or invalid API key",
-    );
-  }
-
-  return createNvidiaNimProvider().chat(modelId);
+export function getNvidiaNimModel(
+  modelId: string,
+  tracker: ProviderRequestTracker,
+): LanguageModel {
+  return createNvidiaNimProvider(tracker).chat(modelId);
 }

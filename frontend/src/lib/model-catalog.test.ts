@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  GROQ_MODEL_ID,
+  GROQ_PROVIDER,
+  IBM_WATSONX_MODEL_ID,
+  IBM_WATSONX_PROVIDER,
   NVIDIA_NIM_MODEL_ID,
   NVIDIA_NIM_PROVIDER,
   OPENROUTER_PROVIDER,
@@ -33,7 +37,7 @@ describe("isOpenRouterFreeId", () => {
 });
 
 describe("isValidRuntimePair", () => {
-  it("binds OpenRouter to :free shapes and NIM to its fixed tuple", () => {
+  it("binds OpenRouter structurally and every other provider to an exact tuple", () => {
     expect(isValidRuntimePair(OPENROUTER_PROVIDER, OPENROUTER_GEMMA)).toBe(true);
     expect(isValidRuntimePair(OPENROUTER_PROVIDER, "openai/gpt-5-mini")).toBe(false);
     expect(
@@ -45,6 +49,14 @@ describe("isValidRuntimePair", () => {
     expect(
       isValidRuntimePair(OPENROUTER_PROVIDER, NVIDIA_NIM_MODEL_ID),
     ).toBe(false);
+    expect(isValidRuntimePair(GROQ_PROVIDER, GROQ_MODEL_ID)).toBe(true);
+    expect(isValidRuntimePair(GROQ_PROVIDER, `${GROQ_MODEL_ID}:free`)).toBe(false);
+    expect(
+      isValidRuntimePair(IBM_WATSONX_PROVIDER, IBM_WATSONX_MODEL_ID),
+    ).toBe(true);
+    expect(
+      isValidRuntimePair(IBM_WATSONX_PROVIDER, GROQ_MODEL_ID),
+    ).toBe(false);
   });
 
   it("rejects unknown providers entirely", () => {
@@ -55,6 +67,7 @@ describe("isValidRuntimePair", () => {
 
 describe("playableCatalogPairs / findCatalogPair", () => {
   const rows = [
+    { provider: GROQ_PROVIDER, model_id: GROQ_MODEL_ID },
     { provider: OPENROUTER_PROVIDER, model_id: OPENROUTER_GLM },
     { provider: OPENROUTER_PROVIDER, model_id: "openai/gpt-5-mini" }, // paid
     { provider: "anthropic", model_id: "anthropic/claude:free" }, // unknown provider
@@ -63,6 +76,7 @@ describe("playableCatalogPairs / findCatalogPair", () => {
 
   it("fails closed on paid, unknown-provider, and malformed rows", () => {
     expect(playableCatalogPairs(rows)).toEqual([
+      { provider: GROQ_PROVIDER, model_id: GROQ_MODEL_ID },
       { provider: OPENROUTER_PROVIDER, model_id: OPENROUTER_GLM },
       { provider: NVIDIA_NIM_PROVIDER, model_id: NVIDIA_NIM_MODEL_ID },
     ]);

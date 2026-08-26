@@ -1,25 +1,36 @@
 /**
  * Centralized free-rival catalog resolution.
  *
- * There is no static frontend allowlist of model IDs. Structural validity,
- * preference resolution, and catalog revalidation all live here so Play and
- * Judge share exactly one source of truth.
+ * Exact direct/watchlist tuples are mirrored by the client-safe provider
+ * registry, while OpenRouter keeps structural `vendor/model:free` support.
+ * Every route still revalidates a tuple against live Django catalog rows.
  */
 
-export const OPENROUTER_PROVIDER = "openrouter" as const;
-export const NVIDIA_NIM_PROVIDER = "nvidia-nim" as const;
+import { isValidRuntimePair } from "./provider-registry";
 
-export type AiRuntimeProvider =
-  | typeof OPENROUTER_PROVIDER
-  | typeof NVIDIA_NIM_PROVIDER;
-
-/** Fixed seeded NIM chat tuple. NIM has no catalog discovery. */
-export const NVIDIA_NIM_MODEL_ID = "nvidia/nemotron-3-super-120b-a12b" as const;
-
-/** Backend selection excludes this meta-row explicitly; mirror it here. */
-const EXCLUDED_OPENROUTER_IDS: ReadonlySet<string> = new Set([
-  "openrouter/free",
-]);
+export {
+  AION_MODEL_ID,
+  AION_PROVIDER,
+  CLOUDFLARE_WORKERS_AI_MODEL_ID,
+  CLOUDFLARE_WORKERS_AI_PROVIDER,
+  GOOGLE_GEMINI_MODEL_ID,
+  GOOGLE_GEMINI_PROVIDER,
+  GROQ_MODEL_ID,
+  GROQ_PROVIDER,
+  HUGGINGFACE_MODEL_ID,
+  HUGGINGFACE_PROVIDER,
+  IBM_WATSONX_MODEL_ID,
+  IBM_WATSONX_PROVIDER,
+  MISTRAL_MODEL_ID,
+  MISTRAL_PROVIDER,
+  NVIDIA_NIM_MODEL_ID,
+  NVIDIA_NIM_PROVIDER,
+  OPENROUTER_PROVIDER,
+  isKnownProvider,
+  isOpenRouterFreeId,
+  isValidRuntimePair,
+} from "./provider-registry";
+export type { AiRuntimeProvider } from "./provider-registry";
 
 export type CatalogPair = {
   provider: string;
@@ -30,31 +41,6 @@ export type CatalogModelRow = CatalogPair;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
-}
-
-export function isKnownProvider(provider: string): provider is AiRuntimeProvider {
-  return (
-    provider === OPENROUTER_PROVIDER || provider === NVIDIA_NIM_PROVIDER
-  );
-}
-
-/** OpenRouter runtime IDs must be native `vendor/model:free` identifiers. */
-export function isOpenRouterFreeId(modelId: string): boolean {
-  if (!modelId.includes("/")) return false;
-  if (!modelId.endsWith(":free")) return false;
-  return !EXCLUDED_OPENROUTER_IDS.has(modelId);
-}
-
-/**
- * Structural pair validity without a catalog: OpenRouter accepts only
- * catalog-confirmed `:free` shapes, NIM accepts only its fixed tuple.
- */
-export function isValidRuntimePair(provider: string, modelId: string): boolean {
-  if (!isKnownProvider(provider)) return false;
-  if (provider === NVIDIA_NIM_PROVIDER) {
-    return modelId === NVIDIA_NIM_MODEL_ID;
-  }
-  return isOpenRouterFreeId(modelId);
 }
 
 /** Accept only an exact structurally valid pair confirmed by catalog rows. */
@@ -115,5 +101,3 @@ export function resolveEligibleModelId(
   if (storedId && eligibleIds.includes(storedId)) return storedId;
   return eligibleIds[0] ?? null;
 }
-
-

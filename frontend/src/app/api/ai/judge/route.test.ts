@@ -1,15 +1,28 @@
 import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { generateTextMock, getLanguageModelMock } = vi.hoisted(() => ({
-  generateTextMock: vi.fn(),
-  getLanguageModelMock: vi.fn(
-    (provider?: string, modelId?: string) => ({
-      provider: provider ?? "",
-      modelId: modelId ?? "",
-    }),
-  ),
-}));
+const { generateTextMock, getLanguageRuntimeMock, trackerRecordUsageMock } =
+  vi.hoisted(() => {
+    const trackerRecordUsageMock = vi.fn();
+    return {
+      generateTextMock: vi.fn(),
+      getLanguageRuntimeMock: vi.fn(
+        async (provider?: string, modelId?: string) => ({
+          model: {
+            provider: provider ?? "",
+            modelId: modelId ?? "",
+          },
+          tracker: {
+            noteProviderRequest: vi.fn(),
+            recordUsage: trackerRecordUsageMock,
+            recordRetryAfter: vi.fn(),
+            snapshot: vi.fn(() => ({ provider_requests: 1 })),
+          },
+        }),
+      ),
+      trackerRecordUsageMock,
+    };
+  });
 
 vi.mock("ai", () => ({ generateText: generateTextMock }));
 
@@ -17,7 +30,7 @@ vi.mock("@/lib/ai-runtimes", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/ai-runtimes")>();
   return {
     ...actual,
-    getLanguageModel: getLanguageModelMock,
+    getLanguageRuntime: getLanguageRuntimeMock,
   };
 });
 
@@ -56,7 +69,19 @@ describe("POST /api/ai/judge", () => {
     generateTextMock.mockImplementation(async () => {
       throw Object.assign(new Error("provider down"), { statusCode: 503 });
     });
-    getLanguageModelMock.mockClear();
+    getLanguageRuntimeMock.mockReset();
+    getLanguageRuntimeMock.mockImplementation(
+      async (provider?: string, modelId?: string) => ({
+        model: { provider: provider ?? "", modelId: modelId ?? "" },
+        tracker: {
+          noteProviderRequest: vi.fn(),
+          recordUsage: trackerRecordUsageMock,
+          recordRetryAfter: vi.fn(),
+          snapshot: vi.fn(() => ({ provider_requests: 1 })),
+        },
+      }),
+    );
+    trackerRecordUsageMock.mockClear();
   });
 
   it("walks the newest-first queue when the first model fails", async () => {
@@ -65,9 +90,17 @@ describe("POST /api/ai/judge", () => {
       vi.fn(async () => new Response(JSON.stringify(NEWEST_CATALOG), { status: 200 })),
     );
     const order: Array<[string, string]> = [];
-    getLanguageModelMock.mockImplementation((provider?: string, modelId?: string) => {
+    getLanguageRuntimeMock.mockImplementation(async (provider?: string, modelId?: string) => {
       order.push([provider ?? "", modelId ?? ""]);
-      return { provider: provider ?? "", modelId: modelId ?? "" };
+      return {
+        model: { provider: provider ?? "", modelId: modelId ?? "" },
+        tracker: {
+          noteProviderRequest: vi.fn(),
+          recordUsage: trackerRecordUsageMock,
+          recordRetryAfter: vi.fn(),
+          snapshot: vi.fn(() => ({ provider_requests: 1 })),
+        },
+      };
     });
     generateTextMock.mockImplementation((options: { model: { modelId: string } }) => {
       if (options.model.modelId === "z-ai/glm-5.2:free") {
@@ -94,6 +127,12 @@ describe("POST /api/ai/judge", () => {
     ]);
     expect(payload.model).toBe("nvidia/nemotron-3-super-120b-a12b:free");
     expect(payload.provider).toBe("openrouter");
+    expect(payload.provider_requests_used).toBe(1);
+    expect(trackerRecordUsageMock).toHaveBeenCalledWith({
+      inputTokens: 12,
+      outputTokens: 8,
+      totalTokens: 20,
+    });
     expect(order).toEqual([
       ["openrouter", "z-ai/glm-5.2:free"],
       ["openrouter", "nvidia/nemotron-3-super-120b-a12b:free"],
@@ -139,7 +178,7 @@ describe("POST /api/ai/judge", () => {
       ],
     });
     expect(generateTextMock).toHaveBeenCalledTimes(2);
-    expect(getLanguageModelMock).toHaveBeenCalledTimes(2);
+    expect(getLanguageRuntimeMock).toHaveBeenCalledTimes(2);
     vi.unstubAllGlobals();
   });
 
@@ -149,9 +188,17 @@ describe("POST /api/ai/judge", () => {
       vi.fn(async () => new Response(JSON.stringify(NEWEST_CATALOG), { status: 200 })),
     );
     const seen: string[] = [];
-    getLanguageModelMock.mockImplementation((provider?: string, modelId?: string) => {
+    getLanguageRuntimeMock.mockImplementation(async (provider?: string, modelId?: string) => {
       seen.push(modelId ?? "");
-      return { provider: provider ?? "", modelId: modelId ?? "" };
+      return {
+        model: { provider: provider ?? "", modelId: modelId ?? "" },
+        tracker: {
+          noteProviderRequest: vi.fn(),
+          recordUsage: trackerRecordUsageMock,
+          recordRetryAfter: vi.fn(),
+          snapshot: vi.fn(() => ({ provider_requests: 1 })),
+        },
+      };
     });
     generateTextMock.mockResolvedValue(
       validPayload(
@@ -210,7 +257,7 @@ describe("POST /api/ai/judge", () => {
       { word: "ZA", valid: true },
     ]);
     expect(generateTextMock).toHaveBeenCalledTimes(3);
-    expect(getLanguageModelMock).toHaveBeenCalledTimes(3);
+    expect(getLanguageRuntimeMock).toHaveBeenCalledTimes(3);
     vi.unstubAllGlobals();
   });
 
@@ -227,7 +274,7 @@ describe("POST /api/ai/judge", () => {
     expect(payload.error).toBeDefined();
     expect(payload.results).toBeUndefined();
     expect(generateTextMock).toHaveBeenCalledTimes(3);
-    expect(getLanguageModelMock).toHaveBeenCalledTimes(3);
+    expect(getLanguageRuntimeMock).toHaveBeenCalledTimes(3);
     vi.unstubAllGlobals();
   });
 

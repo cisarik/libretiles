@@ -24,7 +24,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { generateText } from "ai";
 import { buildFallbackQueue, MAX_FALLBACK_ATTEMPTS } from "@/lib/ai-fallback";
 import {
-  getLanguageModel,
+  getLanguageRuntime,
   parseCatalogModelRows,
 } from "@/lib/ai-runtimes";
 
@@ -139,16 +139,16 @@ export async function POST(req: NextRequest) {
   for (const pair of queue.slice(0, MAX_FALLBACK_ATTEMPTS)) {
     if (Date.now() + ATTEMPT_TIMEOUT_MS > overallDeadlineMs) break;
 
-    let model;
+    let runtime;
     try {
-      model = getLanguageModel(pair.provider, pair.model_id);
+      runtime = await getLanguageRuntime(pair.provider, pair.model_id);
     } catch {
       continue;
     }
 
     try {
       const result = await generateText({
-        model,
+        model: runtime.model,
         maxOutputTokens: 1000,
         temperature: 0.1,
         maxRetries: 0,
@@ -161,11 +161,17 @@ export async function POST(req: NextRequest) {
 
       const parsed = parseJudgeResults(result.text, words);
       if (parsed) {
+        runtime.tracker.recordUsage(result.usage);
+        const trackerSnapshot = runtime.tracker.snapshot();
         return NextResponse.json({
           ...parsed,
           model: pair.model_id,
           provider: pair.provider,
           usage: result.usage,
+          provider_requests_used: trackerSnapshot.provider_requests,
+          ...(trackerSnapshot.retry_after_seconds === undefined
+            ? {}
+            : { retry_after_seconds: trackerSnapshot.retry_after_seconds }),
         });
       }
     } catch {
