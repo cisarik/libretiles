@@ -168,3 +168,49 @@ class TestDictionary:
         assert not contains("xyzqw")
         assert contains("aa")
         assert contains("zyzzyva")
+
+    def test_prefix_index_shares_membership_cache(self) -> None:
+        from gamecore.fastdict import load_dictionary, load_prefix_index
+        from django.conf import settings
+
+        contains = load_dictionary(settings.PRIMARY_DICTIONARY_PATH)
+        index = load_prefix_index(settings.PRIMARY_DICTIONARY_PATH)
+        assert contains("hello") is index.contains("hello")
+        assert index.has_prefix("HEL")
+        assert not index.has_prefix("XYZQWX")
+
+
+class TestLegality:
+    def test_phantom_rack_and_geometry(self) -> None:
+        from gamecore.legality import evaluate_scoring_move
+
+        board = Board(get_premiums_path())
+        def is_word(word: str) -> bool:
+            return word.upper() in {"AT", "TA"}
+        phantom = evaluate_scoring_move(
+            board,
+            ["A"],
+            [Placement(7, 7, "A"), Placement(7, 8, "T")],
+            is_word,
+        )
+        assert not phantom.ok
+        assert phantom.reason_code == "rack_mismatch"
+
+        legal = evaluate_scoring_move(
+            board,
+            ["A", "T"],
+            [Placement(7, 7, "A"), Placement(7, 8, "T")],
+            is_word,
+        )
+        assert legal.ok
+        assert legal.total_score > 0
+        assert "AT" in legal.words
+
+        diagonal = evaluate_scoring_move(
+            board,
+            ["A", "T"],
+            [Placement(7, 7, "A"), Placement(8, 8, "T")],
+            is_word,
+        )
+        assert not diagonal.ok
+        assert diagonal.reason_code == "not_in_line"

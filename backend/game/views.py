@@ -1,9 +1,12 @@
+from typing import Any
+
 from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from . import services
 from .serializers import (
+    AIPassSerializer,
     ApplyAIMoveSerializer,
     CreateGameSerializer,
     ExchangeSerializer,
@@ -16,6 +19,21 @@ from .serializers import (
     ValidateMoveSerializer,
     ValidateWordsSerializer,
 )
+
+_PLAYABILITY_CONFLICT_CODES = frozenset(
+    {
+        "legal_scoring_move_exists",
+        "playability_unknown",
+        "exchange_required",
+        "state_conflict",
+    }
+)
+
+
+def _action_error_status(result: dict[str, Any]) -> int:
+    if result.get("code") in _PLAYABILITY_CONFLICT_CODES:
+        return status.HTTP_409_CONFLICT
+    return status.HTTP_400_BAD_REQUEST
 
 
 def _service_error_response(error: Exception) -> Response:
@@ -68,7 +86,7 @@ class QueueCancelView(APIView):
         except Exception as error:
             return _service_error_response(error)
         if not result["ok"]:
-            return Response(result, status=status.HTTP_400_BAD_REQUEST)
+            return Response(result, status=_action_error_status(result))
         return Response(result)
 
 
@@ -125,7 +143,7 @@ class SubmitMoveView(APIView):
         except Exception as error:
             return _service_error_response(error)
         if not result["ok"]:
-            return Response(result, status=status.HTTP_400_BAD_REQUEST)
+            return Response(result, status=_action_error_status(result))
         result["state"] = services.get_game_state_for_user(game_id, request.user.id)
         return Response(result)
 
@@ -145,7 +163,7 @@ class ExchangeView(APIView):
         except Exception as error:
             return _service_error_response(error)
         if not result["ok"]:
-            return Response(result, status=status.HTTP_400_BAD_REQUEST)
+            return Response(result, status=_action_error_status(result))
         result["state"] = services.get_game_state_for_user(game_id, request.user.id)
         return Response(result)
 
@@ -159,7 +177,7 @@ class PassView(APIView):
         except Exception as error:
             return _service_error_response(error)
         if not result["ok"]:
-            return Response(result, status=status.HTTP_400_BAD_REQUEST)
+            return Response(result, status=_action_error_status(result))
         result["state"] = services.get_game_state_for_user(game_id, request.user.id)
         return Response(result)
 
@@ -173,7 +191,7 @@ class GiveUpView(APIView):
         except Exception as error:
             return _service_error_response(error)
         if not result["ok"]:
-            return Response(result, status=status.HTTP_400_BAD_REQUEST)
+            return Response(result, status=_action_error_status(result))
         result["state"] = services.get_game_state_for_user(game_id, request.user.id)
         return Response(result)
 
@@ -268,34 +286,33 @@ class ApplyAIMoveView(APIView):
                 game_id,
                 request.user.id,
                 serializer.validated_data["placements"],
+                ai_metadata=serializer.validated_data.get("ai_metadata"),
             )
         except Exception as error:
             return _service_error_response(error)
 
-        if result.get("ok") and serializer.validated_data.get("ai_metadata"):
-            from .models import Move
-
-            last_move = Move.objects.filter(game__public_id=game_id).order_by("-seq").first()
-            if last_move:
-                last_move.ai_metadata = serializer.validated_data["ai_metadata"]
-                last_move.save(update_fields=["ai_metadata"])
-
         if result.get("ok"):
             result["state"] = services.get_game_state_for_user(game_id, request.user.id)
 
-        return Response(result, status=200 if result.get("ok") else 400)
+        return Response(result, status=200 if result.get("ok") else _action_error_status(result))
 
 
 class AIPassView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, game_id):  # type: ignore[no-untyped-def]
+        serializer = AIPassSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
         try:
-            result = services.submit_pass_for_ai(game_id, request.user.id)
+            result = services.submit_pass_for_ai(
+                game_id,
+                request.user.id,
+                ai_metadata=serializer.validated_data.get("ai_metadata"),
+            )
         except Exception as error:
             return _service_error_response(error)
         if not result["ok"]:
-            return Response(result, status=status.HTTP_400_BAD_REQUEST)
+            return Response(result, status=_action_error_status(result))
         result["state"] = services.get_game_state_for_user(game_id, request.user.id)
         return Response(result)
 
@@ -311,10 +328,25 @@ class AIExchangeView(APIView):
                 game_id,
                 request.user.id,
                 serializer.validated_data["letters"],
+                ai_metadata=serializer.validated_data.get("ai_metadata"),
             )
         except Exception as error:
             return _service_error_response(error)
         if not result["ok"]:
-            return Response(result, status=status.HTTP_400_BAD_REQUEST)
+            return Response(result, status=_action_error_status(result))
         result["state"] = services.get_game_state_for_user(game_id, request.user.id)
         return Response(result)
+
+
+class AIPlayabilityView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, game_id):  # type: ignore[no-untyped-def]
+        try:
+            result = services.get_ai_playability(game_id, request.user.id)
+        except Exception as error:
+            return _service_error_response(error)
+        if not result.get("ok"):
+            return Response(result, status=_action_error_status(result))
+        payload = {key: value for key, value in result.items() if key != "ok"}
+        return Response(payload)

@@ -9,7 +9,7 @@ import pytest
 from django.conf import settings
 
 from gamecore.board import Board
-from gamecore.fastdict import load_dictionary
+from gamecore.fastdict import load_dictionary, load_prefix_index
 from gamecore.types import Placement
 
 _BACKEND_ROOT = Path(__file__).resolve().parent.parent
@@ -60,3 +60,11 @@ def test_primary_dictionary_has_no_qlet_line() -> None:
     text = _PRIMARY_DICT.read_text(encoding="utf-8")
     lines = {ln.strip().casefold() for ln in text.splitlines() if ln.strip() and not ln.startswith("#")}
     assert "qlet" not in lines
+
+
+def test_prefix_index_matches_collins_membership(contains: Callable[[str], bool]) -> None:
+    index = load_prefix_index(_PRIMARY_DICT)
+    assert index.contains("hello") is contains("hello")
+    assert index.has_prefix("HEL")
+    assert index.has_prefix("qi")
+    assert not index.has_prefix("qzzz")

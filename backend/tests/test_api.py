@@ -741,7 +741,11 @@ class GameAPITest(TestCase):
 
         session = GameSession.objects.get(public_id=game_id)
         session.current_turn_slot = 1
-        session.save(update_fields=["current_turn_slot"])
+        session.bag_tiles = "ABCDE"
+        session.save(update_fields=["current_turn_slot", "bag_tiles"])
+        ai_slot = session.slots.get(slot=1)
+        ai_slot.rack = ["Q"]
+        ai_slot.save(update_fields=["rack"])
 
         def fail_group_send(*_args, **_kwargs) -> None:
             raise ConnectionError("Redis unavailable")
@@ -755,7 +759,7 @@ class GameAPITest(TestCase):
         assert "billing" not in resp.json()
         assert "last_move_billing" not in resp.json()["state"]
         move = Move.objects.get(game=session, kind="pass")
-        assert not move.ai_metadata
+        assert move.ai_metadata == {}
 
     def test_ai_exchange_succeeds_without_billing_metadata(self) -> None:
         create_resp = self.client.post("/api/game/create/", {"game_mode": "vs_ai"})
@@ -764,7 +768,9 @@ class GameAPITest(TestCase):
         session.current_turn_slot = 1
         session.save(update_fields=["current_turn_slot"])
         ai_slot = session.slots.get(slot=1)
-        letter = ai_slot.rack[0]
+        ai_slot.rack = ["Q"]
+        ai_slot.save(update_fields=["rack"])
+        letter = "Q"
 
         resp = self.client.post(
             f"/api/game/{game_id}/ai-exchange/",
@@ -777,7 +783,7 @@ class GameAPITest(TestCase):
         assert "billing" not in resp.json()
         assert "last_move_billing" not in resp.json()["state"]
         move = Move.objects.get(game=session, kind="exchange")
-        assert not move.ai_metadata
+        assert move.ai_metadata == {}
 
     def test_validate_words(self) -> None:
         create_resp = self.client.post("/api/game/create/", {"game_mode": "vs_ai"})
@@ -1198,3 +1204,306 @@ class GameAPITest(TestCase):
         assert state["status"] == "waiting"
         assert state["current_turn_slot"] is None
         assert state["my_rack"] == []
+
+    def _ai_turn_game(
+        self,
+        *,
+        rack: list[str] | None = None,
+        bag_tiles: str | None = None,
+        board: list[str] | None = None,
+    ) -> tuple[str, GameSession]:
+        game_id = self.client.post("/api/game/create/", {"game_mode": "vs_ai"}).json()["game_id"]
+        session = GameSession.objects.get(public_id=game_id)
+        session.current_turn_slot = 1
+        update = ["current_turn_slot"]
+        if bag_tiles is not None:
+            session.bag_tiles = bag_tiles
+            update.append("bag_tiles")
+        if board is not None:
+            session.board_state = board
+            update.append("board_state")
+        session.save(update_fields=update)
+        if rack is not None:
+            ai_slot = session.slots.get(slot=1)
+            ai_slot.rack = rack
+            ai_slot.save(update_fields=["rack"])
+        return game_id, session
+
+    def test_ai_playability_found_none_and_wrong_turn(self) -> None:
+        game_id, session = self._ai_turn_game(rack=["A", "T", "C", "D", "E", "F", "G"])
+        resp = self.client.get(f"/api/game/{game_id}/ai-playability/")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "found"
+        assert data["witness"] is not None
+        assert data["witness"]["placements"]
+        assert data["witness"]["total_score"] > 0
+        assert data["exchange_allowed"] is False
+        assert data["exchange_letters"] == []
+        assert data["search"]["complete"] is True
+        assert (7, 7) in {
+            (item["row"], item["col"]) for item in data["witness"]["placements"]
+        }
+
+        from gamecore.legality import evaluate_scoring_move
+        from gamecore.types import Placement
+        from game.services import _board_from_session, _is_word
+
+        placements = [
+            Placement(
+                row=item["row"],
+                col=item["col"],
+                letter=item["letter"],
+                blank_as=item.get("blank_as"),
+            )
+            for item in data["witness"]["placements"]
+        ]
+        legality = evaluate_scoring_move(
+            _board_from_session(session),
+            ["A", "T", "C", "D", "E", "F", "G"],
+            placements,
+            _is_word,
+        )
+        assert legality.ok
+        validate = self.client.post(
+            f"/api/game/{game_id}/validate-move/",
+            {"placements": data["witness"]["placements"]},
+            format="json",
+        )
+        assert validate.status_code == 200
+        assert validate.json()["valid"] is True
+
+        none_id, _none_session = self._ai_turn_game(rack=["Q"], bag_tiles="ABCDEF")
+        none_resp = self.client.get(f"/api/game/{none_id}/ai-playability/")
+        assert none_resp.status_code == 200
+        assert none_resp.json()["status"] == "none"
+        assert none_resp.json()["witness"] is None
+        assert none_resp.json()["exchange_allowed"] is False
+        assert none_resp.json()["exchange_letters"] == []
+
+        exchange_id, _ex_session = self._ai_turn_game(rack=["Q"])
+        exchange_resp = self.client.get(f"/api/game/{exchange_id}/ai-playability/")
+        assert exchange_resp.status_code == 200
+        assert exchange_resp.json()["status"] == "none"
+        assert exchange_resp.json()["exchange_allowed"] is True
+        assert exchange_resp.json()["exchange_letters"] == ["Q"]
+
+        human_turn = self.client.post("/api/game/create/", {"game_mode": "vs_ai"}).json()["game_id"]
+        session_h = GameSession.objects.get(public_id=human_turn)
+        session_h.current_turn_slot = 0
+        session_h.save(update_fields=["current_turn_slot"])
+        conflict = self.client.get(f"/api/game/{human_turn}/ai-playability/")
+        assert conflict.status_code == 409
+        assert conflict.json()["code"] == "state_conflict"
+
+        outsider = APIClient()
+        outsider.force_authenticate(user=self.user2)
+        missing = outsider.get(f"/api/game/{game_id}/ai-playability/")
+        assert missing.status_code == 404
+
+    def test_ai_pass_and_exchange_guard_matrix(self) -> None:
+        found_id, found_session = self._ai_turn_game(rack=["A", "T", "C", "D", "E", "F", "G"])
+        blocked_pass = self.client.post(f"/api/game/{found_id}/ai-pass/")
+        assert blocked_pass.status_code == 409
+        assert blocked_pass.json()["code"] == "legal_scoring_move_exists"
+        found_session.refresh_from_db()
+        assert found_session.current_turn_slot == 1
+        assert not Move.objects.filter(game=found_session).exists()
+
+        blocked_ex = self.client.post(
+            f"/api/game/{found_id}/ai-exchange/",
+            {"letters": ["A"]},
+            format="json",
+        )
+        assert blocked_ex.status_code == 409
+        assert blocked_ex.json()["code"] == "legal_scoring_move_exists"
+
+        human_id, human_session = self._ai_turn_game(rack=["A", "T", "C", "D", "E", "F", "G"])
+        human_session.current_turn_slot = 0
+        human_session.save(update_fields=["current_turn_slot"])
+        human = human_session.slots.get(slot=0)
+        human.rack = ["A", "T", "C", "D", "E", "F", "G"]
+        human.save(update_fields=["rack"])
+        allowed_human = self.client.post(f"/api/game/{human_id}/pass/")
+        assert allowed_human.status_code == 200
+
+        human_ex_id, human_ex_session = self._ai_turn_game(
+            rack=["A", "T", "C", "D", "E", "F", "G"]
+        )
+        human_ex_session.current_turn_slot = 0
+        human_ex_session.save(update_fields=["current_turn_slot"])
+        human_ex_slot = human_ex_session.slots.get(slot=0)
+        human_ex_slot.rack = ["A", "T", "C", "D", "E", "F", "G"]
+        human_ex_slot.save(update_fields=["rack"])
+        human_ex = self.client.post(
+            f"/api/game/{human_ex_id}/exchange/",
+            {"letters": ["A"]},
+            format="json",
+        )
+        assert human_ex.status_code == 200
+
+        ex_req_id, ex_req_session = self._ai_turn_game(rack=["Q"])
+        required = self.client.post(f"/api/game/{ex_req_id}/ai-pass/")
+        assert required.status_code == 409
+        assert required.json()["code"] == "exchange_required"
+        ex_req_session.refresh_from_db()
+        assert ex_req_session.current_turn_slot == 1
+
+        allowed_ex = self.client.post(
+            f"/api/game/{ex_req_id}/ai-exchange/",
+            {
+                "letters": ["Q"],
+                "ai_metadata": {
+                    "completion_source": "genuine_no_move_exchange",
+                    "unknown_field": "drop-me",
+                    "prompt": "never-store",
+                    "usage": {"totalTokens": 3, "billing": 1},
+                },
+            },
+            format="json",
+        )
+        assert allowed_ex.status_code == 200
+        move = Move.objects.get(game=ex_req_session, kind="exchange")
+        assert move.ai_metadata["completion_source"] == "genuine_no_move_exchange"
+        assert "unknown_field" not in move.ai_metadata
+        assert "prompt" not in move.ai_metadata
+        assert move.ai_metadata["usage"] == {"totalTokens": 3}
+
+        dead_id, dead_session = self._ai_turn_game(rack=["Q"], bag_tiles="ABCDE")
+        dead_pass = self.client.post(
+            f"/api/game/{dead_id}/ai-pass/",
+            {
+                "ai_metadata": {
+                    "completion_source": "genuine_no_move_pass",
+                    "attempts": [{"outcome_code": "exhausted", "request_count": 2}],
+                    "response_headers": {"x": "nope"},
+                }
+            },
+            format="json",
+        )
+        assert dead_pass.status_code == 200
+        pass_move = Move.objects.get(game=dead_session, kind="pass")
+        assert pass_move.ai_metadata["completion_source"] == "genuine_no_move_pass"
+        assert pass_move.ai_metadata["attempts"] == [
+            {"outcome_code": "exhausted", "request_count": 2}
+        ]
+        assert "response_headers" not in pass_move.ai_metadata
+
+        dead_human_id, dead_human = self._ai_turn_game(rack=["Q"], bag_tiles="ABCDE")
+        dead_human.current_turn_slot = 0
+        dead_human.save(update_fields=["current_turn_slot"])
+        human_dead = self.client.post(f"/api/game/{dead_human_id}/pass/")
+        assert human_dead.status_code == 200
+
+    @patch("game.services.find_legal_scoring_move")
+    def test_ai_pass_and_exchange_blocked_when_indeterminate(self, mock_search: Any) -> None:
+        from gamecore.move_search import SearchResult
+
+        mock_search.return_value = SearchResult(
+            status="indeterminate",
+            witness=None,
+            words=(),
+            total_score=0,
+            nodes=1,
+            elapsed_ms=0,
+            complete=False,
+        )
+        game_id, session = self._ai_turn_game(rack=["Q"], bag_tiles="ABCDE")
+        resp = self.client.post(f"/api/game/{game_id}/ai-pass/")
+        assert resp.status_code == 409
+        assert resp.json()["code"] == "playability_unknown"
+        session.refresh_from_db()
+        assert session.current_turn_slot == 1
+        assert not Move.objects.filter(game=session).exists()
+
+        ex = self.client.post(
+            f"/api/game/{game_id}/ai-exchange/",
+            {"letters": ["Q"]},
+            format="json",
+        )
+        assert ex.status_code == 409
+        assert ex.json()["code"] == "playability_unknown"
+
+    def test_strict_placement_serializer_and_bounded_metadata(self) -> None:
+        from game.serializers import ApplyAIMoveSerializer, PlacementSerializer
+
+        ok = PlacementSerializer(
+            data={"row": 7, "col": 7, "letter": "?", "blank_as": "A"}
+        )
+        assert ok.is_valid(), ok.errors
+
+        missing_blank = PlacementSerializer(data={"row": 7, "col": 7, "letter": "?"})
+        assert not missing_blank.is_valid()
+
+        extra_blank = PlacementSerializer(
+            data={"row": 7, "col": 7, "letter": "A", "blank_as": "B"}
+        )
+        assert not extra_blank.is_valid()
+
+        lowercase = PlacementSerializer(data={"row": 7, "col": 7, "letter": "a"})
+        assert not lowercase.is_valid()
+
+        oob = PlacementSerializer(data={"row": 15, "col": 0, "letter": "A"})
+        assert not oob.is_valid()
+
+        unknown = PlacementSerializer(
+            data={"row": 7, "col": 7, "letter": "A", "score": 1}
+        )
+        assert not unknown.is_valid()
+
+        too_many = ApplyAIMoveSerializer(
+            data={"placements": [{"row": 7, "col": c, "letter": "A"} for c in range(8)]}
+        )
+        assert not too_many.is_valid()
+
+        dup = ApplyAIMoveSerializer(
+            data={
+                "placements": [
+                    {"row": 7, "col": 7, "letter": "A"},
+                    {"row": 7, "col": 7, "letter": "T"},
+                ]
+            }
+        )
+        assert not dup.is_valid()
+
+        game_id, session = self._ai_turn_game(rack=["A", "T", "C", "D", "E", "F", "G"])
+        bad_case = self.client.post(
+            f"/api/game/{game_id}/ai-move/",
+            {"placements": [{"row": 7, "col": 7, "letter": "a"}]},
+            format="json",
+        )
+        assert bad_case.status_code == 400
+
+        placed = self.client.post(
+            f"/api/game/{game_id}/ai-move/",
+            {
+                "placements": [
+                    {"row": 7, "col": 7, "letter": "A"},
+                    {"row": 7, "col": 8, "letter": "T"},
+                ],
+                "ai_metadata": {
+                    "completion_source": "provider_candidate",
+                    "provider_requests_used": 2,
+                    "usage": {"inputTokens": 1, "outputTokens": 2, "totalTokens": 3},
+                    "fallback": True,
+                    "response_headers": {"x-request-id": "abc"},
+                    "rack": ["A"],
+                    "attempts": [
+                        {"outcome_code": "ok", "request_count": 1, "raw": "nope"},
+                        {"outcome_code": "retry", "request_count": 1},
+                        {"outcome_code": "retry", "request_count": 1},
+                        {"outcome_code": "ignored", "request_count": 9},
+                    ],
+                },
+            },
+            format="json",
+        )
+        assert placed.status_code == 200
+        move = Move.objects.get(game=session, kind="place")
+        assert move.ai_metadata["completion_source"] == "provider_candidate"
+        assert move.ai_metadata["usage"]["totalTokens"] == 3
+        assert "fallback" not in move.ai_metadata
+        assert "response_headers" not in move.ai_metadata
+        assert "rack" not in move.ai_metadata
+        assert len(move.ai_metadata["attempts"]) == 3
+        assert "raw" not in move.ai_metadata["attempts"][0]

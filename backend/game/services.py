@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import random
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Literal
 
 from django.conf import settings
 from django.core import signing
@@ -20,8 +20,10 @@ from django.utils import timezone
 from catalog.models import AIModel, AIPrompt
 from catalog.selection import get_selectable_models, get_selectable_prompts
 from gamecore.board import BOARD_SIZE, Board
-from gamecore.fastdict import load_dictionary
+from gamecore.fastdict import PrefixIndex, load_prefix_index
 from gamecore.game import PlayerState, apply_final_scoring, determine_end_reason
+from gamecore.legality import evaluate_scoring_move, placements_to_dicts
+from gamecore.move_search import SearchResult, find_legal_scoring_move
 from gamecore.rack import consume_rack
 from gamecore.rules import (
     connected_to_existing,
@@ -42,6 +44,7 @@ CHAT_HISTORY_LIMIT = 50
 WS_TICKET_SALT = "game.websocket.ticket"
 WS_TICKET_MAX_AGE_SECONDS = int(getattr(settings, "GAME_WS_TICKET_MAX_AGE_SECONDS", 60))
 _dictionary_fn: Callable[[str], bool] | None = None
+_prefix_index: PrefixIndex | None = None
 
 
 class GameNotFoundError(Exception):
@@ -89,11 +92,43 @@ def _serialize_move_history(session: GameSession, *, moves: list[Move] | None = 
     return history
 
 
+def _get_prefix_index() -> PrefixIndex:
+    global _prefix_index, _dictionary_fn
+    if _prefix_index is None:
+        _prefix_index = load_prefix_index(settings.PRIMARY_DICTIONARY_PATH)
+        _dictionary_fn = _prefix_index.contains
+    return _prefix_index
+
+
 def _get_dictionary() -> Callable[[str], bool]:
-    global _dictionary_fn
-    if _dictionary_fn is None:
-        _dictionary_fn = load_dictionary(settings.PRIMARY_DICTIONARY_PATH)
-    return _dictionary_fn
+    return _get_prefix_index().contains
+
+
+def _is_word(word: str) -> bool:
+    return _word_passes_dictionary(_get_dictionary(), word)
+
+
+def _placements_from_data(placements_data: list[dict[str, Any]]) -> list[Placement]:
+    placements: list[Placement] = []
+    for item in placements_data:
+        blank_as = item.get("blank_as")
+        placements.append(
+            Placement(
+                row=item["row"],
+                col=item["col"],
+                letter=item["letter"],
+                blank_as=blank_as if isinstance(blank_as, str) else None,
+            )
+        )
+    return placements
+
+
+def _stored_ai_metadata(
+    player_slot: PlayerSlot, ai_metadata: dict[str, Any] | None
+) -> dict[str, Any] | None:
+    if not player_slot.is_ai:
+        return None
+    return {} if ai_metadata is None else ai_metadata
 
 
 def _word_passes_dictionary(contains: Callable[[str], bool], word: str) -> bool:
@@ -405,6 +440,7 @@ def _create_move(
     words_formed: list[dict[str, Any]] | None = None,
     tiles_exchanged: int = 0,
     points: int = 0,
+    ai_metadata: dict[str, Any] | None = None,
 ) -> Move:
     return Move.objects.create(
         game=session,
@@ -415,6 +451,7 @@ def _create_move(
         words_formed=words_formed or [],
         tiles_exchanged=tiles_exchanged,
         points=points,
+        ai_metadata=ai_metadata,
     )
 
 
@@ -468,11 +505,114 @@ def _check_endgame(session: GameSession) -> dict[str, Any]:
     }
 
 
+def _probe_ai_playability(
+    session: GameSession,
+    player_slot: PlayerSlot,
+    *,
+    max_nodes: int | None = None,
+    max_elapsed_ms: int | None = None,
+) -> SearchResult:
+    board = _board_from_session(session)
+    rack = list(player_slot.rack) if isinstance(player_slot.rack, list) else []
+    kwargs: dict[str, int] = {}
+    if max_nodes is not None:
+        kwargs["max_nodes"] = max_nodes
+    if max_elapsed_ms is not None:
+        kwargs["max_elapsed_ms"] = max_elapsed_ms
+    try:
+        index = _get_prefix_index()
+        return find_legal_scoring_move(
+            board,
+            rack,
+            is_word=_is_word,
+            has_prefix=index.has_prefix,
+            **kwargs,
+        )
+    except Exception:
+        return SearchResult(
+            status="indeterminate",
+            witness=None,
+            words=(),
+            total_score=0,
+            nodes=0,
+            elapsed_ms=0,
+            complete=False,
+        )
+
+
+def _reject_ai_nonscoring(
+    *,
+    session: GameSession,
+    player_slot: PlayerSlot,
+    action: Literal["pass", "exchange"],
+) -> dict[str, Any] | None:
+    result = _probe_ai_playability(session, player_slot)
+    if result.status == "found":
+        return {
+            "ok": False,
+            "error": "A legal scoring move exists",
+            "code": "legal_scoring_move_exists",
+        }
+    if result.status != "none":
+        return {
+            "ok": False,
+            "error": "Playability could not be determined",
+            "code": "playability_unknown",
+        }
+    bag = _bag_from_session(session)
+    if action == "pass" and bag.remaining() >= 7:
+        return {
+            "ok": False,
+            "error": "Exchange is required when no scoring move exists",
+            "code": "exchange_required",
+        }
+    return None
+
+
+def _playability_payload(
+    session: GameSession,
+    player_slot: PlayerSlot,
+    result: SearchResult,
+) -> dict[str, Any]:
+    bag = _bag_from_session(session)
+    rack = list(player_slot.rack) if isinstance(player_slot.rack, list) else []
+    exchange_allowed = result.status == "none" and bag.remaining() >= 7
+    witness: dict[str, Any] | None = None
+    if result.status == "found" and result.witness is not None:
+        witness = {
+            "placements": placements_to_dicts(result.witness),
+            "words": list(result.words),
+            "total_score": result.total_score,
+        }
+    return {
+        "ok": True,
+        "status": result.status,
+        "witness": witness,
+        "exchange_allowed": exchange_allowed,
+        "exchange_letters": sorted(rack) if exchange_allowed else [],
+        "search": {
+            "complete": result.complete,
+            "nodes": result.nodes,
+            "elapsed_ms": result.elapsed_ms,
+        },
+    }
+
+
+def get_ai_playability(game_id: str, user_id: int) -> dict[str, Any]:
+    session, _human_slot, ai_slot = _load_vs_ai_session(game_id=game_id, user_id=user_id)
+    error = _check_active_turn(session, ai_slot)
+    if error:
+        return {"ok": False, "error": error, "code": "state_conflict"}
+    result = _probe_ai_playability(session, ai_slot)
+    return _playability_payload(session, ai_slot, result)
+
+
 def _submit_move_locked(
     *,
     session: GameSession,
     player_slot: PlayerSlot,
     placements_data: list[dict[str, Any]],
+    ai_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     error = _check_active_turn(session, player_slot)
     if error:
@@ -480,15 +620,16 @@ def _submit_move_locked(
 
     board = _board_from_session(session)
     rack = list(player_slot.rack) if isinstance(player_slot.rack, list) else []
-    placements = [
-        Placement(
-            row=p["row"],
-            col=p["col"],
-            letter=p["letter"],
-            blank_as=p.get("blank_as"),
-        )
-        for p in placements_data
-    ]
+    placements = _placements_from_data(placements_data)
+
+    if player_slot.is_ai:
+        legality = evaluate_scoring_move(board, rack, placements, _is_word)
+        if not legality.ok:
+            return {
+                "ok": False,
+                "error": legality.reason,
+                "code": legality.reason_code,
+            }
 
     direction = placements_in_line(placements)
     if direction is None:
@@ -563,6 +704,7 @@ def _submit_move_locked(
             for breakdown, word in zip(breakdowns, words_found, strict=False)
         ],
         points=total,
+        ai_metadata=_stored_ai_metadata(player_slot, ai_metadata),
     )
 
     end_info = _check_endgame(session)
@@ -588,10 +730,18 @@ def _submit_exchange_locked(
     session: GameSession,
     player_slot: PlayerSlot,
     letters_to_exchange: list[str],
+    ai_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     error = _check_active_turn(session, player_slot)
     if error:
         return {"ok": False, "error": error}
+
+    if player_slot.is_ai:
+        blocked = _reject_ai_nonscoring(
+            session=session, player_slot=player_slot, action="exchange"
+        )
+        if blocked is not None:
+            return blocked
 
     bag = _bag_from_session(session)
     if bag.remaining() < 7:
@@ -617,6 +767,7 @@ def _submit_exchange_locked(
         player_slot=player_slot,
         kind="exchange",
         tiles_exchanged=len(letters_to_exchange),
+        ai_metadata=_stored_ai_metadata(player_slot, ai_metadata),
     )
 
     end_info = _check_endgame(session)
@@ -634,15 +785,32 @@ def _submit_exchange_locked(
     }
 
 
-def _submit_pass_locked(*, session: GameSession, player_slot: PlayerSlot) -> dict[str, Any]:
+def _submit_pass_locked(
+    *,
+    session: GameSession,
+    player_slot: PlayerSlot,
+    ai_metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     error = _check_active_turn(session, player_slot)
     if error:
         return {"ok": False, "error": error}
 
+    if player_slot.is_ai:
+        blocked = _reject_ai_nonscoring(
+            session=session, player_slot=player_slot, action="pass"
+        )
+        if blocked is not None:
+            return blocked
+
     player_slot.pass_streak += 1
     player_slot.save(update_fields=["pass_streak"])
     session.consecutive_passes += 1
-    _create_move(session=session, player_slot=player_slot, kind="pass")
+    _create_move(
+        session=session,
+        player_slot=player_slot,
+        kind="pass",
+        ai_metadata=_stored_ai_metadata(player_slot, ai_metadata),
+    )
 
     end_info = _check_endgame(session)
     if not session.game_over:
@@ -1083,6 +1251,7 @@ def submit_move_for_ai(
     game_id: str,
     user_id: int,
     placements_data: list[dict[str, Any]],
+    ai_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     with transaction.atomic():
         session, _player_slot, ai_slot = _load_vs_ai_session(
@@ -1094,6 +1263,7 @@ def submit_move_for_ai(
             session=session,
             player_slot=ai_slot,
             placements_data=placements_data,
+            ai_metadata=ai_metadata,
         )
 
 
@@ -1101,6 +1271,7 @@ def submit_exchange_for_ai(
     game_id: str,
     user_id: int,
     letters_to_exchange: list[str],
+    ai_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     with transaction.atomic():
         session, _player_slot, ai_slot = _load_vs_ai_session(
@@ -1112,17 +1283,26 @@ def submit_exchange_for_ai(
             session=session,
             player_slot=ai_slot,
             letters_to_exchange=letters_to_exchange,
+            ai_metadata=ai_metadata,
         )
 
 
-def submit_pass_for_ai(game_id: str, user_id: int) -> dict[str, Any]:
+def submit_pass_for_ai(
+    game_id: str,
+    user_id: int,
+    ai_metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     with transaction.atomic():
         session, _player_slot, ai_slot = _load_vs_ai_session(
             game_id=game_id,
             user_id=user_id,
             select_for_update=True,
         )
-        return _submit_pass_locked(session=session, player_slot=ai_slot)
+        return _submit_pass_locked(
+            session=session,
+            player_slot=ai_slot,
+            ai_metadata=ai_metadata,
+        )
 
 
 def get_ai_context(game_id: str, user_id: int) -> dict[str, Any]:
@@ -1164,62 +1344,38 @@ def validate_move_for_ai(
     user_id: int,
     placements_data: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    session, _player_slot = _load_session_for_user(game_id=game_id, user_id=user_id)
+    session, player_slot = _load_session_for_user(game_id=game_id, user_id=user_id)
     board = _board_from_session(session)
-    placements = [
-        Placement(
-            row=p["row"],
-            col=p["col"],
-            letter=p["letter"],
-            blank_as=p.get("blank_as"),
-        )
-        for p in placements_data
+    placements = _placements_from_data(placements_data)
+    ai_slot = session.slots.filter(is_ai=True).first()
+    rack_slot = ai_slot if ai_slot is not None else player_slot
+    rack = list(rack_slot.rack) if isinstance(rack_slot.rack, list) else []
+    legality = evaluate_scoring_move(board, rack, placements, _is_word)
+    words_payload = [
+        {"word": verdict.word, "valid": verdict.valid} for verdict in legality.word_results
     ]
-
-    direction = placements_in_line(placements)
-    if direction is None:
-        return {"valid": False, "reason": "Not in a single line"}
-    is_first = _is_board_empty(session)
-    if is_first and not first_move_must_cover_center(placements):
-        return {"valid": False, "reason": "Must cover center"}
-    if not is_first and not connected_to_existing(board, placements):
-        return {"valid": False, "reason": "Not connected to existing tiles"}
-    if not no_gaps_in_line(board, placements, direction):
-        return {"valid": False, "reason": "Gaps in line"}
-    for placement in placements:
-        if board.cells[placement.row][placement.col].letter:
-            return {
-                "valid": False,
-                "reason": f"Cell ({placement.row},{placement.col}) occupied",
-            }
-
-    board.place_letters(placements)
-    words_found = extract_all_words(board, placements)
-    if not words_found:
-        return {"valid": False, "reason": "No words formed"}
-
-    words_coords = [(word.word, word.letters) for word in words_found]
-    total, breakdowns = score_words(board, placements, words_coords)
-    if len(placements) == 7:
-        total += 50
-
-    contains = _get_dictionary()
-    word_results = [
-        {"word": word, "valid": _word_passes_dictionary(contains, word)}
-        for word, _letters in words_coords
-    ]
+    if not legality.ok:
+        payload: dict[str, Any] = {
+            "valid": False,
+            "reason": legality.reason,
+            "reason_code": legality.reason_code,
+        }
+        if words_payload:
+            payload["words"] = words_payload
+            payload["total_score"] = legality.total_score
+        return payload
 
     return {
-        "valid": all(word_result["valid"] for word_result in word_results),
-        "total_score": total,
-        "words": word_results,
+        "valid": True,
+        "total_score": legality.total_score,
+        "words": words_payload,
         "breakdowns": [
             {
                 "word": breakdown.word,
                 "score": breakdown.total,
                 "multiplier": breakdown.word_multiplier,
             }
-            for breakdown in breakdowns
+            for breakdown in legality.breakdowns
         ],
     }
 

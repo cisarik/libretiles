@@ -4,6 +4,7 @@ from .views import (
     AIContextView,
     AIExchangeView,
     AIPassView,
+    AIPlayabilityView,
     ApplyAIMoveView,
     CreateGameView,
     ExchangeView,
@@ -40,4 +41,5 @@ urlpatterns = [
     path("<str:game_id>/ai-pass/", AIPassView.as_view(), name="game-ai-pass"),
     path("<str:game_id>/ai-exchange/", AIExchangeView.as_view(), name="game-ai-exchange"),
     path("<str:game_id>/ai-move/", ApplyAIMoveView.as_view(), name="game-ai-move"),
+    path("<str:game_id>/ai-playability/", AIPlayabilityView.as_view(), name="game-ai-playability"),
 ]
