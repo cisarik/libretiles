@@ -1,5 +1,6 @@
 import { generateText, type LanguageModel } from "ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { __ibmWatsonxRuntimeTestOnly } from "./ibm-watsonx";
 import {
   getLanguageRuntime,
   isLegalBackendTerminal,
@@ -35,6 +36,7 @@ const CATALOG_ROWS = [
 ];
 
 afterEach(() => {
+  __ibmWatsonxRuntimeTestOnly.reset();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
 });
@@ -182,13 +184,26 @@ describe("getLanguageRuntime", () => {
     }
   });
 
-  it("fails closed for the structurally known IBM pair until its IAM slice", async () => {
-    const fetchMock = vi.fn();
+  it("dispatches the exact IBM pair through IAM before returning its chat model", async () => {
+    vi.stubEnv("IBM_CLOUD_API_KEY", "ibm-test-api-key");
+    vi.stubEnv("IBM_WATSONX_PROJECT_ID", "project-test-1234");
+    vi.stubEnv("IBM_WATSONX_REGION", "eu-de");
+    const fetchMock = vi.fn<
+      (input: string | URL | Request, init?: RequestInit) => Promise<Response>
+    >(async () =>
+      Response.json({ access_token: "iam-test-token", expires_in: 3600 }),
+    );
     vi.stubGlobal("fetch", fetchMock);
-    await expect(
-      getLanguageRuntime(IBM_WATSONX_PROVIDER, IBM_WATSONX_MODEL_ID),
-    ).rejects.toMatchObject({ code: "provider_unavailable" });
-    expect(fetchMock).not.toHaveBeenCalled();
+    const runtime = await getLanguageRuntime(
+      IBM_WATSONX_PROVIDER,
+      IBM_WATSONX_MODEL_ID,
+    );
+    assertChatModel(runtime.model, IBM_WATSONX_PROVIDER, IBM_WATSONX_MODEL_ID);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "https://iam.cloud.ibm.com/identity/token",
+    );
+    expect(runtime.tracker.snapshot().provider_requests).toBe(1);
   });
 
   it("throws sanitized auth errors and performs zero fetches for missing/placeholders", async () => {

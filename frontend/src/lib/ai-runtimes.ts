@@ -1,8 +1,8 @@
 import type { LanguageModel } from "ai";
 import { getOpenRouterModel } from "./openrouter";
 import { getNvidiaNimModel } from "./nvidia-nim";
+import { getIbmWatsonxModel } from "./ibm-watsonx";
 import {
-  ProviderRuntimeError,
   createProviderRequestTracker,
   getStandardOpenAICompatibleModel,
   type ProviderRequestTracker,
@@ -82,9 +82,7 @@ export async function getLanguageRuntime(
     return { model: getOpenRouterModel(modelId, tracker), tracker };
   }
   if (provider === IBM_WATSONX_PROVIDER) {
-    // The IAM-aware watsonx adapter is intentionally isolated to the next
-    // implementation slice. A prematurely activated row fails closed.
-    throw new ProviderRuntimeError("provider_unavailable");
+    return { model: await getIbmWatsonxModel(modelId, tracker), tracker };
   }
   return {
     model: getStandardOpenAICompatibleModel(provider, modelId, tracker),

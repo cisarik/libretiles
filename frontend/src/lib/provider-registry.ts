@@ -32,7 +32,7 @@ export const HUGGINGFACE_MODEL_ID = "openai/gpt-oss-120b:groq" as const;
 export type ProviderCatalogTier = "direct" | "watchlist" | "legacy";
 export type ProviderRuntimeKind =
   | "openai-compatible"
-  | "ibm-watsonx-pending";
+  | "ibm-watsonx";
 
 export type ExactProviderMetadata = Readonly<{
   provider: string;
@@ -46,7 +46,7 @@ export type ExactProviderMetadata = Readonly<{
 /**
  * Exact tuples are intentionally duplicated from the backend catalog boundary.
  * A tuple must match here and in the live Django catalog before a route may use
- * it. IBM is structurally known but its server runtime lands in the next slice.
+ * it. IBM account and IAM configuration remains server-only.
  */
 export const EXACT_PROVIDER_METADATA = [
   {
@@ -87,7 +87,7 @@ export const EXACT_PROVIDER_METADATA = [
     provider_label: "IBM watsonx.ai",
     model_label: "Granite 4 H Small",
     catalog_tier: "direct",
-    runtime_kind: "ibm-watsonx-pending",
+    runtime_kind: "ibm-watsonx",
   },
   {
     provider: AION_PROVIDER,

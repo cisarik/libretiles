@@ -47,6 +47,12 @@ describe("client-safe provider registry", () => {
     }
   });
 
+  it("marks the IBM tuple as an implemented IAM runtime", () => {
+    expect(
+      findExactProviderMetadata(IBM_WATSONX_PROVIDER, IBM_WATSONX_MODEL_ID),
+    ).toMatchObject({ runtime_kind: "ibm-watsonx" });
+  });
+
   it("rejects cross-provider, arbitrary, paid, and meta-row pairs", () => {
     expect(isValidRuntimePair(GROQ_PROVIDER, GOOGLE_GEMINI_MODEL_ID)).toBe(false);
     expect(isValidRuntimePair(MISTRAL_PROVIDER, "mistral-small-latest")).toBe(false);
