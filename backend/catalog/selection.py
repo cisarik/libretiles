@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from typing import TypedDict
 
 from django.conf import settings
 from django.utils import timezone as django_timezone
@@ -12,6 +13,96 @@ DEFAULT_FREE_MODEL_ID = "google/gemma-4-31b-it:free"
 OPENROUTER_PROVIDER = "openrouter"
 NVIDIA_NIM_PROVIDER = "nvidia-nim"
 NVIDIA_NIM_MODEL_ID = "nvidia/nemotron-3-super-120b-a12b"
+
+
+class PreparedFreeRival(TypedDict):
+    provider: str
+    model_id: str
+    display_name: str
+    description: str
+    quality_tier: str
+    sort_order: int
+
+
+DIRECT_FREE_RIVALS: tuple[PreparedFreeRival, ...] = (
+    {
+        "provider": "groq",
+        "model_id": "openai/gpt-oss-120b",
+        "display_name": "GPT-OSS 120B (Groq)",
+        "description": "Direct Groq free rival with tool calling.",
+        "quality_tier": "elite",
+        "sort_order": 1,
+    },
+    {
+        "provider": "google-gemini",
+        "model_id": "gemini-3.7-flash",
+        "display_name": "Gemini 3.7 Flash",
+        "description": "Direct Google Gemini free rival with tool calling.",
+        "quality_tier": "premium",
+        "sort_order": 2,
+    },
+    {
+        "provider": "cloudflare-workers-ai",
+        "model_id": "@cf/zai-org/glm-4.7-flash",
+        "display_name": "GLM 4.7 Flash (Cloudflare)",
+        "description": "Direct Cloudflare Workers AI free rival with tool calling.",
+        "quality_tier": "standard",
+        "sort_order": 3,
+    },
+    {
+        "provider": "mistral",
+        "model_id": "mistral-small-2603",
+        "display_name": "Mistral Small 2603",
+        "description": "Direct Mistral free rival with tool calling.",
+        "quality_tier": "premium",
+        "sort_order": 4,
+    },
+    {
+        "provider": "ibm-watsonx",
+        "model_id": "ibm/granite-4-h-small",
+        "display_name": "Granite 4 H Small (watsonx.ai)",
+        "description": "Direct IBM watsonx.ai Lite rival with tool calling.",
+        "quality_tier": "standard",
+        "sort_order": 5,
+    },
+)
+WATCHLIST_FREE_RIVALS: tuple[PreparedFreeRival, ...] = (
+    {
+        "provider": "aion",
+        "model_id": "aion-labs/aion-3.0-mini",
+        "display_name": "Aion 3.0 Mini (Watchlist)",
+        "description": "Prepared Aion rival; keep inactive pending capability acceptance.",
+        "quality_tier": "standard",
+        "sort_order": 100,
+    },
+    {
+        "provider": "huggingface",
+        "model_id": "openai/gpt-oss-120b:groq",
+        "display_name": "GPT-OSS 120B (Hugging Face Watchlist)",
+        "description": (
+            "Prepared Hugging Face routed rival; keep inactive pending capability "
+            "acceptance."
+        ),
+        "quality_tier": "standard",
+        "sort_order": 110,
+    },
+)
+DIRECT_FREE_RIVAL_PAIRS: tuple[tuple[str, str], ...] = tuple(
+    (rival["provider"], rival["model_id"]) for rival in DIRECT_FREE_RIVALS
+)
+WATCHLIST_FREE_RIVAL_PAIRS: tuple[tuple[str, str], ...] = tuple(
+    (rival["provider"], rival["model_id"]) for rival in WATCHLIST_FREE_RIVALS
+)
+PREPARED_FREE_RIVALS: tuple[PreparedFreeRival, ...] = (
+    *DIRECT_FREE_RIVALS,
+    *WATCHLIST_FREE_RIVALS,
+)
+PREPARED_FREE_RIVAL_PAIRS: tuple[tuple[str, str], ...] = (
+    *DIRECT_FREE_RIVAL_PAIRS,
+    *WATCHLIST_FREE_RIVAL_PAIRS,
+)
+
+# Compatibility rows retain their historical order behind active direct rivals.
 FREE_RIVAL_PAIRS: tuple[tuple[str, str], ...] = (
     (OPENROUTER_PROVIDER, DEFAULT_FREE_MODEL_ID),
     (NVIDIA_NIM_PROVIDER, NVIDIA_NIM_MODEL_ID),
@@ -45,9 +136,22 @@ def get_selectable_models() -> list[AIModel]:
             model_type="language",
         )
     }
-    if _dynamic_catalog_enabled():
-        return _dynamic_selectable(rows)
-    return _bootstrap_selectable(rows)
+    direct = _direct_selectable(rows)
+    compatibility = (
+        _dynamic_selectable(rows)
+        if _dynamic_catalog_enabled()
+        else _bootstrap_selectable(rows)
+    )
+    return _without_duplicate_pairs([*direct, *compatibility])
+
+
+def _direct_selectable(rows: dict[tuple[str, str], AIModel]) -> list[AIModel]:
+    selected: list[AIModel] = []
+    for provider, model_id in DIRECT_FREE_RIVAL_PAIRS:
+        model = rows.get((provider, model_id))
+        if model is not None and _has_tools_tag(model):
+            selected.append(model)
+    return selected
 
 
 def _bootstrap_selectable(rows: dict[tuple[str, str], AIModel]) -> list[AIModel]:
@@ -75,6 +179,18 @@ def _dynamic_selectable(rows: dict[tuple[str, str], AIModel]) -> list[AIModel]:
     nim = rows.get((NVIDIA_NIM_PROVIDER, NVIDIA_NIM_MODEL_ID))
     if nim is not None and _has_tools_tag(nim):
         selected.append(nim)
+    return selected
+
+
+def _without_duplicate_pairs(models: list[AIModel]) -> list[AIModel]:
+    selected: list[AIModel] = []
+    seen: set[tuple[str, str]] = set()
+    for model in models:
+        pair = (model.provider, model.model_id)
+        if pair in seen:
+            continue
+        seen.add(pair)
+        selected.append(model)
     return selected
 
 
@@ -119,6 +235,10 @@ def is_selectable_prompt(prompt_id: int) -> bool:
 
 def is_curated_free_rival(model: AIModel) -> bool:
     return (model.provider, model.model_id) in FREE_RIVAL_PAIRS
+
+
+def is_direct_free_rival(model: AIModel) -> bool:
+    return (model.provider, model.model_id) in DIRECT_FREE_RIVAL_PAIRS
 
 
 def _has_tools_tag(model: AIModel) -> bool:
