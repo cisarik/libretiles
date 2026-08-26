@@ -252,6 +252,7 @@ class ValidateMoveView(APIView):
                 game_id,
                 request.user.id,
                 serializer.validated_data["placements"],
+                rack_owner=serializer.validated_data["rack_owner"],
             )
         except Exception as error:
             return _service_error_response(error)

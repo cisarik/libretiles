@@ -1343,12 +1343,16 @@ def validate_move_for_ai(
     game_id: str,
     user_id: int,
     placements_data: list[dict[str, Any]],
+    rack_owner: str = "player",
 ) -> dict[str, Any]:
     session, player_slot = _load_session_for_user(game_id=game_id, user_id=user_id)
     board = _board_from_session(session)
     placements = _placements_from_data(placements_data)
     ai_slot = session.slots.filter(is_ai=True).first()
-    rack_slot = ai_slot if ai_slot is not None else player_slot
+    if rack_owner == "ai" and ai_slot is not None:
+        rack_slot = ai_slot
+    else:
+        rack_slot = player_slot
     rack = list(rack_slot.rack) if isinstance(rack_slot.rack, list) else []
     legality = evaluate_scoring_move(board, rack, placements, _is_word)
     words_payload = [

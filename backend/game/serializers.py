@@ -238,6 +238,11 @@ class ExchangeSerializer(serializers.Serializer):
 
 class ValidateMoveSerializer(serializers.Serializer):
     placements = serializers.ListField(child=serializers.DictField(), min_length=1)
+    rack_owner = serializers.ChoiceField(
+        choices=["player", "ai"],
+        required=False,
+        default="player",
+    )
 
 
 class ValidateWordsSerializer(serializers.Serializer):

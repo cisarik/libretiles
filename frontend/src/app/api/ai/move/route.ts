@@ -657,7 +657,7 @@ export async function POST(req: NextRequest) {
 
               const result = await backendPost(
                 `/api/game/${game_id}/validate-move/`,
-                { placements },
+                { placements, rack_owner: "ai" },
                 token,
               );
 

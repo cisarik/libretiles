@@ -553,6 +553,26 @@ describe("POST /api/ai/move", () => {
     expect(generateTextMock.mock.calls[0][0].stopWhen).toBe("stop-8");
   });
 
+  it("sends rack_owner ai on validateMove tool POSTs", async () => {
+    const fetchMock = mockBackend({
+      "/validate-move/": {
+        body: { valid: true, total_score: 2, words: [{ word: "A", valid: true }] },
+      },
+      "/ai-move/": {
+        body: { ok: true, action: "place", points: 2, words: [{ word: "A", score: 2 }] },
+      },
+    });
+    await runRoute();
+    const validateCalls = fetchMock.mock.calls.filter(([url]) =>
+      String(url).includes("/validate-move/"),
+    );
+    expect(validateCalls.length).toBeGreaterThan(0);
+    for (const [, init] of validateCalls) {
+      const body = JSON.parse(String((init as RequestInit | undefined)?.body));
+      expect(body.rack_owner).toBe("ai");
+    }
+  });
+
   it("forces validateMove on step 1 and unlocks finishMove after a valid candidate", async () => {
     mockBackend({
       "/validate-move/": {

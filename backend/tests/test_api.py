@@ -1267,7 +1267,7 @@ class GameAPITest(TestCase):
         assert legality.ok
         validate = self.client.post(
             f"/api/game/{game_id}/validate-move/",
-            {"placements": data["witness"]["placements"]},
+            {"placements": data["witness"]["placements"], "rack_owner": "ai"},
             format="json",
         )
         assert validate.status_code == 200
@@ -1507,3 +1507,73 @@ class GameAPITest(TestCase):
         assert "rack" not in move.ai_metadata
         assert len(move.ai_metadata["attempts"]) == 3
         assert "raw" not in move.ai_metadata["attempts"][0]
+
+    def _live_incident_validate_game(self) -> str:
+        """Human TLAETIO vs AI XPJAOUD with board S at (7,7) — 2026-08-26 incident."""
+        game_id = self.client.post("/api/game/create/", {"game_mode": "vs_ai"}).json()["game_id"]
+        session = GameSession.objects.get(public_id=game_id)
+        board = ["." * 15 for _ in range(15)]
+        board[7] = "." * 7 + "S" + "." * 7
+        session.board_state = board
+        session.current_turn_slot = 0
+        session.save(update_fields=["board_state", "current_turn_slot"])
+        human = session.slots.get(slot=0)
+        human.rack = ["T", "L", "A", "E", "T", "I", "O"]
+        human.save(update_fields=["rack"])
+        ai_slot = session.slots.get(slot=1)
+        ai_slot.rack = ["X", "P", "J", "A", "O", "U", "D"]
+        ai_slot.save(update_fields=["rack"])
+        return game_id
+
+    def test_validate_move_human_preview_uses_player_rack_for_set(self) -> None:
+        game_id = self._live_incident_validate_game()
+        resp = self.client.post(
+            f"/api/game/{game_id}/validate-move/",
+            {
+                "placements": [
+                    {"row": 8, "col": 7, "letter": "E"},
+                    {"row": 9, "col": 7, "letter": "T"},
+                ],
+            },
+            format="json",
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["valid"] is True
+        assert "SET" in [item["word"] for item in data["words"]]
+
+    def test_validate_move_human_preview_rejects_ai_only_letter(self) -> None:
+        game_id = self._live_incident_validate_game()
+        resp = self.client.post(
+            f"/api/game/{game_id}/validate-move/",
+            {
+                "placements": [
+                    {"row": 7, "col": 5, "letter": "J"},
+                    {"row": 7, "col": 6, "letter": "U"},
+                ],
+            },
+            format="json",
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["valid"] is False
+        assert data["reason_code"] == "rack_mismatch"
+        assert data["reason"] == "Placements are not coverable by the current rack"
+
+    def test_validate_move_rack_owner_ai_uses_ai_rack(self) -> None:
+        game_id = self._live_incident_validate_game()
+        resp = self.client.post(
+            f"/api/game/{game_id}/validate-move/",
+            {
+                "rack_owner": "ai",
+                "placements": [
+                    {"row": 7, "col": 5, "letter": "J"},
+                    {"row": 7, "col": 6, "letter": "U"},
+                ],
+            },
+            format="json",
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["valid"] is True
+        assert "JUS" in [item["word"] for item in data["words"]]
