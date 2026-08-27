@@ -9,10 +9,10 @@ Open-source web Libre Tiles game with AI opponents, live human-vs-human multipla
 ## Features
 
 - Full Libre Tiles game engine (English variant, Collins 2019 dictionary ~279k words, Tier-1 strict validation in Django)
-- AI opponents via provider-diverse free rivals with tool calling (OpenRouter + NVIDIA NIM). Flag-off (default) uses five curated bootstrap pairs; flag-on uses the four newest eligible OpenRouter models plus the seeded NIM tuple
+- AI opponents via provider-diverse free rivals with tool calling. The canonical direct priority is Groq → Google Gemini → Cloudflare Workers AI → Mistral → IBM watsonx.ai; NVIDIA NIM and OpenRouter remain the compatibility tail
 - Live human-vs-human multiplayer with waiting-room matchmaking, realtime board sync, and in-game chat
 - AI plays as a tool-calling agent: validates moves, checks words, calculates scores
-- Play and Judge share one preference-first fallback queue (at most three distinct pairs, one whole-turn provider-call budget)
+- Play and Judge share one preference-first fallback queue (at most five distinct pairs, one whole-turn provider-call budget)
 - Advanced drag-and-drop with touch/mobile support (@dnd-kit)
 - Animated tile drawing, scoring, and game-end effects (Framer Motion, confetti)
 - Django Admin for configuration (AI model catalog, games)
@@ -46,7 +46,7 @@ cd backend
 [ -f .env ] || cp .env.example .env               # copy only if missing
 poetry install                                    # install Python dependencies
 poetry run python manage.py migrate               # create database tables
-poetry run python manage.py seed_models           # seed the five-pair offline shortlist
+poetry run python manage.py seed_models           # seed compatibility + inactive direct rows
 poetry run python manage.py createsuperuser       # (optional) admin account
 poetry run python manage.py runserver 0.0.0.0:8000
 ```
@@ -62,12 +62,12 @@ Redis is required only for websocket matchmaking, realtime sync, and chat. The d
 ```bash
 cd frontend
 [ -f .env.local ] || cp .env.local.example .env.local
-# Set server-only OPENROUTER_API_KEY and/or NVIDIA_API_KEY.
+# Set one or more server-only provider credentials from .env.local.example.
 npm install                                       # install JS dependencies
 npm run dev                                       # start dev server at :3000
 ```
 
-Open http://localhost:3000, register, choose a mode, and play. Both keys live on the Next.js server. The UI still boots if either is missing or a placeholder; AI turns fail only when neither credential is usable. Bases are hardcoded: OpenRouter `https://openrouter.ai/api/v1` and NVIDIA NIM `https://integrate.api.nvidia.com/v1`; do not add base-URL env vars. There is no `NEXT_PUBLIC_DEFAULT_MODEL`; an empty stored selection resolves to catalog row 1.
+Open http://localhost:3000, register, choose a mode, and play. Credentials live only on the Next.js server. Missing or placeholder credentials are rejected before any provider fetch; the UI still boots and fallback can use another configured active row. Provider bases and exact direct model IDs are hardcoded, never supplied by the browser or a base-URL environment variable. There is no `NEXT_PUBLIC_DEFAULT_MODEL`; an empty stored selection resolves to catalog row 1.
 
 ### Environment Variables
 
@@ -80,7 +80,7 @@ Open http://localhost:3000, register, choose a mode, and play. Both keys live on
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:3000` | Frontend origin(s) |
 | `REDIS_URL` | `redis://127.0.0.1:6379/0` | Redis connection used by Django Channels |
 | `GAME_WS_TICKET_MAX_AGE_SECONDS` | `60` | Max age for signed websocket tickets |
-| `DYNAMIC_FREE_MODEL_CATALOG_ENABLED` | `false` | `false` = curated bootstrap pairs only; `true` = four newest eligible OpenRouter models plus seeded NIM. Must match `backend/config/settings.py`. |
+| `DYNAMIC_FREE_MODEL_CATALOG_ENABLED` | `false` | Controls only the NIM/OpenRouter compatibility tail: curated bootstrap when false, newest-four OpenRouter plus NIM when true. Active direct rows always remain first. |
 
 **Frontend** (`frontend/.env.local`):
 | Variable | Default | Description |
@@ -88,12 +88,32 @@ Open http://localhost:3000, register, choose a mode, and play. Both keys live on
 | `NEXT_PUBLIC_API_URL` | `http://localhost:8000` | Django backend URL (browser) |
 | `BACKEND_URL` | `http://localhost:8000` | Django backend URL (Next.js server routes) |
 | `NEXT_DEV_ALLOWED_ORIGINS` | unset | Optional extra hosts allowed to load Next.js dev assets |
+| `GROQ_API_KEY` | unset | Server-only Groq credential |
+| `GEMINI_API_KEY` | unset | Server-only Google Gemini credential |
+| `CLOUDFLARE_API_TOKEN` | unset | Server-only Workers AI token |
+| `CLOUDFLARE_ACCOUNT_ID` | unset | Server-only 32-hex-character Cloudflare account id |
+| `MISTRAL_API_KEY` | unset | Server-only Mistral credential |
+| `IBM_CLOUD_API_KEY` | unset | Server-only IBM Cloud IAM credential |
+| `IBM_WATSONX_PROJECT_ID` | unset | Server-only watsonx project id |
+| `IBM_WATSONX_REGION` | unset | Allowlisted watsonx region: `eu-de`, `eu-gb`, `us-south`, `jp-tok`, or `au-syd` |
+| `AION_API_KEY` | unset | Prepared watchlist credential; row remains inactive pending PASS |
+| `HF_TOKEN` | unset | Prepared Hugging Face watchlist credential; row remains inactive pending PASS |
 | `OPENROUTER_API_KEY` | `your-openrouter-api-key` | Server-only OpenRouter key from https://openrouter.ai/keys |
 | `NVIDIA_API_KEY` | `your-nvidia-api-key` | Server-only NVIDIA NIM key from https://build.nvidia.com |
 
-Native IDs only (never `openrouter/google/...`). The NIM id has no `:free` suffix and is not the FrameNest Omni/VLM.
+Native IDs only (never `openrouter/google/...`). No provider secret or base URL belongs in a `NEXT_PUBLIC_` variable.
 
-**Flag-off legacy path** (`DYNAMIC_FREE_MODEL_CATALOG_ENABLED=false`, the default): five curated bootstrap pairs. Catalog row 1 is OpenRouter Gemma:
+**Prepared direct priority** (exact pairs):
+
+1. `groq` — `openai/gpt-oss-120b`
+2. `google-gemini` — `gemini-3.7-flash`
+3. `cloudflare-workers-ai` — `@cf/zai-org/glm-4.7-flash`
+4. `mistral` — `mistral-small-2603`
+5. `ibm-watsonx` — `ibm/granite-4-h-small`
+
+`aion` / `aion-labs/aion-3.0-mini` and `huggingface` / `openai/gpt-oss-120b:groq` are inactive watchlist rows. NVIDIA NIM and OpenRouter remain behind active direct rows as a compatibility tail. Every new direct/watchlist row is created inactive. It becomes selectable only after server credentials are configured, the exact pair returns capability `pass`, and an operator explicitly enables it in Django Admin. Migration and seed code never changes an existing row's Admin `is_active` kill switch.
+
+**Compatibility tail with the dynamic flag off** (`DYNAMIC_FREE_MODEL_CATALOG_ENABLED=false`, the default):
 
 1. `openrouter` — `google/gemma-4-31b-it:free`
 2. `nvidia-nim` — `nvidia/nemotron-3-super-120b-a12b`
@@ -101,9 +121,9 @@ Native IDs only (never `openrouter/google/...`). The NIM id has no `:free` suffi
 4. `openrouter` — `z-ai/glm-5.2:free`
 5. `openrouter` — `google/gemma-4-26b-a4b-it:free`
 
-**Flag-on**: the four newest eligible OpenRouter `:free` models plus the seeded NIM tuple last. A valid user preference remains attempt 1; remaining attempts follow untouched catalog order. New users receive catalog row 1 (newest when the flag is on).
+**Flag-on compatibility tail**: the four newest eligible OpenRouter `:free` models plus the seeded NIM tuple last. The flag changes only this tail; it never removes or reorders active direct rows. A valid user preference remains attempt 1 and the remaining attempts preserve canonical order without duplicates.
 
-Django Admin remains catalog authority; `is_active` (including deactivating the NIM row) is the operational kill switch. Play and Judge share one preference-first fallback queue capped at three distinct pairs. Play reports `provider_requests_used` in terminal SSE metadata and treats `max_steps` as the remaining whole-turn provider-call budget. Judge tries up to three sequential attempts (`maxRetries: 0`, 10 s each, 30 s overall) and returns HTTP 503 on exhaustion without synthesizing false invalid verdicts. Collins 2019 on Django remains the persisted-move validator. Stripe is rejected for this product direction. LM Studio, Vercel AI Gateway, Slovak dictionary, and push/deploy remain out of this cut.
+Django Admin remains catalog authority. Play and Judge share one preference-first queue capped at five distinct pairs. New accounts default to 120 seconds and 50 provider steps. Play reserves at least five steps for each later lane, segments the remaining time, reports actual provider/IAM request counts, and carries only a bounded `retry_after_seconds`. Judge tries up to five sequential lanes (`maxRetries: 0`, 10 seconds per lane, 50 seconds overall) and returns HTTP 503 on exhaustion without inventing an invalid verdict. Collins 2019 on Django remains the persisted-move validator.
 
 ### Docker (optional PostgreSQL + Redis)
 
@@ -156,13 +176,13 @@ cd frontend && [ -f .env.local ] || cp .env.local.example .env.local && npm inst
 See [docs/architecture.md](docs/architecture.md) for full technical documentation.
 
 ```
-  Browser (Next.js)                   OpenRouter / NVIDIA NIM
+  Browser (Next.js)                   Free-rival providers
   ┌─────────────────┐                ┌──────────────────┐
-  │ React UI        │                │ Free rivals      │
-  │ @dnd-kit + FM   │◄──────────────►│ newest-first /   │
-  │ Zustand store   │  /api/ai/move  │ bootstrap pairs  │
+  │ React UI        │                │ Groq / Gemini /  │
+  │ @dnd-kit + FM   │◄──────────────►│ Cloudflare /     │
+  │ Zustand store   │  /api/ai/move  │ compatibility    │
   │                 │  /api/ai/judge          │
-  │ Settings page   │        ▲                │ generateText()
+  │ Settings page   │        ▲       │ Mistral / IBM    │ generateText()
   └────────┬────────┘        │                │ + tool calling
            │                 │                │
            │ REST API        │    Next.js API Routes
@@ -185,7 +205,7 @@ The AI opponent plays as a tool-calling agent (mirroring the desktop `scrabgpt` 
 1. AI receives board state, rack, scores, tile values, premium legend
 2. AI searches from board anchors and proposes candidate moves using tools:
    - `validateMove` -- checks placement legality, returns all formed words + scores
-   - `validateWords` -- checks words against Collins 2019 (~279k words, O(1) lookup)
+   - `finishMove` -- confirms continuation after a backend-valid candidate
 3. AI secures an early backend-validated scoring floor, then explores diverse families only while the shared step budget remains
 4. Move is applied server-side via Django `/api/game/{id}/ai-move/` and re-validated against Collins 2019
 
@@ -232,7 +252,7 @@ libretiles/
 - `POST /api/auth/change-password/` -- Change password for the authenticated user
 
 ### Catalog
-- `GET /api/catalog/models/` -- List selectable free rivals in canonical order (flag-off bootstrap pairs, or flag-on newest-four-plus-NIM). Row 1 is `is_flagship` / `recommended`. Exposes `released_at`; no money fields.
+- `GET /api/catalog/models/` -- List active direct rivals in canonical order followed by the flag-selected compatibility tail. Row 1 is `is_flagship` / `recommended`. Exposes `released_at`; no money fields.
 
 ### Game
 - `POST /api/game/create/` -- Start new AI game
@@ -255,14 +275,56 @@ libretiles/
 
 ### Frontend API Routes (Next.js)
 - `POST /api/ai/move` -- AI move generation (tool-calling agent; sequential fallback)
-- `POST /api/ai/judge` -- AI word judge (Tier 3; same queue, up to three attempts, HTTP 503 on exhaustion)
+- `POST /api/ai/judge` -- AI word judge (Tier 3; same queue, up to five attempts, HTTP 503 on exhaustion)
 - `GET /api/models` -- Proxy for Django catalog
+
+## Explicit provider capability probe
+
+`npm run probe:provider` is an operator-only live check. It is never imported by boot, catalog, gameplay, or client code and its live Vitest file is skipped by ordinary `npm test` and production builds. It uses the same server-only `getLanguageRuntime(...)` and AI SDK `generateText(...)` path as gameplay, with no fallback and `maxRetries: 0`.
+
+The check forces `validateMove` for `RETAINS` at `(7,4)` through `(7,10)`, returns a random nonce pong from the local tool, then requires the model to continue and call `finishMove({ready:true})`. The first step exposes only named `validateMove`; later steps expose both tools with automatic choice. It stops on finish, three model generations, or the overall timeout.
+
+Configure the relevant provider credential in the server process/current shell without committing it, then run exactly one pair:
+
+```bash
+cd frontend
+PROVIDER_PROBE_PROVIDER=groq PROVIDER_PROBE_MODEL=openai/gpt-oss-120b npm run probe:provider
+PROVIDER_PROBE_PROVIDER=google-gemini PROVIDER_PROBE_MODEL=gemini-3.7-flash npm run probe:provider
+PROVIDER_PROBE_PROVIDER=cloudflare-workers-ai PROVIDER_PROBE_MODEL=@cf/zai-org/glm-4.7-flash npm run probe:provider
+PROVIDER_PROBE_PROVIDER=mistral PROVIDER_PROBE_MODEL=mistral-small-2603 npm run probe:provider
+PROVIDER_PROBE_PROVIDER=ibm-watsonx PROVIDER_PROBE_MODEL=ibm/granite-4-h-small npm run probe:provider
+```
+
+The only application output is one compact, sanitized object (Vitest may also print its own test framing):
+
+```json
+{"provider":"groq","model":"openai/gpt-oss-120b","status":"pass","latency_ms":1234,"outbound_count":2}
+```
+
+Fields never include request/response bodies, headers, tokens, reasoning, raw errors, credentials, or usage. `outbound_count` is the actual bounded HTTP count, including IBM IAM. Status meanings:
+
+| Status | Meaning |
+|---|---|
+| `pass` | Exact validate pong and model-driven finish continuation succeeded |
+| `not_configured` | Missing/placeholder credential or locally invalid/missing pair; no provider fetch |
+| `auth_failed` | A real outbound request returned authentication/authorization failure |
+| `rate_limited` | Provider returned a quota/rate-limit response |
+| `model_unavailable` | Exact model or endpoint is unavailable, including “No endpoints found” |
+| `named_tool_unsupported` | Forced named first tool was rejected or answered with prose |
+| `tool_continuation_failed` | Validation succeeded but the model did not call `finishMove` |
+| `schema_failed` | Tool arguments did not satisfy the exact schema/content |
+| `timeout` | The bounded overall probe timed out |
+| `unknown` | Sanitized failure did not match a stable known class |
+
+This command makes a real quota-consuming and potentially billable provider call only when manually invoked. Reverify current quota, data-processing, and acceptable-use terms before activation; free-tier terms are external, volatile, and are not product credits or an SLA. Current reference points: [Groq limits](https://console.groq.com/docs/rate-limits) and [tool calling](https://console.groq.com/docs/tool-use/local-tool-calling), [Gemini pricing](https://ai.google.dev/gemini-api/docs/pricing) and [OpenAI compatibility](https://ai.google.dev/gemini-api/docs/openai), [Workers AI pricing](https://developers.cloudflare.com/workers-ai/platform/pricing/) and [GLM model](https://developers.cloudflare.com/workers-ai/models/glm-4.7-flash/), [Mistral Free Mode](https://docs.mistral.ai/getting-started/quickstarts/studio/activate-and-generate-api-key) and [Chat API](https://docs.mistral.ai/api/endpoint/chat), [IBM IAM](https://cloud.ibm.com/docs/apis/iam-identity-token-api) and [watsonx.ai API](https://cloud.ibm.com/docs/apis/watsonx-ai).
+
+Activation is deliberately manual: a credential plus probe PASS plus explicit Django Admin activation of the exact row. Then complete one live game. The minimum live MVP claim is one provider PASS and one completed game. Do not claim that all five providers work until every exact pair has a current live PASS. Rollback is Admin deactivation of the affected row; never delete the row or game history.
 
 ## Operations (catalog refresh)
 
 The documented production schedule is `libretiles-openrouter-catalog-refresh`, daily at 03:17 UTC, invoking `python manage.py sync_openrouter_models` under a non-overlapping platform lock. One scheduled run performs exactly one unauthenticated OpenRouter catalog GET with a 20-second timeout, no retries, no per-model probes, and no NVIDIA/NIM request. The scheduler itself is configured only under separate production authority — this repository documents it and does not install it.
 
-Rollout: deploy backend with the dynamic flag false → deploy the dynamic-capable frontend → run migrate/sync evidence → enable `DYNAMIC_FREE_MODEL_CATALOG_ENABLED`. Rollback: set the flag false and restart Django; pause the schedule and/or deactivate rows in Admin; roll backend selection back to curated-only before rolling back the dynamic-capable frontend.
+Direct-provider rollout is pair-by-pair: deploy code and migrations with rows inactive → configure one server credential → run the explicit capability probe → activate only the exact PASS row in Django Admin → complete one live game. Roll back by deactivating that row; do not delete catalog rows or game history. The dynamic OpenRouter schedule remains an optional compatibility-tail operation: set the flag false and restart Django to roll that tail back.
 
 ## Testing
 
@@ -278,8 +340,10 @@ poetry run mypy .                          # Type check
 
 # Frontend
 cd frontend
+npm test                                   # Unit/integration suite; live probe skipped
 npm run lint                               # ESLint
 npx tsc --noEmit                           # TypeScript check
+npm run build                              # Production build
 ```
 
 ## Tech Stack
@@ -294,7 +358,7 @@ npx tsc --noEmit                           # TypeScript check
 ### Frontend
 - Next.js 16, React 19, TypeScript
 - Tailwind CSS 4, Framer Motion, @dnd-kit/core
-- Vercel AI SDK v6 via OpenRouter and NVIDIA NIM (OpenAI-compatible adapter, tool calling)
+- Vercel AI SDK v6 via direct free rivals plus the NIM/OpenRouter compatibility tail (OpenAI-compatible transports and a watsonx IAM adapter)
 - Zustand (state management with localStorage persistence)
 - canvas-confetti (endgame effects)
 
@@ -312,11 +376,14 @@ The `gamecore/` package is a pure Python Libre Tiles engine with zero framework 
 
 Conceptually aligned with the desktop `scrabgpt` engine; this tree ships its **own** `gamecore/` and dictionary file.
 
+Regular games end when a player empties their rack with an empty bag or after six consecutive scoreless turns, following the [WESPA rule](https://www.wespa.org/features/rulesv1.pdf). Pass and exchange both increment the scoreless counter; a scoring placement resets it. A tied finished game keeps `winner_slot=null` and is serialized and displayed as a draw. The deterministic engine harness runs 20 seeds in the normal backend suite and 100 seeds in the slow acceptance test, with a 200-ply cap, tile conservation, turn order, scoring, and terminal-reason checks.
+
 ## Troubleshooting
 
 - **Invalid word but the server “accepted” it** — Distinguish between an **AI overlay candidate** (may show `valid: false`) and a **saved move**. Word validity is always decided by Django (`submit_move` / `validate_move_for_ai`) using `backend/assets/dicts/collins2019.txt`. Regression tests: `tests/test_dictionary_validation.py`.
 - **Weak AI play** — Switch among the selectable free rivals, raise timeout / search steps in Settings, and tune `frontend/src/lib/prompts.ts` (see [AGENTS.md](AGENTS.md)). Do not buy a paid catalog tier for this cut.
 - **Judge returned 503** — All fallback attempts failed or the catalog was empty. The route does not invent invalid verdicts from malformed output; retry or switch rivals.
+- **Provider row is missing from Settings** — Prepared direct/watchlist rows are intentionally inactive. Configure the server credential, obtain an exact-pair capability `pass`, then activate only that row in Django Admin.
 
 ## Contributing
 
