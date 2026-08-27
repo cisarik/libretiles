@@ -19,6 +19,24 @@ describe("fallback progress store state", () => {
     expect(useGameStore.getState().aiFallbackActiveIndex).toBeNull();
   });
 
+  it("uses 120 seconds and 50 steps for a fresh store", () => {
+    expect(useGameStore.getState().aiTimeout).toBe(120);
+    expect(useGameStore.getState().aiMaxSteps).toBe(50);
+  });
+
+  it("preserves persisted legacy and custom AI budgets unchanged", async () => {
+    const migrate = useGameStore.persist.getOptions().migrate;
+    expect(migrate).toBeTypeOf("function");
+    for (const saved of [
+      { aiTimeout: 30, aiMaxSteps: 30 },
+      { aiTimeout: 180, aiMaxSteps: 80 },
+    ]) {
+      const migrated = (await migrate!(saved, 1)) as typeof saved;
+      expect(migrated.aiTimeout).toBe(saved.aiTimeout);
+      expect(migrated.aiMaxSteps).toBe(saved.aiMaxSteps);
+    }
+  });
+
   it("binds the active attempt index", () => {
     useGameStore.getState().setAIFallbackAttempts([attempt("a"), attempt("b")]);
     useGameStore.getState().setAIFallbackActiveIndex(1);

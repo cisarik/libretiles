@@ -22,7 +22,7 @@ import type { AIModel } from "@/lib/types";
 const TIMEOUT_CHOICES = [
   { value: 30, label: "30s", description: "Fast board read" },
   { value: 60, label: "1m", description: "Balanced search" },
-  { value: 120, label: "2m", description: "Deeper lines" },
+  { value: 120, label: "2m", description: "Default thinking time" },
   { value: 180, label: "3m", description: "Tournament pace" },
   { value: 300, label: "5m", description: "Longest think" },
 ];
@@ -30,8 +30,8 @@ const TIMEOUT_CHOICES = [
 const STEP_CHOICES = [
   { value: 10, label: "10", description: "Quick tools" },
   { value: 20, label: "20", description: "More tries" },
-  { value: 30, label: "30", description: "Default depth" },
-  { value: 50, label: "50", description: "Deep search" },
+  { value: 30, label: "30", description: "Focused search" },
+  { value: 50, label: "50", description: "Default search depth" },
   { value: 80, label: "80", description: "Max pressure" },
 ];
 

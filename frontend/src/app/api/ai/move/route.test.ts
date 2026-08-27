@@ -599,6 +599,48 @@ describe("POST /api/ai/move", () => {
     expect(generateTextMock.mock.calls[0][0].stopWhen).toBe("stop-8");
   });
 
+  it("uses omitted-field defaults of 120 seconds and 50 steps", async () => {
+    mockBackend({
+      "/validate-move/": {
+        body: { valid: true, total_score: 2, words: [{ word: "A", valid: true }] },
+      },
+      "/ai-move/": {
+        body: { ok: true, action: "place", points: 2, words: [{ word: "A", score: 2 }] },
+      },
+    });
+    const { events } = await runRoute(
+      request({ timeout: undefined, max_steps: undefined }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "thinking",
+        timeout: 120,
+        max_steps: 50,
+      }),
+    );
+    expect(stepCountIsMock).toHaveBeenCalledWith(48);
+  });
+
+  it("accepts a positive sub-15-second tail grant without inflating it", async () => {
+    mockBackend({
+      "/validate-move/": {
+        body: { valid: true, total_score: 2, words: [{ word: "A", valid: true }] },
+      },
+      "/ai-move/": {
+        body: { ok: true, action: "place", points: 2, words: [{ word: "A", score: 2 }] },
+      },
+    });
+    const { events } = await runRoute(request({ timeout: 7, max_steps: 5 }));
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "thinking",
+        timeout: 7,
+        max_steps: 5,
+      }),
+    );
+    expect(stepCountIsMock).toHaveBeenCalledWith(3);
+  });
+
   it("sends rack_owner ai on validateMove tool POSTs", async () => {
     const fetchMock = mockBackend({
       "/validate-move/": {

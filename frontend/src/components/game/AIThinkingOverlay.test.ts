@@ -78,6 +78,43 @@ describe("AIThinkingOverlay fallback attempt pills", () => {
     expect(markup).toContain('data-attempt-status="pending"');
   });
 
+  it("renders five direct-provider pills in exact order with one active tile", () => {
+    const attempts: Attempt[] = [
+      { provider: "groq", modelId: "openai/gpt-oss-120b", status: "failed" },
+      { provider: "google-gemini", modelId: "gemini-3.7-flash", status: "pending" },
+      {
+        provider: "cloudflare-workers-ai",
+        modelId: "@cf/zai-org/glm-4.7-flash",
+        status: "pending",
+      },
+      { provider: "mistral", modelId: "mistral-small-2603", status: "pending" },
+      {
+        provider: "ibm-watsonx",
+        modelId: "ibm/granite-4-h-small",
+        status: "pending",
+      },
+    ];
+    primeStore(attempts, 2);
+    const markup = renderOverlay();
+    const labels = [
+      "Groq",
+      "Google Gemini",
+      "Cloudflare Workers AI",
+      "Mistral",
+      "IBM watsonx.ai",
+    ];
+    for (let index = 0; index < labels.length; index += 1) {
+      expect(markup).toContain(labels[index]);
+      if (index > 0) {
+        expect(markup.indexOf(labels[index - 1])).toBeLessThan(
+          markup.indexOf(labels[index]),
+        );
+      }
+    }
+    expect(markup.match(/data-attempt-status=/g)?.length).toBe(5);
+    expect(markup.match(/data-pingpong="active"/g)?.length).toBe(1);
+  });
+
   it("binds exactly one ping-pong tile to the active attempt lifecycle", () => {
     primeStore([pending(GEMMA), pending(GLM)], 1);
     const markup = renderOverlay();

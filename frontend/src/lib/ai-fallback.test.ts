@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import type { AiMoveStreamTerminal } from "./ai-move-stream";
 import {
   aiMoveRequestBody,
+  attemptStepGrant,
+  attemptTimeoutSeconds,
   buildFallbackQueue,
   canStartAttempt,
   decideNextFallbackAttempt,
@@ -11,6 +13,7 @@ import {
   providerBadgeLabel,
   providerRequestsUsedFromTerminal,
   remainingTimeoutSeconds,
+  retryAfterSecondsFromTerminal,
   type CatalogPair,
   type ReconciliationView,
   type TurnAnchor,
@@ -84,6 +87,8 @@ describe("buildFallbackQueue", () => {
       { provider: "openrouter", model_id: OPENROUTER_NEMOTRON },
       { provider: "openrouter", model_id: OPENROUTER_GLM },
       { provider: "openrouter", model_id: OPENROUTER_GEMMA_SMALL },
+      { provider: "nvidia-nim", model_id: NVIDIA_NIM_NEMOTRON },
+      { provider: "openrouter", model_id: OPENROUTER_GEMMA },
     ]);
   });
 
@@ -92,16 +97,22 @@ describe("buildFallbackQueue", () => {
       { provider: "openrouter", model_id: OPENROUTER_GLM },
       { provider: "openrouter", model_id: OPENROUTER_NEMOTRON },
       { provider: "openrouter", model_id: OPENROUTER_GEMMA_SMALL },
+      { provider: "nvidia-nim", model_id: NVIDIA_NIM_NEMOTRON },
+      { provider: "openrouter", model_id: OPENROUTER_GEMMA },
     ]);
     expect(buildFallbackQueue(null, NEWEST_FIRST_CATALOG)).toEqual([
       { provider: "openrouter", model_id: OPENROUTER_GLM },
       { provider: "openrouter", model_id: OPENROUTER_NEMOTRON },
       { provider: "openrouter", model_id: OPENROUTER_GEMMA_SMALL },
+      { provider: "nvidia-nim", model_id: NVIDIA_NIM_NEMOTRON },
+      { provider: "openrouter", model_id: OPENROUTER_GEMMA },
     ]);
     expect(buildFallbackQueue(NVIDIA_NIM_NEMOTRON, NEWEST_FIRST_CATALOG)).toEqual([
       { provider: "nvidia-nim", model_id: NVIDIA_NIM_NEMOTRON },
       { provider: "openrouter", model_id: OPENROUTER_GLM },
       { provider: "openrouter", model_id: OPENROUTER_NEMOTRON },
+      { provider: "openrouter", model_id: OPENROUTER_GEMMA_SMALL },
+      { provider: "openrouter", model_id: OPENROUTER_GEMMA },
     ]);
   });
 
@@ -109,18 +120,18 @@ describe("buildFallbackQueue", () => {
     const playQueue = buildFallbackQueue(OPENROUTER_GEMMA, NEWEST_FIRST_CATALOG);
     const judgeQueue = buildFallbackQueue(OPENROUTER_GEMMA, NEWEST_FIRST_CATALOG);
     expect(playQueue).toEqual(judgeQueue);
-    expect(playQueue).toHaveLength(3);
+    expect(playQueue).toHaveLength(5);
   });
 
-  it("de-duplicates exact pairs and never exceeds three attempts", () => {
+  it("de-duplicates exact pairs and never exceeds five attempts", () => {
     const duplicated: CatalogPair[] = [
       ...NEWEST_FIRST_CATALOG,
       { provider: "openrouter", model_id: OPENROUTER_GLM },
     ];
     const queue = buildFallbackQueue(OPENROUTER_GLM, duplicated);
-    expect(queue).toHaveLength(3);
+    expect(queue).toHaveLength(5);
     const keys = queue.map((pair) => `${pair.provider}:${pair.model_id}`);
-    expect(new Set(keys).size).toBe(3);
+    expect(new Set(keys).size).toBe(5);
   });
 
   it("returns an empty queue for an empty catalog", () => {
@@ -155,24 +166,49 @@ describe("catalog failure and timeout helpers", () => {
     expect(fallbackQueueForCatalogFailure("")).toEqual([]);
   });
 
-  it("refuses another attempt when remaining timeout is under 15 seconds", () => {
+  it("allocates exact whole-turn timeout slices including a short tail", () => {
     expect(remainingTimeoutSeconds(0, 30, 16_000)).toBe(14);
-    expect(canStartAttempt(14)).toBe(false);
+    expect(canStartAttempt(14)).toBe(true);
     expect(canStartAttempt(15)).toBe(true);
+    expect(attemptTimeoutSeconds(120, 5)).toBe(24);
+    expect(attemptTimeoutSeconds(119, 4)).toBe(29);
+    expect(attemptTimeoutSeconds(73, 4)).toBe(18);
+    expect(attemptTimeoutSeconds(14, 1)).toBe(14);
+    expect(attemptTimeoutSeconds(9, 2)).toBe(9);
+    expect(attemptTimeoutSeconds(0, 1)).toBe(0);
     expect(
       decideNextFallbackAttempt({
         attemptIndex: 1,
-        queueLength: 3,
+        queueLength: 5,
         previous: CODED_429,
         remainingSeconds: 14,
         reconciliationAllowsRetry: true,
       }),
-    ).toEqual({ action: "stop", reason: "deadline" });
+    ).toEqual({ action: "post", timeoutSeconds: 14 });
+  });
+
+  it("reserves exact five-step grants for later lanes", () => {
+    expect(attemptStepGrant(50, 5)).toBe(30);
+    expect(attemptStepGrant(45, 4)).toBe(30);
+    expect(attemptStepGrant(20, 4)).toBe(5);
+    expect(attemptStepGrant(15, 3)).toBe(5);
+    expect(attemptStepGrant(10, 2)).toBe(5);
+    expect(attemptStepGrant(5, 1)).toBe(5);
+    expect(attemptStepGrant(4, 1)).toBeNull();
   });
 
   it("labels Settings/Play provider badges", () => {
     expect(providerBadgeLabel("openrouter")).toBe("OpenRouter");
     expect(providerBadgeLabel("nvidia-nim")).toBe("NVIDIA NIM");
+    expect(providerBadgeLabel("groq")).toBe("Groq");
+    expect(providerBadgeLabel("google-gemini")).toBe("Google Gemini");
+    expect(providerBadgeLabel("cloudflare-workers-ai")).toBe(
+      "Cloudflare Workers AI",
+    );
+    expect(providerBadgeLabel("mistral")).toBe("Mistral");
+    expect(providerBadgeLabel("ibm-watsonx")).toBe("IBM watsonx.ai");
+    expect(providerBadgeLabel("aion")).toBe("Aion");
+    expect(providerBadgeLabel("huggingface")).toBe("Hugging Face");
   });
 
   it("keeps the persisted preference in model_id across runtime attempts", () => {
@@ -254,14 +290,32 @@ describe("providerRequestsUsedFromTerminal", () => {
     ).toBe(0);
     expect(providerRequestsUsedFromTerminal(doneWith(-4))).toBe(0);
   });
+
+  it("retains only bounded retry-after telemetry", () => {
+    expect(
+      retryAfterSecondsFromTerminal({
+        kind: "coded_provider_error",
+        code: "provider_rate_limited",
+        message: "429",
+        retryAfterSeconds: 86_400,
+      }),
+    ).toBe(86_400);
+    expect(
+      retryAfterSecondsFromTerminal({
+        kind: "generic_error",
+        message: "boom",
+        retryAfterSeconds: 86_401,
+      }),
+    ).toBeUndefined();
+  });
 });
 
 describe("orchestrateFallbackTurn", () => {
   const baseOpts = {
     queue: buildFallbackQueue("", NEWEST_FIRST_CATALOG),
     turnStartedAtMs: 0,
-    aiTimeoutSeconds: 60,
-    maxStepsTotal: 30,
+    aiTimeoutSeconds: 120,
+    maxStepsTotal: 50,
     now: () => 1_000,
     anchor: ANCHOR,
   };
@@ -317,10 +371,10 @@ describe("orchestrateFallbackTurn", () => {
       fetchGameState: async () => activeState(),
       runStream,
     });
-    // Attempt 1 grants the full budget minus nothing; attempt 2 gets only
-    // what attempt 1 did not use; attempt 3 would fall under the floor.
+    // Each lane is capped at the five-step tail reserve. The provider reports
+    // ten actual requests anyway, so accounting charges actual usage safely.
     expect(calls).toBe(2);
-    expect(grantedSteps).toEqual([20, 10]);
+    expect(grantedSteps).toEqual([5, 5]);
     expect(result.stopReason).toBe("budget_exhausted");
     expect(result.providerRequestsUsed).toBe(20);
   });
@@ -353,14 +407,34 @@ describe("orchestrateFallbackTurn", () => {
       fetchGameState: async () => activeState(),
       runStream,
     });
-    expect(runStream).toHaveBeenCalledTimes(3);
+    expect(runStream).toHaveBeenCalledTimes(5);
     // Reported usage is 2 per failure but each failed attempt conservatively
     // charges the minimum viable attempt floor of 5 steps.
     expect(result.posts.map((post) => post.maxStepsRemaining)).toEqual([
-      30, 25, 20,
+      10, 10, 10, 10, 10,
     ]);
     expect(result.stopReason).toBe("queue_exhausted");
-    expect(result.providerRequestsUsed).toBe(6);
+    expect(result.providerRequestsUsed).toBe(10);
+  });
+
+  it("defensively caps a raw caller queue at five lanes", async () => {
+    const rawQueue = [
+      ...NEWEST_FIRST_CATALOG,
+      { provider: "openrouter", model_id: "extra/sixth:free" },
+    ];
+    const runStream = vi.fn(async () => CODED_UNAVAILABLE);
+    const result = await orchestrateFallbackTurn({
+      ...baseOpts,
+      queue: rawQueue,
+      fetchGameState: async () => activeState(),
+      runStream,
+    });
+    expect(runStream).toHaveBeenCalledTimes(5);
+    expect(result.posts).toHaveLength(5);
+    expect(result.posts.map((post) => post.pair)).toEqual(
+      NEWEST_FIRST_CATALOG,
+    );
+    expect(result.stopReason).toBe("queue_exhausted");
   });
 
   it("attempts only the selected model when the catalog fetch failed", async () => {
@@ -380,7 +454,7 @@ describe("orchestrateFallbackTurn", () => {
     let nowMs = 1_000;
     const fetchGameState = vi.fn(async () => activeState());
     const runStream = vi.fn(async () => {
-      nowMs = 50_000;
+      nowMs = 60_000;
       return CODED_429;
     });
     const result = await orchestrateFallbackTurn({
@@ -487,7 +561,7 @@ describe("orchestrateFallbackTurn", () => {
     expect(runStream).toHaveBeenCalledTimes(3);
     expect(result.providerRequestsUsed).toBe(13);
     expect(result.posts.map((post) => post.maxStepsRemaining)).toEqual([
-      30, 24, 19,
+      30, 29, 29,
     ]);
     if (result.lastTerminal?.kind === "done") {
       expect(result.lastTerminal.data.turn_provider_requests_used).toBe(13);
@@ -531,5 +605,65 @@ describe("orchestrateFallbackTurn", () => {
     ]);
     expect(result.providerRequestsUsed).toBe(3);
     expect(result.stopReason).toBe("done");
+  });
+
+  it("can succeed only on lane five with four reconciliations and one terminal", async () => {
+    const persisted: number[] = [];
+    const fetchGameState = vi.fn(async () => activeState());
+    const runStream = vi.fn(
+      async (request: {
+        attemptIndex: number;
+      }): Promise<AiMoveStreamTerminal> => {
+        if (request.attemptIndex < 4) {
+          return {
+            kind: "coded_provider_error",
+            code: "provider_unavailable",
+            message: "No endpoints found",
+            providerRequestsUsed: request.attemptIndex + 1,
+            retryAfterSeconds: request.attemptIndex === 1 ? 12 : undefined,
+          };
+        }
+        persisted.push(request.attemptIndex);
+        return doneWith(5);
+      },
+    );
+    const result = await orchestrateFallbackTurn({
+      ...baseOpts,
+      now: () => 0,
+      fetchGameState,
+      runStream,
+    });
+
+    expect(runStream).toHaveBeenCalledTimes(5);
+    expect(fetchGameState).toHaveBeenCalledTimes(4);
+    expect(persisted).toEqual([4]);
+    expect(result.stopReason).toBe("done");
+    expect(result.posts.map((post) => post.timeoutSeconds)).toEqual([
+      24, 30, 40, 60, 120,
+    ]);
+    expect(result.posts.map((post) => post.maxStepsRemaining)).toEqual([
+      30, 30, 30, 30, 30,
+    ]);
+    expect(result.providerRequestsUsed).toBe(15);
+    expect(result.retryAfterSeconds).toBe(12);
+    expect(result.lastTerminal).toEqual({
+      kind: "done",
+      data: expect.objectContaining({
+        provider_requests_used: 5,
+        turn_provider_requests_used: 15,
+        turn_retry_after_seconds: 12,
+      }),
+    });
+  });
+
+  it("stops before lane two when reconciliation observes a changed turn", async () => {
+    const runStream = vi.fn(async () => CODED_UNAVAILABLE);
+    const result = await orchestrateFallbackTurn({
+      ...baseOpts,
+      fetchGameState: async () => activeState({ move_count: 5 }),
+      runStream,
+    });
+    expect(runStream).toHaveBeenCalledTimes(1);
+    expect(result.stopReason).toBe("reconciliation");
   });
 });

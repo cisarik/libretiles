@@ -167,9 +167,9 @@ export const useGameStore = create<GameStore>()(
       aiThinking: false,
       setAIThinking: (aiThinking) => set({ aiThinking }),
 
-      aiTimeout: 30,
+      aiTimeout: 120,
       setAITimeout: (aiTimeout) => set({ aiTimeout }),
-      aiMaxSteps: 30,
+      aiMaxSteps: 50,
       setAIMaxSteps: (aiMaxSteps) => set({ aiMaxSteps }),
       boardTheme: "wood",
       setBoardTheme: (boardTheme) => set({ boardTheme }),

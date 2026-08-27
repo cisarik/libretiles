@@ -7,9 +7,10 @@ import {
   playableCatalogPairs,
   type CatalogPair,
 } from "./model-catalog";
+import { providerLabel } from "./provider-registry";
 
 export const MIN_ATTEMPT_TIMEOUT_SECONDS = 15;
-export const MAX_FALLBACK_ATTEMPTS = 3;
+export const MAX_FALLBACK_ATTEMPTS = 5;
 /** An attempt shorter than this cannot complete a meaningful tool loop. */
 export const MIN_ATTEMPT_STEPS = 5;
 
@@ -43,7 +44,7 @@ export type FallbackAttemptRequest = {
   pair: CatalogPair;
   attemptIndex: number;
   timeoutSeconds: number;
-  /** Remaining whole-turn provider-call budget granted to this attempt. */
+  /** Provider/IAM request budget granted to this attempt. */
   maxStepsRemaining: number;
 };
 
@@ -52,9 +53,7 @@ function pairKey(pair: CatalogPair): string {
 }
 
 export function providerBadgeLabel(provider: string): string {
-  if (provider === "nvidia-nim") return "NVIDIA NIM";
-  if (provider === "openrouter") return "OpenRouter";
-  return provider;
+  return providerLabel(provider);
 }
 
 export function aiMoveRequestBody(input: {
@@ -134,7 +133,37 @@ export function remainingTimeoutSeconds(
 }
 
 export function canStartAttempt(remainingSeconds: number): boolean {
-  return remainingSeconds >= MIN_ATTEMPT_TIMEOUT_SECONDS;
+  return Number.isFinite(remainingSeconds) && remainingSeconds > 0;
+}
+
+/** Divide the whole-turn deadline while still allowing a short final tail. */
+export function attemptTimeoutSeconds(
+  remainingSeconds: number,
+  attemptsLeft: number,
+): number {
+  if (!canStartAttempt(remainingSeconds) || attemptsLeft < 1) return 0;
+  const boundedRemaining = Math.floor(remainingSeconds);
+  return Math.min(
+    boundedRemaining,
+    Math.max(
+      MIN_ATTEMPT_TIMEOUT_SECONDS,
+      Math.floor(boundedRemaining / attemptsLeft),
+    ),
+  );
+}
+
+/** Reserve five provider/IAM requests for every later fallback lane. */
+export function attemptStepGrant(
+  remainingSteps: number,
+  attemptsLeft: number,
+): number | null {
+  const boundedRemaining = Math.max(Math.floor(remainingSteps), 0);
+  if (boundedRemaining < MIN_ATTEMPT_STEPS || attemptsLeft < 1) return null;
+  const grant = Math.max(
+    MIN_ATTEMPT_STEPS,
+    boundedRemaining - MIN_ATTEMPT_STEPS * (attemptsLeft - 1),
+  );
+  return Math.min(grant, boundedRemaining);
 }
 
 export function gameStateAllowsRetry(
@@ -173,6 +202,24 @@ export function providerRequestsUsedFromTerminal(
   return 0;
 }
 
+export function retryAfterSecondsFromTerminal(
+  terminal: AiMoveStreamTerminal | null,
+): number | undefined {
+  if (!terminal) return undefined;
+  const value =
+    terminal.kind === "done"
+      ? terminal.data.retry_after_seconds
+      : terminal.kind === "coded_provider_error" || terminal.kind === "generic_error"
+        ? terminal.retryAfterSeconds
+        : undefined;
+  return typeof value === "number" &&
+    Number.isFinite(value) &&
+    value >= 0 &&
+    value <= 86_400
+    ? Math.floor(value)
+    : undefined;
+}
+
 export function decideNextFallbackAttempt(input: {
   attemptIndex: number;
   queueLength: number;
@@ -203,7 +250,11 @@ export function decideNextFallbackAttempt(input: {
   if (input.attemptIndex > 0 && !input.reconciliationAllowsRetry) {
     return { action: "stop", reason: "reconciliation" };
   }
-  return { action: "post", timeoutSeconds: input.remainingSeconds };
+  const attemptsLeft = input.queueLength - input.attemptIndex;
+  return {
+    action: "post",
+    timeoutSeconds: attemptTimeoutSeconds(input.remainingSeconds, attemptsLeft),
+  };
 }
 
 function stopReasonFromTerminal(
@@ -218,11 +269,18 @@ function stopReasonFromTerminal(
 function stampTurnProviderRequests(
   terminal: AiMoveStreamTerminal | null,
   used: number,
+  retryAfterSeconds?: number,
 ): AiMoveStreamTerminal | null {
   if (!terminal || terminal.kind !== "done") return terminal;
   return {
     kind: "done",
-    data: { ...terminal.data, turn_provider_requests_used: used },
+    data: {
+      ...terminal.data,
+      turn_provider_requests_used: used,
+      ...(retryAfterSeconds === undefined
+        ? {}
+        : { turn_retry_after_seconds: retryAfterSeconds }),
+    },
   };
 }
 
@@ -266,22 +324,32 @@ export async function orchestrateFallbackTurn(opts: {
   stopReason: FallbackStopReason;
   lastTerminal: AiMoveStreamTerminal | null;
   providerRequestsUsed: number;
+  retryAfterSeconds?: number;
 }> {
   const posts: FallbackAttemptRequest[] = [];
+  const queue = opts.queue.slice(0, MAX_FALLBACK_ATTEMPTS);
   let lastTerminal: AiMoveStreamTerminal | null = null;
   let providerRequestsUsed = 0;
+  let retryAfterSeconds: number | undefined;
   let remainingSteps = Math.max(Math.floor(opts.maxStepsTotal), 0);
 
-  if (opts.queue.length === 0) {
-    return { posts, stopReason: "empty_queue", lastTerminal, providerRequestsUsed };
+  if (queue.length === 0) {
+    return {
+      posts,
+      stopReason: "empty_queue",
+      lastTerminal,
+      providerRequestsUsed,
+      retryAfterSeconds,
+    };
   }
 
-  for (let attemptIndex = 0; attemptIndex < opts.queue.length; attemptIndex += 1) {
+  for (let attemptIndex = 0; attemptIndex < queue.length; attemptIndex += 1) {
     const remainingSeconds = remainingTimeoutSeconds(
       opts.turnStartedAtMs,
       opts.aiTimeoutSeconds,
       opts.now(),
     );
+    const attemptsLeft = queue.length - attemptIndex;
     let reconciliationAllowsRetry: boolean | null = null;
     if (attemptIndex > 0) {
       if (!canStartAttempt(remainingSeconds)) {
@@ -290,23 +358,26 @@ export async function orchestrateFallbackTurn(opts: {
           stopReason: "deadline",
           lastTerminal,
           providerRequestsUsed,
+          retryAfterSeconds,
         };
       }
       const latest = await opts.fetchGameState();
       reconciliationAllowsRetry = gameStateAllowsRetry(opts.anchor, latest);
     }
-    if (attemptIndex > 0 && remainingSteps < MIN_ATTEMPT_STEPS) {
+    const stepGrant = attemptStepGrant(remainingSteps, attemptsLeft);
+    if (stepGrant === null) {
       return {
         posts,
         stopReason: "budget_exhausted",
         lastTerminal,
         providerRequestsUsed,
+        retryAfterSeconds,
       };
     }
 
     const decision = decideNextFallbackAttempt({
       attemptIndex,
-      queueLength: opts.queue.length,
+      queueLength: queue.length,
       previous: lastTerminal,
       remainingSeconds,
       reconciliationAllowsRetry,
@@ -317,14 +388,15 @@ export async function orchestrateFallbackTurn(opts: {
         stopReason: decision.reason,
         lastTerminal,
         providerRequestsUsed,
+        retryAfterSeconds,
       };
     }
 
     const request: FallbackAttemptRequest = {
-      pair: opts.queue[attemptIndex],
+      pair: queue[attemptIndex],
       attemptIndex,
       timeoutSeconds: decision.timeoutSeconds,
-      maxStepsRemaining: remainingSteps,
+      maxStepsRemaining: stepGrant,
     };
     posts.push(request);
 
@@ -344,7 +416,15 @@ export async function orchestrateFallbackTurn(opts: {
     );
     remainingSteps = charged.remainingSteps;
     providerRequestsUsed = charged.providerRequestsUsed;
-    lastTerminal = stampTurnProviderRequests(lastTerminal, providerRequestsUsed);
+    const attemptRetryAfter = retryAfterSecondsFromTerminal(lastTerminal);
+    if (attemptRetryAfter !== undefined) {
+      retryAfterSeconds = Math.max(retryAfterSeconds ?? 0, attemptRetryAfter);
+    }
+    lastTerminal = stampTurnProviderRequests(
+      lastTerminal,
+      providerRequestsUsed,
+      retryAfterSeconds,
+    );
 
     const immediateStop = lastTerminal
       ? stopReasonFromTerminal(lastTerminal)
@@ -355,9 +435,16 @@ export async function orchestrateFallbackTurn(opts: {
         stopReason: immediateStop,
         lastTerminal,
         providerRequestsUsed,
+        retryAfterSeconds,
       };
     }
   }
 
-  return { posts, stopReason: "queue_exhausted", lastTerminal, providerRequestsUsed };
+  return {
+    posts,
+    stopReason: "queue_exhausted",
+    lastTerminal,
+    providerRequestsUsed,
+    retryAfterSeconds,
+  };
 }

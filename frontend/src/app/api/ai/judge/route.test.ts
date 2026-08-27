@@ -71,15 +71,32 @@ describe("POST /api/ai/judge", () => {
     });
     getLanguageRuntimeMock.mockReset();
     getLanguageRuntimeMock.mockImplementation(
-      async (provider?: string, modelId?: string) => ({
-        model: { provider: provider ?? "", modelId: modelId ?? "" },
-        tracker: {
-          noteProviderRequest: vi.fn(),
-          recordUsage: trackerRecordUsageMock,
-          recordRetryAfter: vi.fn(),
-          snapshot: vi.fn(() => ({ provider_requests: 1 })),
-        },
-      }),
+      async (provider?: string, modelId?: string) => {
+        let usageRecorded = false;
+        return {
+          model: { provider: provider ?? "", modelId: modelId ?? "" },
+          tracker: {
+            noteProviderRequest: vi.fn(),
+            recordUsage: vi.fn((usage: unknown) => {
+              trackerRecordUsageMock(usage);
+              usageRecorded = true;
+            }),
+            recordRetryAfter: vi.fn(),
+            snapshot: vi.fn(() => ({
+              provider_requests: 1,
+              ...(usageRecorded
+                ? {
+                    usage: {
+                      input_tokens: 12,
+                      output_tokens: 8,
+                      total_tokens: 20,
+                    },
+                  }
+                : {}),
+            })),
+          },
+        };
+      },
     );
     trackerRecordUsageMock.mockClear();
   });
@@ -92,13 +109,28 @@ describe("POST /api/ai/judge", () => {
     const order: Array<[string, string]> = [];
     getLanguageRuntimeMock.mockImplementation(async (provider?: string, modelId?: string) => {
       order.push([provider ?? "", modelId ?? ""]);
+      let usageRecorded = false;
       return {
         model: { provider: provider ?? "", modelId: modelId ?? "" },
         tracker: {
           noteProviderRequest: vi.fn(),
-          recordUsage: trackerRecordUsageMock,
+          recordUsage: vi.fn((usage: unknown) => {
+            trackerRecordUsageMock(usage);
+            usageRecorded = true;
+          }),
           recordRetryAfter: vi.fn(),
-          snapshot: vi.fn(() => ({ provider_requests: 1 })),
+          snapshot: vi.fn(() => ({
+            provider_requests: 1,
+            ...(usageRecorded
+              ? {
+                  usage: {
+                    input_tokens: 12,
+                    output_tokens: 8,
+                    total_tokens: 20,
+                  },
+                }
+              : {}),
+          })),
         },
       };
     });
@@ -127,7 +159,12 @@ describe("POST /api/ai/judge", () => {
     ]);
     expect(payload.model).toBe("nvidia/nemotron-3-super-120b-a12b:free");
     expect(payload.provider).toBe("openrouter");
-    expect(payload.provider_requests_used).toBe(1);
+    expect(payload.provider_requests_used).toBe(2);
+    expect(payload.usage).toEqual({
+      input_tokens: 12,
+      output_tokens: 8,
+      total_tokens: 20,
+    });
     expect(trackerRecordUsageMock).toHaveBeenCalledWith({
       inputTokens: 12,
       outputTokens: 8,
@@ -273,12 +310,12 @@ describe("POST /api/ai/judge", () => {
     const payload = await response.json();
     expect(payload.error).toBeDefined();
     expect(payload.results).toBeUndefined();
-    expect(generateTextMock).toHaveBeenCalledTimes(3);
-    expect(getLanguageRuntimeMock).toHaveBeenCalledTimes(3);
+    expect(generateTextMock).toHaveBeenCalledTimes(5);
+    expect(getLanguageRuntimeMock).toHaveBeenCalledTimes(5);
     vi.unstubAllGlobals();
   });
 
-  it("caps malformed-output retries at three models", async () => {
+  it("caps malformed-output retries at five models", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => new Response(JSON.stringify(NEWEST_CATALOG), { status: 200 })),
@@ -287,7 +324,7 @@ describe("POST /api/ai/judge", () => {
 
     const response = await POST(judgeRequest());
     expect(response.status).toBe(503);
-    expect(generateTextMock).toHaveBeenCalledTimes(3);
+    expect(generateTextMock).toHaveBeenCalledTimes(5);
     vi.unstubAllGlobals();
   });
 
@@ -319,5 +356,114 @@ describe("POST /api/ai/judge", () => {
     const response = await POST(request);
     expect(response.status).toBe(400);
     expect(generateTextMock).not.toHaveBeenCalled();
+  });
+
+  it("starts a fifth lane with a sub-10s tail and sums bounded accounting", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify(NEWEST_CATALOG), { status: 200 })),
+    );
+    const nowValues = [
+      0,
+      0, 0,
+      10_000, 10_000,
+      20_000, 20_000,
+      30_000, 30_000,
+      49_995, 49_995,
+    ];
+    let nowIndex = 0;
+    vi.spyOn(Date, "now").mockImplementation(
+      () => nowValues[Math.min(nowIndex++, nowValues.length - 1)],
+    );
+    const timeoutValues: number[] = [];
+    vi.spyOn(AbortSignal, "timeout").mockImplementation((milliseconds) => {
+      timeoutValues.push(milliseconds);
+      return new AbortController().signal;
+    });
+    let runtimeIndex = 0;
+    getLanguageRuntimeMock.mockImplementation(async (provider?: string, modelId?: string) => {
+      const index = runtimeIndex++;
+      return {
+        model: { provider: provider ?? "", modelId: modelId ?? "" },
+        tracker: {
+          noteProviderRequest: vi.fn(),
+          recordUsage: trackerRecordUsageMock,
+          recordRetryAfter: vi.fn(),
+          snapshot: vi.fn(() => ({
+            provider_requests: index + 1,
+            ...(index === 1 ? { retry_after_seconds: 17 } : {}),
+          })),
+        },
+      };
+    });
+    generateTextMock.mockImplementation(() => {
+      if (generateTextMock.mock.calls.length < 5) {
+        throw new Error("provider unavailable");
+      }
+      return Promise.resolve(
+        validPayload(
+          JSON.stringify({
+            results: [
+              { word: "QI", valid: true },
+              { word: "ZA", valid: true },
+            ],
+          }),
+        ),
+      );
+    });
+
+    const response = await POST(judgeRequest());
+    expect(response.status).toBe(200);
+    expect(timeoutValues).toEqual([10_000, 10_000, 10_000, 10_000, 5]);
+    expect(generateTextMock).toHaveBeenCalledTimes(5);
+    expect(generateTextMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ maxRetries: 0 }),
+    );
+    expect(await response.json()).toMatchObject({
+      provider_requests_used: 15,
+      retry_after_seconds: 17,
+      results: [
+        { word: "QI", valid: true },
+        { word: "ZA", valid: true },
+      ],
+    });
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("returns five-lane 503 accounting without synthesizing invalid verdicts", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify(NEWEST_CATALOG), { status: 200 })),
+    );
+    let runtimeIndex = 0;
+    getLanguageRuntimeMock.mockImplementation(async (provider?: string, modelId?: string) => {
+      const index = runtimeIndex++;
+      return {
+        model: { provider: provider ?? "", modelId: modelId ?? "" },
+        tracker: {
+          noteProviderRequest: vi.fn(),
+          recordUsage: trackerRecordUsageMock,
+          recordRetryAfter: vi.fn(),
+          snapshot: vi.fn(() => ({
+            provider_requests: 2,
+            ...(index === 4 ? { retry_after_seconds: 86_400 } : {}),
+          })),
+        },
+      };
+    });
+    generateTextMock.mockResolvedValue(validPayload("prose only"));
+
+    const response = await POST(judgeRequest());
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual(
+      expect.objectContaining({
+        error: "AI judge failed",
+        provider_requests_used: 10,
+        retry_after_seconds: 86_400,
+      }),
+    );
+    expect(generateTextMock).toHaveBeenCalledTimes(5);
+    vi.unstubAllGlobals();
   });
 });

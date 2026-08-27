@@ -132,6 +132,54 @@ describe("consumeAIStream terminals", () => {
     }
   });
 
+  it("accepts only finite numeric retry-after values in 0..86400", async () => {
+    for (const retryAfterSeconds of [0, 86_400]) {
+      const { terminal } = await collect(
+        sseResponse([
+          eventLine({
+            type: "error",
+            code: "provider_rate_limited",
+            error: "rate limited",
+            retry_after_seconds: retryAfterSeconds,
+            raw_headers: { authorization: "Bearer should-not-survive" },
+            response_body: "sk-live-should-not-survive",
+          }),
+        ]),
+      );
+      expect(terminal).toEqual({
+        kind: "coded_provider_error",
+        code: "provider_rate_limited",
+        message: "rate limited",
+        retryAfterSeconds,
+      });
+      expect(JSON.stringify(terminal)).not.toMatch(/Bearer |sk-live|raw_headers|response_body/);
+    }
+
+    for (const retryAfterSeconds of [-1, 86_401, "12", null]) {
+      const { terminal } = await collect(
+        sseResponse([
+          eventLine({
+            type: "error",
+            code: "provider_rate_limited",
+            error: "rate limited",
+            retry_after_seconds: retryAfterSeconds,
+          }),
+        ]),
+      );
+      expect(terminal).not.toHaveProperty("retryAfterSeconds");
+    }
+  });
+
+  it("rejects NaN and infinite retry-after values before they reach terminals", async () => {
+    for (const token of ["NaN", "Infinity", "-Infinity"]) {
+      const line =
+        `data: {"type":"error","code":"provider_rate_limited",` +
+        `"error":"rate limited","retry_after_seconds":${token}}\n`;
+      const { terminal } = await collect(sseResponse([line]));
+      expect(terminal).toEqual({ kind: "no_terminal" });
+    }
+  });
+
   it("returns coded provider_unavailable", async () => {
     const { terminal } = await collect(
       sseResponse([

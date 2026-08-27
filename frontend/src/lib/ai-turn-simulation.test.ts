@@ -826,8 +826,8 @@ describe("playable-free-rivals 300-turn causal simulation", () => {
 
         persistedInvalid += outcome.django.persistedInvalid;
 
-        if (outcome.posts > 3) pairCapViolations += 1;
-        if (new Set(outcome.engine.distinctPairs).size > 3) pairCapViolations += 1;
+        if (outcome.posts > 5) pairCapViolations += 1;
+        if (new Set(outcome.engine.distinctPairs).size > 5) pairCapViolations += 1;
         if (outcome.posts > 1 && outcome.reconcilations !== outcome.posts - 1) {
           reconcileViolations += 1;
         }

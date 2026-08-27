@@ -36,8 +36,9 @@ import {
 } from "@/lib/prompts";
 
 const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8000";
-const DEFAULT_TIMEOUT_S = 30;
-const DEFAULT_MAX_STEPS = 30;
+const DEFAULT_TIMEOUT_S = 120;
+const DEFAULT_MAX_STEPS = 50;
+const MIN_TIMEOUT_S = 1;
 const MIN_STEPS = 5;
 const MAX_STEPS = 100;
 const DEFAULT_MAX_OUTPUT_TOKENS = 10000;
@@ -319,13 +320,18 @@ export async function POST(req: NextRequest) {
     max_steps?: number;
   };
 
-  const timeoutS = Math.max(15, Math.min(timeout ?? DEFAULT_TIMEOUT_S, 600));
+  const requestedTimeout =
+    typeof timeout === "number" && Number.isFinite(timeout)
+      ? Math.floor(timeout)
+      : DEFAULT_TIMEOUT_S;
+  const timeoutS = clampNumber(requestedTimeout, MIN_TIMEOUT_S, 600);
+  const requestedMaxSteps =
+    typeof body.max_steps === "number" && Number.isFinite(body.max_steps)
+      ? Math.floor(body.max_steps)
+      : DEFAULT_MAX_STEPS;
   const maxSteps = Math.max(
     MIN_STEPS,
-    Math.min(
-      typeof body.max_steps === "number" ? body.max_steps : DEFAULT_MAX_STEPS,
-      MAX_STEPS,
-    ),
+    Math.min(requestedMaxSteps, MAX_STEPS),
   );
   const searchStepCap = maxSteps - REPAIR_RESERVE_STEPS;
   const startTime = Date.now();

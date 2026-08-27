@@ -21,12 +21,15 @@ export type AiMoveStreamTerminal =
       message: string;
       /** Provider model-step HTTP calls already spent inside the stream. */
       providerRequestsUsed?: number;
+      /** Sanitized delay hint only; raw headers and bodies are never retained. */
+      retryAfterSeconds?: number;
     }
   | {
       kind: "generic_error";
       message: string;
       code?: string;
       providerRequestsUsed?: number;
+      retryAfterSeconds?: number;
     }
   | { kind: "no_terminal" };
 
@@ -90,12 +93,20 @@ function recordErrorEvent(
     json.provider_requests_used >= 0
       ? Math.floor(json.provider_requests_used)
       : undefined;
+  const retryAfterSeconds =
+    typeof json.retry_after_seconds === "number" &&
+    Number.isFinite(json.retry_after_seconds) &&
+    json.retry_after_seconds >= 0 &&
+    json.retry_after_seconds <= 86_400
+      ? Math.floor(json.retry_after_seconds)
+      : undefined;
   if (code && isCodedProviderErrorCode(code)) {
     return {
       kind: "coded_provider_error",
       code,
       message,
       ...(providerRequestsUsed !== undefined ? { providerRequestsUsed } : {}),
+      ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
     };
   }
   return {
@@ -103,6 +114,7 @@ function recordErrorEvent(
     message,
     code,
     ...(providerRequestsUsed !== undefined ? { providerRequestsUsed } : {}),
+    ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
   };
 }
 

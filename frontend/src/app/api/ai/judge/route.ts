@@ -13,8 +13,8 @@
  *
  * Fallback contract:
  *   - Same shared queue builder as /api/ai/move (preference first, then
- *     untouched catalog order), capped at three distinct pairs.
- *   - At most three sequential provider calls, 10s per attempt, 30s overall.
+ *     untouched catalog order), capped at five distinct pairs.
+ *   - At most five sequential provider lanes, 10s per attempt, 50s overall.
  *   - AI SDK retries disabled; malformed output advances to the next model.
  *   - Exhaustion is an explicit HTTP 503 — malformed output is never
  *     synthesized into false "invalid" results.
@@ -26,15 +26,94 @@ import { buildFallbackQueue, MAX_FALLBACK_ATTEMPTS } from "@/lib/ai-fallback";
 import {
   getLanguageRuntime,
   parseCatalogModelRows,
+  type ProviderRequestTracker,
 } from "@/lib/ai-runtimes";
 
 const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8000";
 const ATTEMPT_TIMEOUT_MS = 10_000;
-const OVERALL_BUDGET_MS = 30_000;
+const OVERALL_BUDGET_MS = 50_000;
+const MAX_TRACKED_REQUESTS = 50_000;
+const MAX_TRACKED_TOKENS = 1_000_000_000;
+const MAX_RETRY_AFTER_SECONDS = 86_400;
 
 type JudgeResult = {
   results: Array<{ word: string; valid: boolean; reason?: string }>;
 };
+
+type JudgeAccounting = {
+  providerRequests: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  hasUsage: boolean;
+  retryAfterSeconds?: number;
+};
+
+function boundedInteger(value: unknown, maximum: number): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? Math.min(Math.floor(value), maximum)
+    : null;
+}
+
+function addTrackerSnapshot(
+  accounting: JudgeAccounting,
+  tracker: ProviderRequestTracker,
+): void {
+  const snapshot = tracker.snapshot();
+  accounting.providerRequests = Math.min(
+    accounting.providerRequests +
+      (boundedInteger(snapshot.provider_requests, MAX_TRACKED_REQUESTS) ?? 0),
+    MAX_TRACKED_REQUESTS,
+  );
+  if (snapshot.usage) {
+    accounting.hasUsage = true;
+    accounting.inputTokens = Math.min(
+      accounting.inputTokens +
+        (boundedInteger(snapshot.usage.input_tokens, MAX_TRACKED_TOKENS) ?? 0),
+      MAX_TRACKED_TOKENS,
+    );
+    accounting.outputTokens = Math.min(
+      accounting.outputTokens +
+        (boundedInteger(snapshot.usage.output_tokens, MAX_TRACKED_TOKENS) ?? 0),
+      MAX_TRACKED_TOKENS,
+    );
+    accounting.totalTokens = Math.min(
+      accounting.totalTokens +
+        (boundedInteger(snapshot.usage.total_tokens, MAX_TRACKED_TOKENS) ?? 0),
+      MAX_TRACKED_TOKENS,
+    );
+  }
+  if (snapshot.retry_after_seconds !== undefined) {
+    const retryAfterSeconds = boundedInteger(
+      snapshot.retry_after_seconds,
+      MAX_RETRY_AFTER_SECONDS,
+    );
+    if (retryAfterSeconds !== null) {
+      accounting.retryAfterSeconds = Math.max(
+        accounting.retryAfterSeconds ?? 0,
+        retryAfterSeconds,
+      );
+    }
+  }
+}
+
+function accountingFields(accounting: JudgeAccounting) {
+  return {
+    provider_requests_used: accounting.providerRequests,
+    ...(accounting.hasUsage
+      ? {
+          usage: {
+            input_tokens: accounting.inputTokens,
+            output_tokens: accounting.outputTokens,
+            total_tokens: accounting.totalTokens,
+          },
+        }
+      : {}),
+    ...(accounting.retryAfterSeconds === undefined
+      ? {}
+      : { retry_after_seconds: accounting.retryAfterSeconds }),
+  };
+}
 
 async function fetchCatalogModelRows() {
   try {
@@ -136,8 +215,15 @@ export async function POST(req: NextRequest) {
   }
 
   const overallDeadlineMs = Date.now() + OVERALL_BUDGET_MS;
+  const accounting: JudgeAccounting = {
+    providerRequests: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    hasUsage: false,
+  };
   for (const pair of queue.slice(0, MAX_FALLBACK_ATTEMPTS)) {
-    if (Date.now() + ATTEMPT_TIMEOUT_MS > overallDeadlineMs) break;
+    if (overallDeadlineMs - Date.now() <= 0) break;
 
     let runtime;
     try {
@@ -146,39 +232,48 @@ export async function POST(req: NextRequest) {
       continue;
     }
 
+    const remainingMs = Math.floor(overallDeadlineMs - Date.now());
+    if (remainingMs <= 0) {
+      addTrackerSnapshot(accounting, runtime.tracker);
+      break;
+    }
+    const attemptTimeoutMs = Math.max(
+      1,
+      Math.min(ATTEMPT_TIMEOUT_MS, remainingMs),
+    );
+
+    let parsed: JudgeResult | null = null;
     try {
       const result = await generateText({
         model: runtime.model,
         maxOutputTokens: 1000,
         temperature: 0.1,
         maxRetries: 0,
-        abortSignal: AbortSignal.timeout(ATTEMPT_TIMEOUT_MS),
+        abortSignal: AbortSignal.timeout(attemptTimeoutMs),
         system:
           "You are the Libre Tiles word referee. Judge only against Collins " +
           "Scrabble Words (2019). Reply with JSON only.",
         prompt: `Validate these words for English Libre Tiles play: ${words.join(", ")}. Return JSON exactly matching the schema.`,
       });
 
-      const parsed = parseJudgeResults(result.text, words);
-      if (parsed) {
-        runtime.tracker.recordUsage(result.usage);
-        const trackerSnapshot = runtime.tracker.snapshot();
-        return NextResponse.json({
-          ...parsed,
-          model: pair.model_id,
-          provider: pair.provider,
-          usage: result.usage,
-          provider_requests_used: trackerSnapshot.provider_requests,
-          ...(trackerSnapshot.retry_after_seconds === undefined
-            ? {}
-            : { retry_after_seconds: trackerSnapshot.retry_after_seconds }),
-        });
-      }
+      runtime.tracker.recordUsage(result.usage);
+      parsed = parseJudgeResults(result.text, words);
     } catch {
       // Timeout, provider failure, or SDK error — advance to the next model.
-      continue;
+    }
+    addTrackerSnapshot(accounting, runtime.tracker);
+    if (parsed) {
+      return NextResponse.json({
+        ...parsed,
+        model: pair.model_id,
+        provider: pair.provider,
+        ...accountingFields(accounting),
+      });
     }
   }
 
-  return NextResponse.json({ error: "AI judge failed" }, { status: 503 });
+  return NextResponse.json(
+    { error: "AI judge failed", ...accountingFields(accounting) },
+    { status: 503 },
+  );
 }
