@@ -716,6 +716,7 @@ class GameAPITest(TestCase):
         assert data["bag_remaining"] < 100
         assert len(data["my_rack"]) == 7
         assert data["my_slot"] == 0
+        assert data["consecutive_scoreless_turns"] == 0
         assert "total_cost_usd" not in data
         assert "last_move_billing" not in data
         assert all("billing" not in item for item in data["move_history"])
@@ -732,6 +733,149 @@ class GameAPITest(TestCase):
         resp = self.client.post(f"/api/game/{game_id}/pass/")
         assert resp.status_code == 200
         assert resp.json()["ok"] is True
+
+    def test_six_scoreless_turns_end_exactly_on_six_and_history_is_draw(self) -> None:
+        first = self.client.post(
+            "/api/game/queue/join/", {"variant_slug": "english"}, format="json"
+        )
+        self.client2.post(
+            "/api/game/queue/join/", {"variant_slug": "english"}, format="json"
+        )
+        game_id = first.json()["state"]["game_id"]
+        session = GameSession.objects.get(public_id=game_id)
+        slot0 = session.slots.get(slot=0)
+        slot1 = session.slots.get(slot=1)
+        slot0.rack = ["A"]
+        slot1.rack = ["A"]
+        slot0.score = 10
+        slot1.score = 10
+        slot0.save(update_fields=["rack", "score"])
+        slot1.save(update_fields=["rack", "score"])
+        session.current_turn_slot = 0
+        session.save(update_fields=["current_turn_slot"])
+
+        clients = [self.client, self.client2] * 3
+        for index, client in enumerate(clients, start=1):
+            response = client.post(f"/api/game/{game_id}/pass/")
+            assert response.status_code == 200
+            session.refresh_from_db()
+            assert session.consecutive_scoreless_turns == index
+            if index < 6:
+                assert session.game_over is False
+            else:
+                assert session.game_over is True
+
+        assert session.game_end_reason == "SIX_CONSECUTIVE_ZERO_SCORES"
+        assert session.current_turn_slot == 1
+        assert session.winner_slot is None
+        slot0.refresh_from_db()
+        slot1.refresh_from_db()
+        assert (slot0.score, slot1.score) == (9, 9)
+
+        history = self.client.get("/api/game/history/?game_mode=vs_human")
+        item = next(item for item in history.json()["items"] if item["game_id"] == game_id)
+        assert item["outcome"] == "draw"
+
+    def test_exchange_is_scoreless_but_resets_only_acting_pass_streak(self) -> None:
+        first = self.client.post(
+            "/api/game/queue/join/", {"variant_slug": "english"}, format="json"
+        )
+        self.client2.post(
+            "/api/game/queue/join/", {"variant_slug": "english"}, format="json"
+        )
+        game_id = first.json()["state"]["game_id"]
+        session = GameSession.objects.get(public_id=game_id)
+        session.current_turn_slot = 0
+        session.save(update_fields=["current_turn_slot"])
+
+        assert self.client.post(f"/api/game/{game_id}/pass/").status_code == 200
+        slot0 = session.slots.get(slot=0)
+        slot1 = session.slots.get(slot=1)
+        exchange_letter = slot1.rack[0]
+        exchange = self.client2.post(
+            f"/api/game/{game_id}/exchange/",
+            {"letters": [exchange_letter]},
+            format="json",
+        )
+        assert exchange.status_code == 200
+
+        session.refresh_from_db()
+        slot0.refresh_from_db()
+        slot1.refresh_from_db()
+        assert session.consecutive_scoreless_turns == 2
+        assert slot0.pass_streak == 1
+        assert slot1.pass_streak == 0
+
+    def test_scoring_at_five_resets_scoreless_count_and_rack_empty_scoring_wins(
+        self,
+    ) -> None:
+        game_id = self.client.post("/api/game/create/", {"game_mode": "vs_ai"}).json()[
+            "game_id"
+        ]
+        session = GameSession.objects.get(public_id=game_id)
+        board = ["." * 15 for _ in range(15)]
+        board[7] = "." * 8 + "T" + "." * 6
+        session.board_state = board
+        session.premium_used = []
+        session.bag_tiles = ""
+        session.current_turn_slot = 0
+        session.consecutive_scoreless_turns = 5
+        session.save(
+            update_fields=[
+                "board_state",
+                "premium_used",
+                "bag_tiles",
+                "current_turn_slot",
+                "consecutive_scoreless_turns",
+            ]
+        )
+        human = session.slots.get(slot=0)
+        rival = session.slots.get(slot=1)
+        human.rack = ["A"]
+        human.score = 0
+        rival.rack = ["B"]
+        rival.score = 0
+        human.save(update_fields=["rack", "score"])
+        rival.save(update_fields=["rack", "score"])
+
+        response = self.client.post(
+            f"/api/game/{game_id}/move/",
+            {"placements": [{"row": 7, "col": 7, "letter": "A"}]},
+            format="json",
+        )
+
+        assert response.status_code == 200
+        session.refresh_from_db()
+        human.refresh_from_db()
+        rival.refresh_from_db()
+        assert session.consecutive_scoreless_turns == 0
+        assert session.game_end_reason == "BAG_EMPTY_AND_PLAYER_OUT"
+        assert session.winner_slot == 0
+        assert human.score == 7
+        assert rival.score == -3
+
+    def test_rejected_actions_do_not_change_scoreless_counter(self) -> None:
+        game_id = self.client.post("/api/game/create/", {"game_mode": "vs_ai"}).json()[
+            "game_id"
+        ]
+        session = GameSession.objects.get(public_id=game_id)
+        session.current_turn_slot = 0
+        session.consecutive_scoreless_turns = 5
+        session.save(update_fields=["current_turn_slot", "consecutive_scoreless_turns"])
+
+        empty_exchange = self.client.post(
+            f"/api/game/{game_id}/exchange/", {"letters": []}, format="json"
+        )
+        assert empty_exchange.status_code == 400
+        invalid_place = self.client.post(
+            f"/api/game/{game_id}/move/",
+            {"placements": [{"row": 0, "col": 0, "letter": "Z"}]},
+            format="json",
+        )
+        assert invalid_place.status_code == 400
+        session.refresh_from_db()
+        assert session.consecutive_scoreless_turns == 5
+        assert session.current_turn_slot == 0
 
     @patch("game.realtime.async_to_sync")
     def test_ai_pass_succeeds_when_realtime_publish_fails(self, mock_async_to_sync) -> None:

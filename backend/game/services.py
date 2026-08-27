@@ -158,8 +158,15 @@ def _board_from_session(session: GameSession) -> Board:
 
 
 def _bag_from_session(session: GameSession) -> TileBag:
-    tiles = list(session.bag_tiles) if session.bag_tiles else []
-    return TileBag(seed=session.bag_seed, tiles=tiles, variant=session.variant_slug)
+    if session.bag_tiles:
+        return TileBag(
+            seed=session.bag_seed,
+            tiles=list(session.bag_tiles),
+            variant=session.variant_slug,
+        )
+    bag = TileBag(seed=session.bag_seed, variant=session.variant_slug)
+    bag.draw(bag.remaining())
+    return bag
 
 
 def _persist_board(session: GameSession, board: Board) -> None:
@@ -279,6 +286,7 @@ def _build_state(session: GameSession, *, current_user_id: int, my_slot: PlayerS
         "blanks": session.blanks,
         "premium_used": session.premium_used,
         "bag_remaining": len(session.bag_tiles),
+        "consecutive_scoreless_turns": session.consecutive_scoreless_turns,
         "current_turn_slot": session.current_turn_slot,
         "game_over": session.game_over,
         "game_end_reason": session.game_end_reason,
@@ -391,7 +399,7 @@ def _initialize_session(session: GameSession, *, slot0: PlayerSlot, slot1: Playe
     session.bag_seed = seed
     session.bag_tiles = "".join(bag.tiles)
     session.current_turn_slot = 0 if draw["slot0_first"] else 1
-    session.consecutive_passes = 0
+    session.consecutive_scoreless_turns = 0
     session.status = "active"
     session.game_over = False
     session.game_end_reason = ""
@@ -406,7 +414,7 @@ def _initialize_session(session: GameSession, *, slot0: PlayerSlot, slot1: Playe
             "bag_seed",
             "bag_tiles",
             "current_turn_slot",
-            "consecutive_passes",
+            "consecutive_scoreless_turns",
             "status",
             "game_over",
             "game_end_reason",
@@ -462,13 +470,12 @@ def _next_turn_for(slot: int) -> int:
 def _check_endgame(session: GameSession) -> dict[str, Any]:
     slots = list(session.slots.all().order_by("slot"))
     racks = {str(s.slot): list(s.rack) if isinstance(s.rack, list) else [] for s in slots}
-    pass_streaks = {str(s.slot): s.pass_streak for s in slots}
     bag_remaining = len(session.bag_tiles)
 
     reason = determine_end_reason(
         bag_remaining=bag_remaining,
         racks=racks,
-        pass_streaks=pass_streaks,
+        consecutive_scoreless_turns=session.consecutive_scoreless_turns,
         no_moves_available=False,
     )
     if reason is None:
@@ -493,9 +500,11 @@ def _check_endgame(session: GameSession) -> dict[str, Any]:
     session.game_end_reason = reason.name
     session.finished_at = timezone.now()
 
-    scores = {str(slot.slot): slot.score for slot in slots}
+    scores = {slot.slot: slot.score for slot in slots}
     if scores:
-        session.winner_slot = int(max(scores, key=lambda key: scores[key]))
+        top_score = max(scores.values())
+        leaders = [slot for slot, score in scores.items() if score == top_score]
+        session.winner_slot = leaders[0] if len(leaders) == 1 else None
 
     return {
         "game_end_reason": reason.name,
@@ -687,7 +696,7 @@ def _submit_move_locked(
 
     _persist_board(session, board)
     _persist_bag(session, bag)
-    session.consecutive_passes = 0
+    session.consecutive_scoreless_turns = 0
 
     _create_move(
         session=session,
@@ -736,6 +745,9 @@ def _submit_exchange_locked(
     if error:
         return {"ok": False, "error": error}
 
+    if not letters_to_exchange:
+        return {"ok": False, "error": "Exchange must contain at least one tile"}
+
     if player_slot.is_ai:
         blocked = _reject_ai_nonscoring(
             session=session, player_slot=player_slot, action="exchange"
@@ -757,11 +769,11 @@ def _submit_exchange_locked(
 
     new_rack = remaining_rack + bag.exchange(letters_to_exchange)
     player_slot.rack = new_rack
-    player_slot.pass_streak += 1
+    player_slot.pass_streak = 0
     player_slot.save(update_fields=["rack", "pass_streak"])
 
     _persist_bag(session, bag)
-    session.consecutive_passes += 1
+    session.consecutive_scoreless_turns += 1
     _create_move(
         session=session,
         player_slot=player_slot,
@@ -804,7 +816,7 @@ def _submit_pass_locked(
 
     player_slot.pass_streak += 1
     player_slot.save(update_fields=["pass_streak"])
-    session.consecutive_passes += 1
+    session.consecutive_scoreless_turns += 1
     _create_move(
         session=session,
         player_slot=player_slot,
@@ -905,6 +917,8 @@ def _history_outcome(
     if session.game_end_reason == "give_up":
         if give_up_slot_by_game_id.get(session.id) == my_slot.slot:
             return "gave_up"
+    if session.status == "finished" and session.game_over and session.winner_slot is None:
+        return "draw"
     if session.winner_slot is None:
         return "abandoned"
     return "won" if session.winner_slot == my_slot.slot else "lost"

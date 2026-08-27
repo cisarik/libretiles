@@ -46,6 +46,7 @@ addopts = "-q"
 asyncio_mode = "auto"
 markers = [
     "internet: tests requiring live API calls",
+    "slow: deterministic extended acceptance tests",
 ]
 
 [build-system]

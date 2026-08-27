@@ -70,7 +70,7 @@ class SaveGameState(TypedDict, total=False):
     variant: str
     last_move_cells: list[_Pos]
     last_move_points: int
-    consecutive_passes: int
+    consecutive_scoreless_turns: int
     pass_streaks: dict[str, int]
     game_over: bool
     game_end_reason: str
@@ -86,7 +86,7 @@ def build_save_state_dict(
     current_turn: int,
     last_move_cells: list[tuple[int, int]] | None = None,
     last_move_points: int = 0,
-    consecutive_passes: int = 0,
+    consecutive_scoreless_turns: int = 0,
     pass_streaks: dict[str, int] | None = None,
     game_over: bool = False,
     game_end_reason: str | None = None,
@@ -113,7 +113,7 @@ def build_save_state_dict(
     variant = variant_slug or getattr(bag, "variant_slug", "english")
 
     return SaveGameState(
-        schema_version="2",
+        schema_version="3",
         grid=grid,
         blanks=blanks,
         premium_used=premium_used,
@@ -124,12 +124,18 @@ def build_save_state_dict(
         variant=str(variant),
         last_move_cells=[{"row": r, "col": c} for (r, c) in (last_move_cells or [])],
         last_move_points=last_move_points,
-        consecutive_passes=consecutive_passes,
+        consecutive_scoreless_turns=consecutive_scoreless_turns,
         pass_streaks=pass_streaks or {},
         game_over=game_over,
         game_end_reason=game_end_reason or "",
         seed=seed,
     )
+
+
+def read_consecutive_scoreless_turns(state: dict[str, Any]) -> int:
+    """Read the current key while accepting the legacy schema-v2 save key."""
+    value = state.get("consecutive_scoreless_turns", state.get("consecutive_passes", 0))
+    return int(value)
 
 
 def restore_board_from_save(state: dict[str, Any], premiums_path: str) -> Board:
@@ -180,4 +186,8 @@ def restore_bag_from_save(state: dict[str, Any]) -> TileBag:
         return result
 
     letters = _parse_bag(bag_serialized)
-    return TileBag(seed=seed, tiles=letters, variant=variant_slug)
+    if letters:
+        return TileBag(seed=seed, tiles=letters, variant=variant_slug)
+    bag = TileBag(seed=seed, variant=variant_slug)
+    bag.draw(bag.remaining())
+    return bag

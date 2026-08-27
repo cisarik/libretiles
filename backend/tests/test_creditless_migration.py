@@ -112,10 +112,21 @@ class FreshCreditlessSchemaTests(TransactionTestCase):
         assert not Permission.objects.filter(content_type__app_label="billing").exists()
 
     def test_cleanup_migrations_are_irreversible(self) -> None:
-        with self.assertRaises((CommandError, IrreversibleError)):
-            call_command("migrate", "catalog", "0007_provider_neutral_model_help", verbosity=0)
-        with self.assertRaises((CommandError, IrreversibleError)):
-            call_command("migrate", "game", "0004_gamesession_ai_prompt_alter_move_kind", verbosity=0)
+        try:
+            with self.assertRaises((CommandError, IrreversibleError)):
+                call_command("migrate", "catalog", "0007_provider_neutral_model_help", verbosity=0)
+            with self.assertRaises((CommandError, IrreversibleError)):
+                call_command(
+                    "migrate",
+                    "game",
+                    "0004_gamesession_ai_prompt_alter_move_kind",
+                    verbosity=0,
+                )
+        finally:
+            call_command("migrate", "catalog", "0012_multi_provider_free_rivals", verbosity=0)
+            call_command("migrate", "game", "0006_rename_consecutive_scoreless_turns", verbosity=0)
+
+        assert "consecutive_scoreless_turns" in _column_names("game_session")
 
 
 class UpgradeCreditlessCleanupTests(TransactionTestCase):

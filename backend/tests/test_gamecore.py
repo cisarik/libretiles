@@ -1,5 +1,6 @@
 """Pure gamecore tests — no Django, no network. Must pass on every build."""
 
+import pytest
 
 from gamecore.assets import get_premiums_path
 from gamecore.board import Board
@@ -7,6 +8,7 @@ from gamecore.game import (
     Game,
     GameEndReason,
     PlayerState,
+    apply_final_scoring,
     determine_end_reason,
 )
 from gamecore.rack import consume_rack, restore_rack
@@ -106,6 +108,20 @@ class TestTileBag:
         bag2 = TileBag(seed=123, variant="english")
         assert bag1.draw(7) == bag2.draw(7)
 
+    def test_empty_saved_bag_restores_as_empty(self) -> None:
+        from gamecore.state import restore_bag_from_save
+
+        restored = restore_bag_from_save(
+            {"schema_version": "3", "bag": "", "seed": 42, "variant": "english"}
+        )
+        assert restored.remaining() == 0
+
+    def test_scoreless_save_key_has_narrow_legacy_read_alias(self) -> None:
+        from gamecore.state import read_consecutive_scoreless_turns
+
+        assert read_consecutive_scoreless_turns({"consecutive_scoreless_turns": 5}) == 5
+        assert read_consecutive_scoreless_turns({"consecutive_passes": 4}) == 4
+
 
 class TestRack:
     def test_consume_rack(self) -> None:
@@ -134,27 +150,120 @@ class TestGame:
         assert game.current_player().name == "Player1"
         assert not game.ended
 
-    def test_pass_streak_endgame(self) -> None:
+    def test_six_scoreless_turn_endgame(self) -> None:
         board = Board(get_premiums_path())
         bag = TileBag(seed=42, variant="english")
         p1 = PlayerState(name="P1", rack=bag.draw(7))
         p2 = PlayerState(name="P2", rack=bag.draw(7))
         game = Game(board=board, bag=bag, players=[p1, p2])
 
+        for _ in range(4):
+            game.pass_turn()
+        assert not game.ended
+        assert game.consecutive_scoreless_turns == 4
         game.pass_turn()
-        game.pass_turn()
-        game.pass_turn()
+        assert not game.ended
+        assert game.consecutive_scoreless_turns == 5
+        assert game.current_index == 1
         game.pass_turn()
         assert game.ended
-        assert game.end_reason == GameEndReason.ALL_PLAYERS_PASSED_TWICE
+        assert game.current_index == 1
+        assert game.end_reason == GameEndReason.SIX_CONSECUTIVE_ZERO_SCORES
+
+    def test_mixed_pass_exchange_counts_scoreless_and_exchange_resets_pass_streak(
+        self,
+    ) -> None:
+        bag = TileBag(seed=42, variant="english")
+        players = [
+            PlayerState(name="P1", rack=bag.draw(7)),
+            PlayerState(name="P2", rack=bag.draw(7)),
+        ]
+        game = Game(board=Board(get_premiums_path()), bag=bag, players=players)
+
+        game.pass_turn()
+        assert players[0].pass_streak == 1
+        exchanged = players[1].rack.copy()
+        game.exchange_turn(exchanged)
+        assert players[1].pass_streak == 0
+        assert game.consecutive_scoreless_turns == 2
+        game.pass_turn()
+        assert players[0].pass_streak == 2
+        assert game.consecutive_scoreless_turns == 3
+
+    def test_scoring_move_at_five_resets_scoreless_counter(self) -> None:
+        bag = TileBag(seed=42, variant="english")
+        p1 = PlayerState(name="P1", rack=["S"])
+        p2 = PlayerState(name="P2", rack=bag.draw(7))
+        board = Board(get_premiums_path())
+        board.cells[7][7].letter = "A"
+        board.cells[7][8].letter = "T"
+        game = Game(board=board, bag=bag, players=[p1, p2])
+        game.consecutive_scoreless_turns = 5
+
+        points = game.play_move([Placement(7, 9, "S")])
+
+        assert points > 0
+        assert game.consecutive_scoreless_turns == 0
+        assert not game.ended
+
+    def test_invalid_exchange_and_place_preserve_scoreless_state(self) -> None:
+        bag = TileBag(seed=42, variant="english")
+        p1 = PlayerState(name="P1", rack=bag.draw(7), pass_streak=2)
+        p2 = PlayerState(name="P2", rack=bag.draw(7))
+        game = Game(board=Board(get_premiums_path()), bag=bag, players=[p1, p2])
+        game.consecutive_scoreless_turns = 5
+        rack_before = p1.rack.copy()
+        bag_before = bag.tiles.copy()
+
+        with pytest.raises(ValueError):
+            game.exchange_turn(["!"])
+        assert game.consecutive_scoreless_turns == 5
+        assert p1.pass_streak == 2
+        assert p1.rack == rack_before
+        assert bag.tiles == bag_before
+
+        with pytest.raises(ValueError):
+            game.play_move([Placement(0, 0, rack_before[0])])
+        assert game.consecutive_scoreless_turns == 5
+        assert p1.pass_streak == 2
+        assert game.board.get_letter(0, 0) is None
+
+    def test_scoreless_final_scoring_can_draw(self) -> None:
+        bag = TileBag(seed=42, variant="english")
+        bag.draw(bag.remaining())
+        p1 = PlayerState(name="P1", rack=["A"], score=10)
+        p2 = PlayerState(name="P2", rack=["A"], score=10)
+        game = Game(board=Board(get_premiums_path()), bag=bag, players=[p1, p2])
+
+        for _ in range(6):
+            game.pass_turn()
+
+        assert game.scores() == {"P1": 9, "P2": 9}
+        assert game.winner_name is None
+
+    def test_rack_empty_final_scoring_keeps_finisher_transfer(self) -> None:
+        p1 = PlayerState(name="P1", rack=[], score=20)
+        p2 = PlayerState(name="P2", rack=["B", "?"], score=12)
+
+        leftover = apply_final_scoring([p1, p2])
+
+        assert leftover == {"P1": 0, "P2": 3}
+        assert p1.score == 23
+        assert p2.score == 9
 
     def test_determine_end_reason(self) -> None:
         assert determine_end_reason(
             bag_remaining=0,
             racks={"P1": [], "P2": ["A"]},
-            pass_streaks={"P1": 0, "P2": 0},
+            consecutive_scoreless_turns=5,
             no_moves_available=False,
         ) == GameEndReason.BAG_EMPTY_AND_PLAYER_OUT
+        assert determine_end_reason(
+            bag_remaining=10,
+            racks={"P1": ["A"], "P2": ["B"]},
+            consecutive_scoreless_turns=5,
+            no_moves_available=False,
+        ) is None
 
 
 class TestDictionary:

@@ -33,7 +33,7 @@ class GameSession(models.Model):
     bag_seed = models.IntegerField(default=0)
 
     current_turn_slot = models.IntegerField(null=True, blank=True, default=None)
-    consecutive_passes = models.IntegerField(default=0)
+    consecutive_scoreless_turns = models.IntegerField(default=0)
 
     ai_model = models.ForeignKey(
         "catalog.AIModel",

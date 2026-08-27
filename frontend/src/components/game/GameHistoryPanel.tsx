@@ -50,6 +50,11 @@ const OUTCOME_META: Record<
     label: "Lost",
     className: "border-white/10 bg-white/6 text-stone-200",
   },
+  draw: {
+    emoji: "🤝",
+    label: "Draw",
+    className: "border-sky-300/18 bg-sky-400/10 text-sky-100",
+  },
   gave_up: {
     emoji: "🚪",
     label: "Gave up",

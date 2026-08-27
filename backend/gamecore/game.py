@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Iterable, Sequence
+from typing import Iterable, Mapping, Sequence
 
 from .board import Board
+from .legality import rack_covers_placements
 from .rack import consume_rack
 from .rules import (
     connected_to_existing,
@@ -20,7 +21,7 @@ from .types import Placement
 class GameEndReason(Enum):
     BAG_EMPTY_AND_PLAYER_OUT = auto()
     NO_MOVES_AVAILABLE = auto()
-    ALL_PLAYERS_PASSED_TWICE = auto()
+    SIX_CONSECUTIVE_ZERO_SCORES = auto()
 
 
 @dataclass
@@ -38,16 +39,16 @@ class PlayerState:
 def determine_end_reason(
     *,
     bag_remaining: int,
-    racks: dict[str, Sequence[str]],
-    pass_streaks: dict[str, int],
+    racks: Mapping[str, Sequence[str]],
+    consecutive_scoreless_turns: int,
     no_moves_available: bool,
 ) -> GameEndReason | None:
     if bag_remaining == 0 and any(len(rack) == 0 for rack in racks.values()):
         return GameEndReason.BAG_EMPTY_AND_PLAYER_OUT
     if no_moves_available:
         return GameEndReason.NO_MOVES_AVAILABLE
-    if racks and all(pass_streaks.get(name, 0) >= 2 for name in racks):
-        return GameEndReason.ALL_PLAYERS_PASSED_TWICE
+    if consecutive_scoreless_turns >= 6:
+        return GameEndReason.SIX_CONSECUTIVE_ZERO_SCORES
     return None
 
 
@@ -85,6 +86,8 @@ class Game:
         self.ended: bool = False
         self.end_reason: GameEndReason | None = None
         self.leftover_points: dict[str, int] = {}
+        self.winner_name: str | None = None
+        self.consecutive_scoreless_turns: int = 0
         self._no_moves_available: bool = False
 
     def current_player(self) -> PlayerState:
@@ -120,10 +123,13 @@ class Game:
                 raise ValueError("Cell is already occupied")
 
         placements_list = list(placements)
+        if not rack_covers_placements(player.rack, placements_list):
+            raise ValueError("Placements are not coverable by the current rack")
         self.board.place_letters(placements_list)
         words_found = self.board.build_words_for_move(placements_list)
         words_coords = [(wf.word, wf.letters) for wf in words_found]
         if not words_coords:
+            self.board.clear_letters(placements_list)
             raise ValueError("Move did not form any valid words")
 
         total, _ = score_words(self.board, placements_list, words_coords)
@@ -137,6 +143,7 @@ class Game:
             drawn = self.bag.draw(min(draw_count, self.bag.remaining()))
             player.rack.extend(drawn)
         player.pass_streak = 0
+        self.consecutive_scoreless_turns = 0
         self._no_moves_available = False
 
         self._evaluate_endgame()
@@ -149,8 +156,35 @@ class Game:
             raise RuntimeError("Game has already ended")
         player = self.current_player()
         player.pass_streak += 1
-        self._advance_turn()
+        self.consecutive_scoreless_turns += 1
         self._evaluate_endgame()
+        if not self.ended:
+            self._advance_turn()
+
+    def exchange_turn(self, letters: Sequence[str]) -> None:
+        """Exchange owned tiles without deciding whether exchange is strategic."""
+        if self.ended:
+            raise RuntimeError("Game has already ended")
+        if not letters:
+            raise ValueError("Exchange must contain at least one tile")
+        if self.bag.remaining() < 7:
+            raise ValueError("Not enough tiles in bag (need at least 7)")
+
+        player = self.current_player()
+        remaining = player.rack.copy()
+        for letter in letters:
+            try:
+                remaining.remove(letter)
+            except ValueError as exc:
+                raise ValueError(f"Letter '{letter}' not in rack") from exc
+
+        player.rack = remaining + self.bag.exchange(list(letters))
+        player.pass_streak = 0
+        self.consecutive_scoreless_turns += 1
+        self._no_moves_available = False
+        self._evaluate_endgame()
+        if not self.ended:
+            self._advance_turn()
 
     def declare_no_moves_available(self) -> None:
         if self.ended:
@@ -164,13 +198,16 @@ class Game:
         reason = determine_end_reason(
             bag_remaining=self.bag.remaining(),
             racks={p.name: p.rack for p in self.players},
-            pass_streaks={p.name: p.pass_streak for p in self.players},
+            consecutive_scoreless_turns=self.consecutive_scoreless_turns,
             no_moves_available=self._no_moves_available,
         )
         if reason is None:
             return
         self.end_reason = reason
         self.leftover_points = apply_final_scoring(self.players)
+        top_score = max(player.score for player in self.players)
+        leaders = [player.name for player in self.players if player.score == top_score]
+        self.winner_name = leaders[0] if len(leaders) == 1 else None
         self.ended = True
 
     def scores(self) -> dict[str, int]:

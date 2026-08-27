@@ -49,6 +49,7 @@ export interface GameState {
   blanks: { row: number; col: number }[];
   premium_used: { row: number; col: number }[];
   bag_remaining: number;
+  consecutive_scoreless_turns?: number;
   current_turn_slot: number | null;
   game_over: boolean;
   game_end_reason: string;
@@ -107,6 +108,7 @@ export type GameHistoryOutcome =
   | "in_progress"
   | "won"
   | "lost"
+  | "draw"
   | "gave_up"
   | "abandoned";
 
