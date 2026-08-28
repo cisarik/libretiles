@@ -9,7 +9,7 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
-    "probe:provider": "PROVIDER_PROBE_LIVE=1 vitest run src/lib/provider-capability.live.test.ts --reporter=basic"
+    "probe:provider": "PROVIDER_PROBE_LIVE=1 vitest run src/lib/provider-capability.live.test.ts"
   },
   "dependencies": {
     "@ai-sdk/openai": "^3.0.41",

@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import type { LanguageModel } from "ai";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -92,6 +93,18 @@ beforeEach(() => {
 });
 
 describe("provider capability probe", () => {
+  it("keeps the operator runner on Vitest's built-in default reporter", () => {
+    const packageJson = JSON.parse(
+      readFileSync(new URL("../../package.json", import.meta.url), "utf8"),
+    ) as { scripts?: Record<string, string> };
+    const script = packageJson.scripts?.["probe:provider"];
+
+    expect(script).toBe(
+      "PROVIDER_PROBE_LIVE=1 vitest run src/lib/provider-capability.live.test.ts",
+    );
+    expect(script).not.toMatch(/--reporter(?:=|\s)/);
+  });
+
   it("performs the exact named validate -> pong -> auto finish state machine", async () => {
     let validateResult: unknown;
     let firstStep: Record<string, unknown> | undefined;
