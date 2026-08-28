@@ -309,4 +309,34 @@ describe("consumeAIStream terminals", () => {
     });
     expect(JSON.stringify(events)).not.toMatch(/sk-live|Bearer |api[_-]?key/i);
   });
+
+  it("recognizes a backend-ranked placement as bounded terminal telemetry", async () => {
+    const events: AiTurnTelemetry[] = [];
+    const terminal = await consumeAIStream(
+      sseResponse([
+        eventLine({
+          type: "done",
+          ok: true,
+          action: "place",
+          completion_source: "backend_ranked_candidate",
+          repair_attempted: false,
+          terminal_cause: "backend_ranked_candidate",
+        }),
+      ]),
+      {
+        onCandidate: () => {},
+        onStatus: () => {},
+        onTelemetry: (item) => events.push(item),
+      },
+    );
+
+    expect(terminal.kind).toBe("done");
+    expect(events).toEqual([
+      expect.objectContaining({
+        completionSource: "backend_ranked_candidate",
+        repairAttempted: false,
+        terminalCause: "backend_ranked_candidate",
+      }),
+    ]);
+  });
 });

@@ -2,6 +2,7 @@ from django.urls import path
 
 from .views import (
     AIContextView,
+    AICandidatesView,
     AIExchangeView,
     AIPassView,
     AIPlayabilityView,
@@ -42,4 +43,5 @@ urlpatterns = [
     path("<str:game_id>/ai-exchange/", AIExchangeView.as_view(), name="game-ai-exchange"),
     path("<str:game_id>/ai-move/", ApplyAIMoveView.as_view(), name="game-ai-move"),
     path("<str:game_id>/ai-playability/", AIPlayabilityView.as_view(), name="game-ai-playability"),
+    path("<str:game_id>/ai-candidates/", AICandidatesView.as_view(), name="game-ai-candidates"),
 ]

@@ -49,6 +49,13 @@ vi.mock("@/lib/ai-runtimes", () => ({
             "This free rival is rate limited. Switch to another free rival or retry later.",
         };
       }
+      if (status === 404) {
+        return {
+          code: "provider_unavailable",
+          message:
+            "This free rival is temporarily unavailable. Switch to another free rival or retry later.",
+        };
+      }
     }
     return null;
   }),
@@ -59,6 +66,10 @@ import { POST } from "./route";
 
 const MODEL_ID = "google/gemma-4-31b-it:free";
 const PLACE_A = [{ row: 7, col: 7, letter: "A" }];
+const BACKEND_MOVE = [
+  { row: 7, col: 6, letter: "A" },
+  { row: 7, col: 7, letter: "T" },
+];
 const WITNESS = [
   { row: 7, col: 7, letter: "R" },
   { row: 7, col: 8, letter: "A" },
@@ -97,7 +108,7 @@ function request(overrides: Record<string, unknown> = {}): NextRequest {
 }
 
 type RouteSpec = {
-  body: unknown;
+  body: unknown | ((callIndex: number, init?: RequestInit) => unknown);
   status?: number;
 };
 
@@ -111,9 +122,36 @@ function defaultContext() {
   };
 }
 
+function rankedPayload(
+  score: number,
+  placements = BACKEND_MOVE,
+  complete = true,
+) {
+  return {
+    status: "found",
+    candidates: [
+      {
+        placements,
+        words: ["AT"],
+        score,
+        tiles_used: placements.length,
+        leave_value: 0,
+      },
+    ],
+    search: {
+      complete,
+      nodes: complete ? 100 : 500_000,
+      elapsed_ms: complete ? 5 : 750,
+      unique_placements: 1,
+      candidate_count: 1,
+    },
+  };
+}
+
 function mockBackend(routes: Record<string, RouteSpec> = {}) {
   const catalog = routes.catalog?.body ?? [{ provider: "openrouter", model_id: MODEL_ID }];
   const context = routes.context?.body ?? defaultContext();
+  const routeCalls = new Map<string, number>();
   const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
     void init;
     const url = String(input);
@@ -128,12 +166,38 @@ function mockBackend(routes: Record<string, RouteSpec> = {}) {
       "/ai-move/",
       "/ai-pass/",
       "/ai-exchange/",
+      "/ai-candidates/",
       "/ai-playability/",
       "/ai-model/",
     ];
     for (const suffix of suffixes) {
-      if (url.endsWith(suffix) && routes[suffix]) {
-        return jsonResponse(routes[suffix].body, routes[suffix].status ?? 200);
+      if (url.endsWith(suffix)) {
+        const spec =
+          routes[suffix] ??
+          (suffix === "/ai-candidates/"
+            ? {
+                body: {
+                  status: "none",
+                  candidates: [],
+                  search: {
+                    complete: true,
+                    nodes: 1,
+                    elapsed_ms: 1,
+                    unique_placements: 0,
+                    candidate_count: 0,
+                  },
+                },
+              }
+            : null);
+        if (spec) {
+          const callIndex = routeCalls.get(suffix) ?? 0;
+          routeCalls.set(suffix, callIndex + 1);
+          const responseBody =
+            typeof spec.body === "function"
+              ? spec.body(callIndex, init)
+              : spec.body;
+          return jsonResponse(responseBody, spec.status ?? 200);
+        }
       }
     }
     throw new Error(`Unexpected backend request: ${url}`);
@@ -266,6 +330,217 @@ describe("POST /api/ai/move", () => {
     const { done } = await runRoute();
     expect(done?.action).toBe("place");
     expect(done?.completion_source).toBe("provider_candidate");
+  });
+
+  it("prefers a backend score 46 move over a provider score 10 move", async () => {
+    const fetchMock = mockBackend({
+      "/validate-move/": {
+        body: { valid: true, total_score: 10, words: [{ word: "A", valid: true }] },
+      },
+      "/ai-candidates/": { body: rankedPayload(46) },
+      "/ai-move/": {
+        body: { ok: true, action: "place", points: 46, words: [{ word: "AT", score: 46 }] },
+      },
+    });
+
+    const { done } = await runRoute();
+
+    expect(done?.completion_source).toBe("backend_ranked_candidate");
+    expect(done?.best_score).toBe(46);
+    const moveCall = fetchMock.mock.calls.find(([url]) =>
+      String(url).endsWith("/ai-move/"),
+    );
+    expect(JSON.parse(String(moveCall?.[1]?.body))).toMatchObject({
+      placements: BACKEND_MOVE,
+      ai_metadata: { completion_source: "backend_ranked_candidate" },
+    });
+  });
+
+  it("prefers a provider score 50 move over a backend score 46 move", async () => {
+    const fetchMock = mockBackend({
+      "/validate-move/": {
+        body: { valid: true, total_score: 50, words: [{ word: "A", valid: true }] },
+      },
+      "/ai-candidates/": { body: rankedPayload(46) },
+      "/ai-move/": {
+        body: { ok: true, action: "place", points: 50, words: [{ word: "A", score: 50 }] },
+      },
+    });
+
+    const { done } = await runRoute();
+
+    expect(done?.completion_source).toBe("provider_candidate");
+    expect(done?.best_score).toBe(50);
+    const moveCall = fetchMock.mock.calls.find(([url]) =>
+      String(url).endsWith("/ai-move/"),
+    );
+    expect(JSON.parse(String(moveCall?.[1]?.body))).toMatchObject({
+      placements: PLACE_A,
+      ai_metadata: { completion_source: "provider_candidate" },
+    });
+  });
+
+  it("uses server order when backend and provider scores are equal", async () => {
+    const fetchMock = mockBackend({
+      "/validate-move/": {
+        body: { valid: true, total_score: 46, words: [{ word: "A", valid: true }] },
+      },
+      "/ai-candidates/": { body: rankedPayload(46) },
+      "/ai-move/": {
+        body: { ok: true, action: "place", points: 46, words: [{ word: "AT", score: 46 }] },
+      },
+    });
+
+    const { done } = await runRoute();
+
+    expect(done?.completion_source).toBe("backend_ranked_candidate");
+    const moveCall = fetchMock.mock.calls.find(([url]) =>
+      String(url).endsWith("/ai-move/"),
+    );
+    expect(JSON.parse(String(moveCall?.[1]?.body)).placements).toEqual(BACKEND_MOVE);
+  });
+
+  it("resolves a normal prose-only generation with a ranked backend move", async () => {
+    generateTextMock.mockResolvedValue({ text: "I would play AT.", steps: [stepFinish(0)] });
+    const fetchMock = mockBackend({
+      "/ai-candidates/": { body: rankedPayload(46) },
+      "/ai-move/": {
+        body: { ok: true, action: "place", points: 46, words: [{ word: "AT", score: 46 }] },
+      },
+    });
+
+    const { done } = await runRoute();
+
+    expect(done?.completion_source).toBe("backend_ranked_candidate");
+    expect(fetchUrls(fetchMock).filter((url) => url.endsWith("/ai-candidates/"))).toHaveLength(1);
+    expect(fetchUrls(fetchMock).some((url) => url.endsWith("/ai-playability/"))).toBe(false);
+  });
+
+  it("uses a ranked candidate even when the bounded backend search is incomplete", async () => {
+    generateTextMock.mockResolvedValue({ text: "search ended", steps: [stepFinish(0)] });
+    mockBackend({
+      "/ai-candidates/": { body: rankedPayload(46, BACKEND_MOVE, false) },
+      "/ai-move/": {
+        body: { ok: true, action: "place", points: 46, words: [{ word: "AT", score: 46 }] },
+      },
+    });
+
+    const { done } = await runRoute();
+
+    expect(done?.completion_source).toBe("backend_ranked_candidate");
+    expect(done?.action).toBe("place");
+  });
+
+  it.each([
+    ["none", { status: "none", candidates: [] }],
+    ["indeterminate", { status: "indeterminate", candidates: [] }],
+    ["error", { ok: false, error: "ranked search unavailable" }],
+  ])("keeps old playability authority when ranked status is %s", async (_label, payload) => {
+    generateTextMock.mockResolvedValue({ text: "no tool", steps: [stepFinish(0)] });
+    const fetchMock = mockBackend({
+      "/ai-candidates/": { body: payload },
+      "/ai-playability/": {
+        body: {
+          status: "none",
+          witness: null,
+          exchange_allowed: false,
+          exchange_letters: [],
+          search: { complete: true, nodes: 1, elapsed_ms: 1 },
+        },
+      },
+      "/ai-pass/": { body: { ok: true, action: "pass" } },
+    });
+
+    const { done } = await runRoute();
+
+    expect(done?.completion_source).toBe("genuine_no_move_pass");
+    expect(fetchUrls(fetchMock).filter((url) => url.endsWith("/ai-candidates/"))).toHaveLength(1);
+    expect(fetchUrls(fetchMock).filter((url) => url.endsWith("/ai-playability/"))).toHaveLength(1);
+  });
+
+  it("keeps endpoint failures in the provider fallback lane without backend-only play", async () => {
+    generateTextMock.mockRejectedValue(
+      Object.assign(new Error("No endpoints found for stealth/model"), { statusCode: 404 }),
+    );
+    const fetchMock = mockBackend({
+      "/ai-candidates/": { body: rankedPayload(46) },
+    });
+
+    const { done, error } = await collectEvents();
+
+    expect(done).toBeUndefined();
+    expect(error?.code).toBe("provider_unavailable");
+    expect(fetchUrls(fetchMock).some((url) => url.endsWith("/ai-candidates/"))).toBe(false);
+    expect(fetchUrls(fetchMock).some((url) => url.endsWith("/ai-move/"))).toBe(false);
+  });
+
+  it("falls through a stale ranked candidate to the old playability witness", async () => {
+    generateTextMock.mockResolvedValue({ text: "no tool", steps: [stepFinish(0)] });
+    const fetchMock = mockBackend({
+      "/ai-candidates/": { body: rankedPayload(46) },
+      "/ai-move/": {
+        body: (callIndex: number) =>
+          callIndex === 0
+            ? { ok: false, code: "state_conflict", error: "stale" }
+            : {
+                ok: true,
+                action: "place",
+                points: 8,
+                words: [{ word: "RATE", score: 8 }],
+              },
+      },
+      "/ai-playability/": {
+        body: {
+          status: "found",
+          witness: { placements: WITNESS, words: ["RATE"], total_score: 8 },
+          exchange_allowed: false,
+          exchange_letters: [],
+          search: { complete: true, nodes: 4, elapsed_ms: 2 },
+        },
+      },
+    });
+
+    const { done } = await runRoute(request({ max_steps: 5 }));
+
+    expect(done?.completion_source).toBe("backend_witness_rescue");
+    expect(fetchUrls(fetchMock).filter((url) => url.endsWith("/ai-move/"))).toHaveLength(2);
+    expect(fetchUrls(fetchMock).filter((url) => url.endsWith("/ai-candidates/"))).toHaveLength(1);
+  });
+
+  it("merges ranked choices on a generic error only after tracking a valid provider move", async () => {
+    generateTextMock.mockImplementation(async (opts) => {
+      await invokeValidateMove(opts);
+      throw new Error("generic SDK failure");
+    });
+    const fetchMock = mockBackend({
+      "/validate-move/": {
+        body: { valid: true, total_score: 10, words: [{ word: "A", valid: true }] },
+      },
+      "/ai-candidates/": { body: rankedPayload(46) },
+      "/ai-move/": {
+        body: { ok: true, action: "place", points: 46, words: [{ word: "AT", score: 46 }] },
+      },
+    });
+
+    const { done } = await runRoute();
+
+    expect(done?.completion_source).toBe("backend_ranked_candidate");
+    expect(done?.terminal_cause).toBe("generic_error_fallback");
+    expect(fetchUrls(fetchMock).filter((url) => url.endsWith("/ai-candidates/"))).toHaveLength(1);
+  });
+
+  it("does not use a ranked backend move after a generic error with no tracked provider move", async () => {
+    generateTextMock.mockRejectedValue(new Error("generic SDK failure"));
+    const fetchMock = mockBackend({
+      "/ai-candidates/": { body: rankedPayload(46) },
+    });
+
+    const { done, error } = await collectEvents();
+
+    expect(done).toBeUndefined();
+    expect(error?.error).toBe("AI move failed");
+    expect(fetchUrls(fetchMock).some((url) => url.endsWith("/ai-candidates/"))).toBe(false);
+    expect(fetchUrls(fetchMock).some((url) => url.endsWith("/ai-move/"))).toBe(false);
   });
 
   it("applies a pass without a billing request after a genuine none probe", async () => {

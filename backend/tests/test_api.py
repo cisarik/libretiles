@@ -1445,6 +1445,125 @@ class GameAPITest(TestCase):
         missing = outsider.get(f"/api/game/{game_id}/ai-playability/")
         assert missing.status_code == 404
 
+    def test_ai_candidates_are_ranked_revalidatable_and_hide_private_state(self) -> None:
+        game_id, session = self._ai_turn_game(rack=list("QUIZERS"))
+
+        response = self.client.get(f"/api/game/{game_id}/ai-candidates/")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "found"
+        assert 1 <= len(data["candidates"]) <= 8
+        assert [item["score"] for item in data["candidates"]] == sorted(
+            (item["score"] for item in data["candidates"]), reverse=True
+        )
+        assert set(data["search"]) == {
+            "complete",
+            "nodes",
+            "elapsed_ms",
+            "unique_placements",
+            "candidate_count",
+        }
+        serialized = str(data).casefold()
+        assert "rack" not in serialized
+        assert "bag_tiles" not in serialized
+        assert "exception" not in serialized
+
+        for candidate in data["candidates"]:
+            assert set(candidate) == {"placements", "words", "score", "tiles_used"}
+            validation = self.client.post(
+                f"/api/game/{game_id}/validate-move/",
+                {"placements": candidate["placements"], "rack_owner": "ai"},
+                format="json",
+            )
+            assert validation.status_code == 200
+            assert validation.json()["valid"] is True
+            assert validation.json()["total_score"] == candidate["score"]
+
+        session.refresh_from_db()
+        assert session.current_turn_slot == 1
+        assert not Move.objects.filter(game=session).exists()
+
+    @patch("game.services.find_ranked_scoring_moves")
+    def test_ai_candidates_use_fixed_server_budgets_and_incomplete_found_is_usable(
+        self,
+        mock_ranked: Any,
+    ) -> None:
+        from gamecore.move_search import RankedMoveCandidate, RankedSearchResult
+        from gamecore.types import Placement
+
+        placement = Placement(7, 7, "A")
+        mock_ranked.return_value = RankedSearchResult(
+            status="found",
+            candidates=(
+                RankedMoveCandidate(
+                    placements=(placement,),
+                    words=("AT",),
+                    total_score=46,
+                    tiles_used=1,
+                    leave_value=123,
+                    rack_out=False,
+                    canonical_key=((7, 7, "A", ""),),
+                ),
+            ),
+            nodes=500_000,
+            elapsed_ms=750,
+            complete=False,
+            unique_placements=25_000,
+        )
+        game_id, _session = self._ai_turn_game(rack=["A"])
+
+        response = self.client.get(
+            f"/api/game/{game_id}/ai-candidates/?top_k=20&max_nodes=1&max_elapsed_ms=1"
+        )
+
+        assert response.status_code == 200
+        assert response.json()["status"] == "found"
+        assert response.json()["search"]["complete"] is False
+        assert response.json()["candidates"][0]["score"] == 46
+        kwargs = mock_ranked.call_args.kwargs
+        assert "top_k" not in kwargs
+        assert "max_nodes" not in kwargs
+        assert "max_elapsed_ms" not in kwargs
+        assert "max_unique_placements" not in kwargs
+
+    @patch("game.services.find_ranked_scoring_moves")
+    def test_ai_candidates_sanitize_search_exceptions(
+        self,
+        mock_ranked: Any,
+    ) -> None:
+        mock_ranked.side_effect = RuntimeError("secret-rack-and-token")
+        game_id, _session = self._ai_turn_game(rack=["A", "T"])
+
+        response = self.client.get(f"/api/game/{game_id}/ai-candidates/")
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "status": "indeterminate",
+            "candidates": [],
+            "search": {
+                "complete": False,
+                "nodes": 0,
+                "elapsed_ms": 0,
+                "unique_placements": 0,
+                "candidate_count": 0,
+            },
+        }
+        assert "secret-rack-and-token" not in response.content.decode()
+
+    def test_ai_candidates_require_participant_and_active_ai_turn(self) -> None:
+        game_id, session = self._ai_turn_game(rack=["A", "T"])
+        outsider = APIClient()
+        outsider.force_authenticate(user=self.user2)
+
+        assert outsider.get(f"/api/game/{game_id}/ai-candidates/").status_code == 404
+
+        session.current_turn_slot = 0
+        session.save(update_fields=["current_turn_slot"])
+        conflict = self.client.get(f"/api/game/{game_id}/ai-candidates/")
+        assert conflict.status_code == 409
+        assert conflict.json()["code"] == "state_conflict"
+
     def test_ai_pass_and_exchange_guard_matrix(self) -> None:
         found_id, found_session = self._ai_turn_game(rack=["A", "T", "C", "D", "E", "F", "G"])
         blocked_pass = self.client.post(f"/api/game/{found_id}/ai-pass/")

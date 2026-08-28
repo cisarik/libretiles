@@ -23,7 +23,12 @@ from gamecore.board import BOARD_SIZE, Board
 from gamecore.fastdict import PrefixIndex, load_prefix_index
 from gamecore.game import PlayerState, apply_final_scoring, determine_end_reason
 from gamecore.legality import evaluate_scoring_move, placements_to_dicts
-from gamecore.move_search import SearchResult, find_legal_scoring_move
+from gamecore.move_search import (
+    RankedSearchResult,
+    SearchResult,
+    find_legal_scoring_move,
+    find_ranked_scoring_moves,
+)
 from gamecore.rack import consume_rack
 from gamecore.rules import (
     connected_to_existing,
@@ -34,7 +39,7 @@ from gamecore.rules import (
 )
 from gamecore.scoring import apply_premium_consumption, score_words
 from gamecore.state import build_ai_state_dict
-from gamecore.tiles import TileBag
+from gamecore.tiles import TileBag, get_tile_points
 from gamecore.types import Placement
 
 from .models import ChatMessage, GameSession, Move, PlayerSlot
@@ -614,6 +619,69 @@ def get_ai_playability(game_id: str, user_id: int) -> dict[str, Any]:
         return {"ok": False, "error": error, "code": "state_conflict"}
     result = _probe_ai_playability(session, ai_slot)
     return _playability_payload(session, ai_slot, result)
+
+
+def _probe_ai_ranked_candidates(
+    session: GameSession,
+    player_slot: PlayerSlot,
+) -> RankedSearchResult:
+    board = _board_from_session(session)
+    rack = list(player_slot.rack) if isinstance(player_slot.rack, list) else []
+    try:
+        index = _get_prefix_index()
+        return find_ranked_scoring_moves(
+            board,
+            rack,
+            is_word=_is_word,
+            has_prefix=index.has_prefix,
+            bag_count=len(session.bag_tiles),
+            tile_points=get_tile_points(session.variant_slug),
+        )
+    except Exception:
+        return RankedSearchResult(
+            status="indeterminate",
+            candidates=(),
+            nodes=0,
+            elapsed_ms=0,
+            complete=False,
+            unique_placements=0,
+        )
+
+
+def _ranked_candidates_payload(result: RankedSearchResult) -> dict[str, Any]:
+    return {
+        "ok": True,
+        "status": result.status,
+        "candidates": [
+            {
+                "placements": placements_to_dicts(candidate.placements),
+                "words": list(candidate.words),
+                "score": candidate.total_score,
+                "tiles_used": candidate.tiles_used,
+            }
+            for candidate in result.candidates
+        ],
+        "search": {
+            "complete": result.complete,
+            "nodes": result.nodes,
+            "elapsed_ms": result.elapsed_ms,
+            "unique_placements": result.unique_placements,
+            "candidate_count": len(result.candidates),
+        },
+    }
+
+
+def get_ai_candidates(game_id: str, user_id: int) -> dict[str, Any]:
+    """Return fixed-budget ranked moves for the active AI turn.
+
+    This quality endpoint is intentionally separate from ``ai-playability``;
+    no ranked status can authorize pass or exchange.
+    """
+    session, _human_slot, ai_slot = _load_vs_ai_session(game_id=game_id, user_id=user_id)
+    error = _check_active_turn(session, ai_slot)
+    if error:
+        return {"ok": False, "error": error, "code": "state_conflict"}
+    return _ranked_candidates_payload(_probe_ai_ranked_candidates(session, ai_slot))
 
 
 def _submit_move_locked(

@@ -11,6 +11,7 @@ from catalog.selection import (
 COMPLETION_SOURCES = frozenset(
     {
         "provider_candidate",
+        "backend_ranked_candidate",
         "repair_candidate",
         "backend_witness_rescue",
         "genuine_no_move_exchange",

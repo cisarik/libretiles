@@ -14,7 +14,15 @@ from gamecore.legality import (
     REASON_RACK_MISMATCH,
     evaluate_scoring_move,
 )
-from gamecore.move_search import find_legal_scoring_move
+from gamecore.move_search import (
+    DEFAULT_RANKED_MAX_ELAPSED_MS,
+    DEFAULT_RANKED_MAX_NODES,
+    DEFAULT_RANKED_MAX_UNIQUE_PLACEMENTS,
+    DEFAULT_RANKED_TOP_K,
+    MAX_RANKED_TOP_K,
+    find_legal_scoring_move,
+    find_ranked_scoring_moves,
+)
 from gamecore.types import Placement
 
 _DICT_PATH = get_assets_path() / "dicts" / "collins2019.txt"
@@ -211,3 +219,190 @@ def test_board_boundaries(
             assert 0 <= placement.row <= 14
             assert 0 <= placement.col <= 14
         assert evaluate_scoring_move(board, ["S"], result.witness, is_word).ok
+
+
+def _board_snapshot(board: Board) -> tuple[tuple[object, ...], ...]:
+    return tuple(
+        tuple((cell.letter, cell.is_blank, cell.premium, cell.premium_used) for cell in row)
+        for row in board.cells
+    )
+
+
+def test_ranked_search_preserves_first_witness_identity_and_board(
+    dictionary: tuple[Callable[[str], bool], Callable[[str], bool]],
+) -> None:
+    is_word, has_prefix = dictionary
+    board = _board()
+    before = _board_snapshot(board)
+
+    witness = find_legal_scoring_move(board, ["A", "T"], is_word, has_prefix)
+    ranked = find_ranked_scoring_moves(
+        board,
+        ["A", "T"],
+        is_word,
+        has_prefix,
+        bag_count=86,
+        max_elapsed_ms=10_000,
+    )
+
+    assert witness.witness == (
+        Placement(7, 6, "A"),
+        Placement(7, 7, "T"),
+    )
+    assert ranked.status == "found"
+    assert ranked.complete is True
+    assert _board_snapshot(board) == before
+    for candidate in ranked.candidates:
+        certified = evaluate_scoring_move(board, ["A", "T"], candidate.placements, is_word)
+        assert certified.ok
+        assert certified.total_score == candidate.total_score
+
+
+def test_ranked_search_is_deterministic_and_immediate_score_dominates(
+    dictionary: tuple[Callable[[str], bool], Callable[[str], bool]],
+) -> None:
+    is_word, has_prefix = dictionary
+    board = _board()
+    kwargs = {
+        "bag_count": 86,
+        "max_nodes": 1_000_000,
+        "max_elapsed_ms": 10_000,
+    }
+    first = find_ranked_scoring_moves(
+        board, list("QUIZERS"), is_word, has_prefix, **kwargs
+    )
+    second = find_ranked_scoring_moves(
+        board, list("QUIZERS"), is_word, has_prefix, **kwargs
+    )
+
+    assert first.status == second.status
+    assert first.complete == second.complete
+    assert first.nodes == second.nodes
+    assert first.unique_placements == second.unique_placements
+    assert first.candidates == second.candidates
+    assert first.candidates[0].total_score == 66
+    assert first.candidates[0].total_score > find_legal_scoring_move(
+        board, list("QUIZERS"), is_word, has_prefix
+    ).total_score
+    assert [candidate.total_score for candidate in first.candidates] == sorted(
+        (candidate.total_score for candidate in first.candidates), reverse=True
+    )
+
+
+def test_ranked_search_canonical_dedupe_keeps_blank_identity(
+    dictionary: tuple[Callable[[str], bool], Callable[[str], bool]],
+) -> None:
+    is_word, has_prefix = dictionary
+    result = find_ranked_scoring_moves(
+        _board(),
+        ["A", "?"],
+        is_word,
+        has_prefix,
+        bag_count=86,
+        top_k=MAX_RANKED_TOP_K,
+        max_nodes=1_000_000,
+        max_elapsed_ms=10_000,
+    )
+
+    keys = [candidate.canonical_key for candidate in result.candidates]
+    assert len(keys) == len(set(keys))
+    aa_keys = [
+        key
+        for candidate, key in zip(result.candidates, keys, strict=True)
+        if candidate.words == ("AA",)
+    ]
+    assert len(aa_keys) >= 2
+    assert any(any(item[2] == "?" and item[3] == "A" for item in key) for key in aa_keys)
+
+
+def test_ranked_status_contract_for_found_none_and_caps(
+    dictionary: tuple[Callable[[str], bool], Callable[[str], bool]],
+) -> None:
+    is_word, has_prefix = dictionary
+    board = _board()
+
+    incomplete_found = find_ranked_scoring_moves(
+        board,
+        ["A", "T"],
+        is_word,
+        has_prefix,
+        bag_count=86,
+        max_nodes=4,
+        max_elapsed_ms=10_000,
+    )
+    assert incomplete_found.status == "found"
+    assert incomplete_found.complete is False
+    assert incomplete_found.candidates
+
+    exhaustive_none = find_ranked_scoring_moves(
+        board,
+        ["Q"],
+        is_word,
+        has_prefix,
+        bag_count=86,
+        max_elapsed_ms=10_000,
+    )
+    assert exhaustive_none.status == "none"
+    assert exhaustive_none.complete is True
+
+    capped_empty = find_ranked_scoring_moves(
+        board,
+        list("QUIZERS"),
+        is_word,
+        has_prefix,
+        bag_count=86,
+        max_nodes=1,
+        max_elapsed_ms=10_000,
+    )
+    assert capped_empty.status == "indeterminate"
+    assert capped_empty.complete is False
+    assert capped_empty.candidates == ()
+
+
+def test_ranked_search_has_fixed_caps_and_hard_top_k_limit(
+    dictionary: tuple[Callable[[str], bool], Callable[[str], bool]],
+) -> None:
+    is_word, has_prefix = dictionary
+    assert DEFAULT_RANKED_TOP_K == 8
+    assert MAX_RANKED_TOP_K == 20
+    assert DEFAULT_RANKED_MAX_NODES == 500_000
+    assert DEFAULT_RANKED_MAX_ELAPSED_MS == 750
+    assert DEFAULT_RANKED_MAX_UNIQUE_PLACEMENTS == 25_000
+
+    result = find_ranked_scoring_moves(
+        _board(),
+        list("QUIZERS"),
+        is_word,
+        has_prefix,
+        bag_count=86,
+        top_k=999,
+        max_nodes=1_000_000,
+        max_elapsed_ms=10_000,
+    )
+
+    assert result.status == "found"
+    assert len(result.candidates) == MAX_RANKED_TOP_K
+
+
+def test_ranked_midgame_prefers_stronger_collins_move(
+    dictionary: tuple[Callable[[str], bool], Callable[[str], bool]],
+) -> None:
+    is_word, has_prefix = dictionary
+    board = _board((7, 7, "A"), (7, 8, "T"))
+    rack = list("QUIZERS")
+
+    witness = find_legal_scoring_move(board, rack, is_word, has_prefix)
+    ranked = find_ranked_scoring_moves(
+        board,
+        rack,
+        is_word,
+        has_prefix,
+        bag_count=50,
+        max_nodes=1_000_000,
+        max_elapsed_ms=10_000,
+    )
+
+    assert witness.status == "found"
+    assert ranked.status == "found"
+    assert ranked.candidates[0].total_score == 38
+    assert ranked.candidates[0].total_score > witness.total_score

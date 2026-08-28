@@ -351,3 +351,17 @@ class AIPlayabilityView(APIView):
             return Response(result, status=_action_error_status(result))
         payload = {key: value for key, value in result.items() if key != "ok"}
         return Response(payload)
+
+
+class AICandidatesView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, game_id):  # type: ignore[no-untyped-def]
+        try:
+            result = services.get_ai_candidates(game_id, request.user.id)
+        except Exception as error:
+            return _service_error_response(error)
+        if not result.get("ok"):
+            return Response(result, status=_action_error_status(result))
+        payload = {key: value for key, value in result.items() if key != "ok"}
+        return Response(payload)

@@ -1,8 +1,9 @@
-"""Deterministic bounded search for one legal scoring-move witness.
+"""Deterministic bounded searches for legal scoring moves.
 
-Returns the first witness that the shared legality evaluator re-certifies.
-`none` is returned only after exhaustive traversal. Caps yield `indeterminate`,
-which must never authorize pass or exchange.
+The original witness search deliberately keeps its first-match semantics because
+it is the pass/exchange safety authority.  The ranked search is a separate,
+stricter quality path: it re-certifies and ranks a bounded set of legal moves,
+but its result never authorizes a non-scoring action.
 """
 
 from __future__ import annotations
@@ -10,18 +11,25 @@ from __future__ import annotations
 import string
 import time
 from collections import Counter
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
 from .board import BOARD_SIZE, Board
 from .legality import evaluate_scoring_move
+from .tiles import get_tile_points
 from .types import Direction, Placement
 
 DEFAULT_MAX_NODES = 2_000_000
 DEFAULT_MAX_ELAPSED_MS = 2000
+DEFAULT_RANKED_TOP_K = 8
+MAX_RANKED_TOP_K = 20
+DEFAULT_RANKED_MAX_NODES = 500_000
+DEFAULT_RANKED_MAX_ELAPSED_MS = 750
+DEFAULT_RANKED_MAX_UNIQUE_PLACEMENTS = 25_000
 CENTER = (7, 7)
 SearchStatus = Literal["found", "none", "indeterminate"]
+CanonicalPlacementKey = tuple[tuple[int, int, str, str], ...]
 _BLANK_LETTERS = string.ascii_uppercase
 _DELTA = {
     Direction.ACROSS: (0, 1),
@@ -38,6 +46,27 @@ class SearchResult:
     nodes: int
     elapsed_ms: int
     complete: bool
+
+
+@dataclass(frozen=True)
+class RankedMoveCandidate:
+    placements: tuple[Placement, ...]
+    words: tuple[str, ...]
+    total_score: int
+    tiles_used: int
+    leave_value: int
+    rack_out: bool
+    canonical_key: CanonicalPlacementKey
+
+
+@dataclass(frozen=True)
+class RankedSearchResult:
+    status: SearchStatus
+    candidates: tuple[RankedMoveCandidate, ...]
+    nodes: int
+    elapsed_ms: int
+    complete: bool
+    unique_placements: int
 
 
 def find_legal_scoring_move(
@@ -59,6 +88,40 @@ def find_legal_scoring_move(
         max_elapsed_ms=max_elapsed_ms,
     )
     return searcher.run()
+
+
+def find_ranked_scoring_moves(
+    board: Board,
+    rack: Sequence[str],
+    is_word: Callable[[str], bool],
+    has_prefix: Callable[[str], bool],
+    *,
+    bag_count: int,
+    top_k: int = DEFAULT_RANKED_TOP_K,
+    max_nodes: int = DEFAULT_RANKED_MAX_NODES,
+    max_elapsed_ms: int = DEFAULT_RANKED_MAX_ELAPSED_MS,
+    max_unique_placements: int = DEFAULT_RANKED_MAX_UNIQUE_PLACEMENTS,
+    tile_points: Mapping[str, int] | None = None,
+) -> RankedSearchResult:
+    """Return the strongest re-certified moves found within fixed bounds.
+
+    A capped traversal with at least one candidate is still ``found`` and safe
+    to play.  With no candidate, only an exhaustive traversal returns ``none``;
+    any cap returns ``indeterminate``.
+    """
+    searcher = _RankedSearcher(
+        board=board,
+        rack=rack,
+        is_word=is_word,
+        has_prefix=has_prefix,
+        bag_count=max(0, bag_count),
+        top_k=max(1, min(int(top_k), MAX_RANKED_TOP_K)),
+        max_nodes=max_nodes,
+        max_elapsed_ms=max_elapsed_ms,
+        max_unique_placements=max_unique_placements,
+        tile_points=tile_points,
+    )
+    return searcher.run_ranked()
 
 
 class _Searcher:
@@ -360,3 +423,170 @@ class _Searcher:
             placed.pop()
             if self._stop():
                 return
+
+
+class _RankedSearcher(_Searcher):
+    """Full traversal variant kept separate from first-witness semantics."""
+
+    def __init__(
+        self,
+        *,
+        board: Board,
+        rack: Sequence[str],
+        is_word: Callable[[str], bool],
+        has_prefix: Callable[[str], bool],
+        bag_count: int,
+        top_k: int,
+        max_nodes: int,
+        max_elapsed_ms: int,
+        max_unique_placements: int,
+        tile_points: Mapping[str, int] | None,
+    ) -> None:
+        super().__init__(
+            board=board,
+            rack=rack,
+            is_word=is_word,
+            has_prefix=has_prefix,
+            max_nodes=max_nodes,
+            max_elapsed_ms=max_elapsed_ms,
+        )
+        self.rack_tiles = tuple(rack)
+        self.bag_count = bag_count
+        self.top_k = top_k
+        self.max_unique_placements = max_unique_placements
+        self.tile_points = dict(tile_points) if tile_points is not None else get_tile_points()
+        self.seen: set[CanonicalPlacementKey] = set()
+        self.ranked: list[RankedMoveCandidate] = []
+
+    def run_ranked(self) -> RankedSearchResult:
+        if self.max_unique_placements <= 0:
+            self.capped = True
+            return self._ranked_finish()
+        if self.rack_size == 0 or self.max_nodes <= 0:
+            if self.max_nodes <= 0:
+                self.capped = True
+            return self._ranked_finish()
+        if self._board_empty():
+            self._search_first_move()
+        else:
+            self._search_connected()
+        return self._ranked_finish()
+
+    def _stop(self) -> bool:
+        if self.capped:
+            return True
+        if self.nodes >= self.max_nodes:
+            self.capped = True
+            return True
+        if self._elapsed_ms() >= self.max_elapsed_ms:
+            self.capped = True
+            return True
+        return False
+
+    @staticmethod
+    def _canonical_key(placements: Sequence[Placement]) -> CanonicalPlacementKey:
+        return tuple(
+            sorted(
+                (
+                    placement.row,
+                    placement.col,
+                    placement.letter,
+                    placement.blank_as or "",
+                )
+                for placement in placements
+            )
+        )
+
+    def _leave_components(self, placements: Sequence[Placement]) -> tuple[int, int, int]:
+        remaining = Counter(self.rack_tiles)
+        for placement in placements:
+            tile = "?" if placement.letter == "?" else placement.letter
+            remaining[tile] -= 1
+            if remaining[tile] <= 0:
+                del remaining[tile]
+
+        point_burden = sum(
+            self.tile_points.get(tile, 0) * count for tile, count in remaining.items()
+        )
+        duplicate_excess = sum(max(count - 1, 0) for count in remaining.values())
+        vowels = sum(remaining.get(vowel, 0) for vowel in "AEIOU")
+        consonants = sum(
+            count
+            for tile, count in remaining.items()
+            if tile != "?" and tile not in "AEIOU"
+        )
+        imbalance = abs(vowels - consonants)
+        return point_burden, duplicate_excess, imbalance
+
+    @staticmethod
+    def _rank_key(candidate: RankedMoveCandidate) -> tuple[object, ...]:
+        return (
+            -candidate.total_score,
+            -(1 if candidate.rack_out else 0),
+            candidate.leave_value,
+            -candidate.tiles_used,
+            candidate.canonical_key,
+        )
+
+    def _try_complete(self, prefix: str, placed: list[Placement], first_move: bool) -> None:
+        if self._stop() or not placed or len(prefix) < 2:
+            return
+        if first_move and not any((p.row, p.col) == CENTER for p in placed):
+            return
+        if not self.is_word(prefix):
+            return
+
+        canonical_key = self._canonical_key(placed)
+        if canonical_key in self.seen:
+            return
+        if len(self.seen) >= self.max_unique_placements:
+            self.capped = True
+            return
+
+        certified = evaluate_scoring_move(
+            self.board,
+            self.rack_tiles,
+            placed,
+            self.is_word,
+        )
+        if not certified.ok:
+            return
+        self.seen.add(canonical_key)
+
+        point_burden, duplicate_excess, imbalance = self._leave_components(placed)
+        leave_value = min(
+            point_burden * 100 + duplicate_excess * 10 + imbalance,
+            10_000,
+        )
+        tiles_used = len(placed)
+        candidate = RankedMoveCandidate(
+            placements=tuple(sorted(placed, key=lambda item: (item.row, item.col))),
+            words=certified.words,
+            total_score=certified.total_score,
+            tiles_used=tiles_used,
+            leave_value=leave_value,
+            rack_out=self.bag_count == 0 and tiles_used == len(self.rack_tiles),
+            canonical_key=canonical_key,
+        )
+        self.ranked.append(candidate)
+        self.ranked.sort(key=self._rank_key)
+        if len(self.ranked) > self.top_k:
+            self.ranked.pop()
+
+    def _ranked_finish(self) -> RankedSearchResult:
+        elapsed_ms = self._elapsed_ms()
+        candidates = tuple(sorted(self.ranked, key=self._rank_key))
+        if candidates:
+            status: SearchStatus = "found"
+        elif self.capped:
+            status = "indeterminate"
+        else:
+            status = "none"
+        return RankedSearchResult(
+            status=status,
+            candidates=candidates,
+            nodes=self.nodes,
+            elapsed_ms=elapsed_ms,
+            complete=not self.capped,
+            unique_placements=len(self.seen),
+        )

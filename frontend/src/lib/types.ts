@@ -234,6 +234,7 @@ export interface AIProgressEvent {
 /** Slice-2 terminal diagnostics. Transient UI only — never persist. */
 export type AiCompletionSource =
   | "provider_candidate"
+  | "backend_ranked_candidate"
   | "repair_candidate"
   | "backend_witness_rescue"
   | "genuine_no_move_exchange"
@@ -249,6 +250,7 @@ export interface AiTurnTelemetry {
 
 const COMPLETION_SOURCES: ReadonlySet<string> = new Set([
   "provider_candidate",
+  "backend_ranked_candidate",
   "repair_candidate",
   "backend_witness_rescue",
   "genuine_no_move_exchange",

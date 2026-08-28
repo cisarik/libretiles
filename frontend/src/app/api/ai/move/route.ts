@@ -55,6 +55,7 @@ const REPAIR_TEMPERATURE = 0;
 
 type CompletionSource =
   | "provider_candidate"
+  | "backend_ranked_candidate"
   | "repair_candidate"
   | "backend_witness_rescue"
   | "genuine_no_move_exchange"
@@ -152,6 +153,16 @@ type PlayabilityPayload = {
   ok?: unknown;
   code?: unknown;
   error?: unknown;
+};
+
+type PlacementChoice = {
+  word: string;
+  score: number;
+  allWords: string[];
+  placements: PlacementData[];
+  source: "provider_candidate" | "backend_ranked_candidate";
+  backendOrder: number | null;
+  providerOrder: number | null;
 };
 
 function sseEvent(data: Record<string, unknown>): string {
@@ -273,9 +284,23 @@ function normalizePlacementData(value: unknown): PlacementData | null {
         ? value.blankAs.trim().toUpperCase()
         : null;
 
-  if (row === null || col === null || !letter || letter.length !== 1) {
+  if (
+    row === null ||
+    col === null ||
+    !Number.isInteger(row) ||
+    !Number.isInteger(col) ||
+    row < 0 ||
+    row > 14 ||
+    col < 0 ||
+    col > 14 ||
+    !letter ||
+    !/^[A-Z?]$/.test(letter)
+  ) {
     return null;
   }
+
+  if (letter === "?" && (!blankAs || !/^[A-Z]$/.test(blankAs))) return null;
+  if (letter !== "?" && blankAs !== null) return null;
 
   return {
     row,
@@ -293,7 +318,93 @@ function normalizePlacementArray(value: unknown): PlacementData[] {
 }
 
 function placementKey(placements: PlacementData[]): string {
-  return JSON.stringify(placements);
+  return JSON.stringify(
+    [...placements]
+      .sort(
+        (left, right) =>
+          left.row - right.row ||
+          left.col - right.col ||
+          left.letter.localeCompare(right.letter) ||
+          (left.blank_as ?? "").localeCompare(right.blank_as ?? ""),
+      )
+      .map((placement) => [
+        placement.row,
+        placement.col,
+        placement.letter,
+        placement.blank_as ?? "",
+      ]),
+  );
+}
+
+function normalizeRankedChoices(value: unknown): PlacementChoice[] {
+  if (!isRecord(value) || value.status !== "found" || !Array.isArray(value.candidates)) {
+    return [];
+  }
+  const seen = new Set<string>();
+  const choices: PlacementChoice[] = [];
+  for (const [backendOrder, raw] of value.candidates.entries()) {
+    if (!isRecord(raw) || !Array.isArray(raw.placements)) continue;
+    const placements = normalizePlacementArray(raw.placements);
+    if (
+      placements.length === 0 ||
+      placements.length > 7 ||
+      placements.length !== raw.placements.length ||
+      typeof raw.score !== "number" ||
+      !Number.isInteger(raw.score) ||
+      raw.score <= 0
+    ) {
+      continue;
+    }
+    const key = placementKey(placements);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const allWords = Array.isArray(raw.words)
+      ? raw.words.filter((word): word is string => typeof word === "string")
+      : [];
+    choices.push({
+      word: allWords[0] ?? "???",
+      score: raw.score,
+      allWords,
+      placements,
+      source: "backend_ranked_candidate",
+      backendOrder,
+      providerOrder: null,
+    });
+  }
+  return choices;
+}
+
+function mergePlacementChoices(
+  backendChoices: PlacementChoice[],
+  providerCandidates: Candidate[],
+): PlacementChoice[] {
+  const merged = [...backendChoices];
+  const seen = new Set(backendChoices.map((choice) => placementKey(choice.placements)));
+  for (const [providerOrder, candidate] of providerCandidates.entries()) {
+    if (!candidate.valid) continue;
+    const key = placementKey(candidate.placements);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push({
+      word: candidate.word,
+      score: candidate.score,
+      allWords: candidate.allWords,
+      placements: candidate.placements,
+      source: "provider_candidate",
+      backendOrder: null,
+      providerOrder,
+    });
+  }
+  return merged.sort((left, right) => {
+    if (left.score !== right.score) return right.score - left.score;
+    if (left.backendOrder !== null && right.backendOrder === null) return -1;
+    if (left.backendOrder === null && right.backendOrder !== null) return 1;
+    if (left.backendOrder !== null && right.backendOrder !== null) {
+      return left.backendOrder - right.backendOrder;
+    }
+    const providerOrder = (left.providerOrder ?? 0) - (right.providerOrder ?? 0);
+    return providerOrder || placementKey(left.placements).localeCompare(placementKey(right.placements));
+  });
 }
 
 function stepCountFromResult(result: { steps?: unknown[] } | null | undefined): number {
@@ -385,6 +496,24 @@ export async function POST(req: NextRequest) {
       let terminalCause = "";
       let recordedProviderRequests = 0;
       let runtimeTracker: ProviderRequestTracker | null = null;
+      let rankedCandidatePromise: Promise<PlacementChoice[]> | null = null;
+
+      function fetchRankedCandidatesOnce(): Promise<PlacementChoice[]> {
+        if (rankedCandidatePromise === null) {
+          rankedCandidatePromise = backendGet(
+            `/api/game/${game_id}/ai-candidates/`,
+            token,
+          )
+            .then((payload) => normalizeRankedChoices(payload))
+            .catch(() => []);
+        }
+        return rankedCandidatePromise;
+      }
+
+      async function rankedAndProviderChoices(): Promise<PlacementChoice[]> {
+        const backendChoices = await fetchRankedCandidatesOnce();
+        return mergePlacementChoices(backendChoices, candidates);
+      }
 
       function abortGeneration(reason: AbortReason) {
         if (abortReason === null) abortReason = reason;
@@ -914,16 +1043,15 @@ export async function POST(req: NextRequest) {
             return moveResult as Record<string, unknown>;
           }
 
-          async function commitBestTracked(
-            source: CompletionSource,
-          ): Promise<boolean> {
-            const sortedValid = candidates
-              .filter((c) => c.valid)
-              .sort((a, b) => b.score - a.score);
-            if (sortedValid.length === 0) return false;
-            terminalCause = source;
-            for (const candidate of sortedValid) {
-              const moveResult = await postAiMove(candidate.placements, source);
+          async function commitBestAvailable(): Promise<boolean> {
+            const choices = await rankedAndProviderChoices();
+            if (choices.length === 0) return false;
+            for (const candidate of choices) {
+              terminalCause = candidate.source;
+              const moveResult = await postAiMove(
+                candidate.placements,
+                candidate.source,
+              );
               if (!moveResult) continue;
               const appliedWords = Array.isArray(moveResult.words)
                 ? (moveResult.words as Array<{ word?: string; score?: number }>)
@@ -1150,17 +1278,19 @@ export async function POST(req: NextRequest) {
                 timestamp: Date.now() - startTime,
               });
             }
-            const committed = await commitBestTracked("provider_candidate");
-            if (committed) {
-              closeStream();
-              return;
-            }
-            await probeAndResolve("commit_rejected");
+          }
+          const committed = await commitBestAvailable();
+          if (committed) {
             closeStream();
             return;
           }
-
-          await probeAndResolve(timedOut ? "timeout_no_candidate" : "no_valid_candidate");
+          await probeAndResolve(
+            best
+              ? "commit_rejected"
+              : timedOut
+                ? "timeout_no_candidate"
+                : "no_valid_candidate",
+          );
         } finally {
           clearTimeout(timeoutId);
           clearAutoFinalizeTimer();
@@ -1185,25 +1315,58 @@ export async function POST(req: NextRequest) {
           return;
         }
 
-        const best = candidates.filter((c) => c.valid).sort((a, b) => b.score - a.score)[0];
-        if (best) {
+        const bestTracked = candidates
+          .filter((candidate) => candidate.valid)
+          .sort((left, right) => right.score - left.score)[0];
+        if (bestTracked) {
           try {
-            completionSource = "provider_candidate";
-            terminalCause = "generic_error_fallback";
-            const moveResult = await backendPost(
-              `/api/game/${game_id}/ai-move/`,
-              {
-                placements: best.placements,
-                ai_metadata: {
-                  completion_source: "provider_candidate",
-                  repair_attempted: repairAttempted,
-                  provider_requests_used: attemptProviderRequests(),
-                  ...retryAfterFields(),
+            // A generic SDK/runtime exception may still use ranked candidates,
+            // but only after the provider produced a backend-validated move.
+            // Classified provider/endpoint failures above must remain eligible
+            // for the outer five-lane fallback instead of becoming backend-only.
+            const choices = await rankedAndProviderChoices();
+            let committed = false;
+            for (const candidate of choices) {
+              completionSource = candidate.source;
+              terminalCause = "generic_error_fallback";
+              const moveResult = await backendPost(
+                `/api/game/${game_id}/ai-move/`,
+                {
+                  placements: candidate.placements,
+                  ai_metadata: {
+                    completion_source: candidate.source,
+                    repair_attempted: repairAttempted,
+                    provider_requests_used: attemptProviderRequests(),
+                    ...retryAfterFields(),
+                  },
                 },
-              },
-              token,
-            );
-            if (!isLegalBackendTerminal(moveResult)) {
+                token,
+              );
+              if (!isLegalBackendTerminal(moveResult)) continue;
+              const appliedWords = Array.isArray(moveResult.words)
+                ? (moveResult.words as Array<{ word?: string; score?: number }>)
+                : [];
+              emit({
+                type: "done",
+                action: "place",
+                ...moveResult,
+                best_word: appliedWords[0]?.word ?? candidate.word,
+                best_score:
+                  moveResult.points ?? appliedWords[0]?.score ?? candidate.score,
+                fallback: true,
+                completion_source: candidate.source,
+                repair_attempted: repairAttempted,
+                terminal_cause: "generic_error_fallback",
+                provider_path: providerPath,
+                runtime_model: runtimeModelId,
+                provider_requests_used: attemptProviderRequests(),
+                turn_provider_requests_used: attemptProviderRequests(),
+                ...retryAfterFields(),
+              });
+              committed = true;
+              break;
+            }
+            if (!committed) {
               emit({
                 type: "error",
                 error: "The AI action was not accepted.",
@@ -1214,26 +1377,6 @@ export async function POST(req: NextRequest) {
                 ...retryAfterFields(),
                 repair_attempted: repairAttempted,
                 terminal_cause: "commit_rejected",
-              });
-            } else {
-              const appliedWords = Array.isArray(moveResult.words)
-                ? (moveResult.words as Array<{ word?: string; score?: number }>)
-                : [];
-              emit({
-                type: "done",
-                action: "place",
-                ...moveResult,
-                best_word: appliedWords[0]?.word ?? best.word,
-                best_score: moveResult.points ?? appliedWords[0]?.score ?? best.score,
-                fallback: true,
-                completion_source: "provider_candidate",
-                repair_attempted: repairAttempted,
-                terminal_cause: "generic_error_fallback",
-                provider_path: providerPath,
-                runtime_model: runtimeModelId,
-                provider_requests_used: attemptProviderRequests(),
-                turn_provider_requests_used: attemptProviderRequests(),
-                ...retryAfterFields(),
               });
             }
           } catch {
