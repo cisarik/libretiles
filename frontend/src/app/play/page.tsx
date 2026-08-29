@@ -43,6 +43,7 @@ export default function PlayPage() {
   const selectedModelId = useGameStore((state) => state.selectedModelId);
   const setSelectedModelId = useGameStore((state) => state.setSelectedModelId);
   const selectedPromptId = useGameStore((state) => state.selectedPromptId);
+  const selectedVariantSlug = useGameStore((state) => state.selectedVariantSlug);
   const premiumLookEnabled = useGameStore((state) => state.premiumLookEnabled);
   const setStartingDraw = useGameStore((state) => state.setStartingDraw);
   const setStartingRack = useGameStore((state) => state.setStartingRack);
@@ -165,6 +166,7 @@ export default function PlayPage() {
         game_mode: "vs_ai",
         ai_model_model_id: resolved,
         ai_prompt_id: selectedPromptId ?? undefined,
+        variant_slug: selectedVariantSlug || "english",
       })) as CreateGameResponse;
       resetGameUi();
       setStartingDraw(result.starting_draw);
@@ -183,7 +185,9 @@ export default function PlayPage() {
     setJoiningHuman(true);
     setError(null);
     try {
-      const result = (await api.joinHumanQueue(token, { variant_slug: "english" })) as QueueJoinResponse;
+      const result = (await api.joinHumanQueue(token, {
+        variant_slug: selectedVariantSlug || "english",
+      })) as QueueJoinResponse;
       resetGameUi();
       setGameState(result.state);
       if (result.waiting) {
@@ -302,7 +306,11 @@ export default function PlayPage() {
                 Join the first waiting player. If nobody is there, your board waits in the room.
               </p>
               <div className="mt-6 inline-flex items-center rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-semibold text-stone-200">
-                {joiningHuman ? "Joining queue..." : "English queue"}
+                {joiningHuman
+                  ? "Joining queue..."
+                  : selectedVariantSlug === "slovak"
+                    ? "Slovak queue"
+                    : "English queue"}
               </div>
             </button>
           </div>

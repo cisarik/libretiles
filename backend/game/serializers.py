@@ -1,3 +1,4 @@
+import unicodedata
 from typing import Any
 
 from rest_framework import serializers
@@ -265,11 +266,28 @@ class ValidateWordsSerializer(serializers.Serializer):
     words = serializers.ListField(child=serializers.CharField(max_length=50), min_length=1)
 
 
+def _nfc_uppercase_letter(value: object, *, allow_blank: bool) -> str:
+    if not isinstance(value, str):
+        raise serializers.ValidationError("Must be a single uppercase letter.")
+    nfc = unicodedata.normalize("NFC", value)
+    if allow_blank and nfc == "?":
+        return nfc
+    if len(nfc) == 1 and nfc.isalpha() and nfc == nfc.upper():
+        return nfc
+    raise serializers.ValidationError("Must be a single uppercase letter.")
+
+
 class PlacementSerializer(serializers.Serializer[dict[str, Any]]):
     row = serializers.IntegerField(min_value=0, max_value=14)
     col = serializers.IntegerField(min_value=0, max_value=14)
-    letter = serializers.RegexField(regex=r"^[A-Z?]$")
-    blank_as = serializers.RegexField(regex=r"^[A-Z]$", required=False)
+    letter = serializers.CharField()
+    blank_as = serializers.CharField(required=False)
+
+    def validate_letter(self, value: str) -> str:
+        return _nfc_uppercase_letter(value, allow_blank=True)
+
+    def validate_blank_as(self, value: str) -> str:
+        return _nfc_uppercase_letter(value, allow_blank=False)
 
     def to_internal_value(self, data: Any) -> dict[str, Any]:
         if not isinstance(data, dict):

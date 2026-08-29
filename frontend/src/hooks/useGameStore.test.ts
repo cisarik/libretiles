@@ -94,5 +94,46 @@ describe("fallback progress store state", () => {
     expect(sliced).not.toHaveProperty("aiFallbackAttempts");
     expect(sliced).not.toHaveProperty("aiCandidates");
     expect(sliced).not.toHaveProperty("aiStatusMessage");
+    expect(sliced).toHaveProperty("selectedVariantSlug");
+  });
+});
+
+describe("persist migrate to version 2", () => {
+  it("defaults a v1 persist without a slug to english and keeps budgets", async () => {
+    const migrate = useGameStore.persist.getOptions().migrate;
+    expect(migrate).toBeTypeOf("function");
+    const migrated = (await migrate!(
+      { aiTimeout: 30, aiMaxSteps: 30 },
+      1,
+    )) as Record<string, unknown>;
+    expect(migrated.selectedVariantSlug).toBe("english");
+    expect(migrated.aiTimeout).toBe(30);
+    expect(migrated.aiMaxSteps).toBe(30);
+    expect(migrated).not.toHaveProperty("localAIContextLength");
+    expect(migrated).not.toHaveProperty("localAIReloadAfterTurn");
+  });
+
+  it("keeps an explicit slovak slug already present on a v1 persist", async () => {
+    const migrate = useGameStore.persist.getOptions().migrate;
+    expect(migrate).toBeTypeOf("function");
+    const migrated = (await migrate!(
+      { selectedVariantSlug: "slovak", aiTimeout: 180, aiMaxSteps: 80 },
+      1,
+    )) as Record<string, unknown>;
+    expect(migrated.selectedVariantSlug).toBe("slovak");
+    expect(migrated.aiTimeout).toBe(180);
+    expect(migrated.aiMaxSteps).toBe(80);
+  });
+
+  it("rewrites a garbage slug to english", async () => {
+    const migrate = useGameStore.persist.getOptions().migrate;
+    expect(migrate).toBeTypeOf("function");
+    const migrated = (await migrate!(
+      { selectedVariantSlug: "french", aiTimeout: 60, aiMaxSteps: 20 },
+      1,
+    )) as Record<string, unknown>;
+    expect(migrated.selectedVariantSlug).toBe("english");
+    expect(migrated.aiTimeout).toBe(60);
+    expect(migrated.aiMaxSteps).toBe(20);
   });
 });

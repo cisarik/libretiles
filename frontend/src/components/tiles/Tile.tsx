@@ -1,6 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
+import { useGameStore } from "@/hooks/useGameStore";
 import { TILE_POINTS } from "@/lib/constants";
 
 interface TileProps {
@@ -15,6 +16,7 @@ interface TileProps {
   size?: "sm" | "md" | "lg" | "rack" | "board";
   hoverable?: boolean;
   onClick?: () => void;
+  tilePoints?: Record<string, number>;
 }
 
 const sizeClasses = {
@@ -53,8 +55,12 @@ export function Tile({
   size = "md",
   hoverable = true,
   onClick,
+  tilePoints,
 }: TileProps) {
-  const points = isBlank ? 0 : (TILE_POINTS[letter] ?? 0);
+  const sessionTilePoints = useGameStore((s) => s.gameState?.tile_points);
+  const points = isBlank
+    ? 0
+    : (tilePoints?.[letter] ?? sessionTilePoints?.[letter] ?? TILE_POINTS[letter] ?? 0);
   const displayLetter = letter === "?" ? "" : letter;
 
   return (

@@ -179,14 +179,15 @@ export function TileRack({
   const pendingTiles = useGameStore((s) => s.pendingTiles);
 
   const fullRack = useMemo(() => {
-    if (isPlausibleRack(gameState?.my_rack)) {
+    const alphabet = gameState?.alphabet;
+    if (isPlausibleRack(gameState?.my_rack, alphabet)) {
       return gameState.my_rack;
     }
-    if (isPlausibleRack(startingRack)) {
+    if (isPlausibleRack(startingRack, alphabet)) {
       return startingRack;
     }
     return [];
-  }, [gameState?.my_rack, startingRack]);
+  }, [gameState?.alphabet, gameState?.my_rack, startingRack]);
 
   const usedIndices = new Set(pendingTiles.map((t) => t.rackIndex));
   const visibleRack = fullRack

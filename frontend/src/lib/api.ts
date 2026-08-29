@@ -176,6 +176,7 @@ export const api = {
       ai_model_id?: number;
       ai_model_model_id?: string;
       ai_prompt_id?: number;
+      variant_slug?: string;
     },
   ) => request("/api/game/create/", { method: "POST", body: data, token }),
 

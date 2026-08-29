@@ -16,6 +16,8 @@ interface PendingTile extends Placement {
 
 export type BoardTheme = "wood" | "black" | "green";
 
+export type SelectedVariantSlug = "english" | "slovak";
+
 interface GameStore {
   // Auth
   token: string | null;
@@ -29,6 +31,10 @@ interface GameStore {
   setSelectedModelId: (id: string) => void;
   selectedPromptId: number | null;
   setSelectedPromptId: (id: number | null) => void;
+
+  // Game language for new AI games and queue joins (session snapshot owns live play)
+  selectedVariantSlug: SelectedVariantSlug;
+  setSelectedVariantSlug: (slug: SelectedVariantSlug) => void;
 
   // Game state
   gameState: GameState | null;
@@ -124,6 +130,9 @@ export const useGameStore = create<GameStore>()(
       setSelectedModelId: (selectedModelId) => set({ selectedModelId }),
       selectedPromptId: null,
       setSelectedPromptId: (selectedPromptId) => set({ selectedPromptId }),
+
+      selectedVariantSlug: "english",
+      setSelectedVariantSlug: (selectedVariantSlug) => set({ selectedVariantSlug }),
 
       gameState: null,
       setGameState: (gameState) => set({ gameState }),
@@ -247,15 +256,18 @@ export const useGameStore = create<GameStore>()(
     }),
     {
       name: "libretiles-store",
-      version: 1,
+      version: 2,
       migrate: (persistedState, version) => {
-        if (version >= 1) {
-          return persistedState as GameStore;
-        }
         const incoming = { ...((persistedState ?? {}) as Record<string, unknown>) };
-        delete incoming.localAIContextLength;
-        delete incoming.localAIReloadAfterTurn;
-        // Stale model ids are repaired at runtime against the live catalog.
+        if (version < 1) {
+          delete incoming.localAIContextLength;
+          delete incoming.localAIReloadAfterTurn;
+        }
+        if (version < 2) {
+          if (incoming.selectedVariantSlug !== "english" && incoming.selectedVariantSlug !== "slovak") {
+            incoming.selectedVariantSlug = "english";
+          }
+        }
         return incoming as unknown as GameStore;
       },
       storage: createJSONStorage(() =>
@@ -270,6 +282,7 @@ export const useGameStore = create<GameStore>()(
         refreshToken: state.refreshToken,
         selectedModelId: state.selectedModelId,
         selectedPromptId: state.selectedPromptId,
+        selectedVariantSlug: state.selectedVariantSlug,
         aiTimeout: state.aiTimeout,
         aiMaxSteps: state.aiMaxSteps,
         boardTheme: state.boardTheme,

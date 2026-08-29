@@ -128,3 +128,27 @@ def test_empty_board_slovak_rack_finds_legal_word(slovak_index: Any) -> None:
     assert result.status == "found"
     assert result.witness is not None
     assert result.total_score > 0
+
+
+def test_placement_serializer_accepts_slovak_acute_a() -> None:
+    from game.serializers import PlacementSerializer
+
+    acute = PlacementSerializer(data={"row": 7, "col": 7, "letter": "Á"})
+    assert acute.is_valid(), acute.errors
+    assert acute.validated_data["letter"] == "Á"
+
+    blank = PlacementSerializer(
+        data={"row": 7, "col": 7, "letter": "?", "blank_as": "Á"}
+    )
+    assert blank.is_valid(), blank.errors
+    assert blank.validated_data["blank_as"] == "Á"
+
+    decomposed = unicodedata.normalize("NFD", "Á")
+    nfc_letter = PlacementSerializer(data={"row": 7, "col": 7, "letter": decomposed})
+    assert nfc_letter.is_valid(), nfc_letter.errors
+    assert nfc_letter.validated_data["letter"] == "Á"
+
+    assert not PlacementSerializer(data={"row": 7, "col": 7, "letter": "CH"}).is_valid()
+    assert not PlacementSerializer(data={"row": 7, "col": 7, "letter": ""}).is_valid()
+    assert not PlacementSerializer(data={"row": 7, "col": 7, "letter": "1"}).is_valid()
+

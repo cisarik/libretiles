@@ -176,6 +176,7 @@ function normalizeAIBlocker(
 }
 
 function ToastOverlay({ toast, onDone }: { toast: Toast; onDone: () => void }) {
+  const lexiconId = useGameStore((s) => s.gameState?.lexicon_id);
   useEffect(() => {
     const t = setTimeout(onDone, toast.type === "ai_played" ? 4600 : toast.type === "ai_pass" ? 4200 : 3200);
     return () => clearTimeout(t);
@@ -225,7 +226,11 @@ function ToastOverlay({ toast, onDone }: { toast: Toast; onDone: () => void }) {
               </motion.span>
             ))}
           </div>
-          <p className="text-red-400/60 text-xs mt-3">Not in Collins Scrabble Words 2019</p>
+          <p className="text-red-400/60 text-xs mt-3">
+            {lexiconId === "slovak"
+              ? "Not in the Slovak lexicon"
+              : "Not in Collins Scrabble Words 2019"}
+          </p>
         </div>
       </motion.div>
     );
@@ -530,10 +535,10 @@ export default function GamePage() {
   useEffect(() => { fetchState(); }, [fetchState]);
 
   useEffect(() => {
-    if (isPlausibleRack(gameState?.my_rack)) {
+    if (isPlausibleRack(gameState?.my_rack, gameState?.alphabet)) {
       setStartingRack([...gameState.my_rack]);
     }
-  }, [gameState?.my_rack, setStartingRack]);
+  }, [gameState?.alphabet, gameState?.my_rack, setStartingRack]);
 
   useEffect(() => {
     if (!token || userProfile) return;
@@ -1485,9 +1490,9 @@ export default function GamePage() {
       return;
     }
 
-    const rack = isPlausibleRack(gameState?.my_rack)
+    const rack = isPlausibleRack(gameState?.my_rack, gameState?.alphabet)
       ? gameState.my_rack
-      : isPlausibleRack(startingRack)
+      : isPlausibleRack(startingRack, gameState?.alphabet)
         ? startingRack
         : [];
     const tileStillAvailable =
@@ -1497,7 +1502,7 @@ export default function GamePage() {
     if (!tileStillAvailable) {
       setSelectedRackTile(null);
     }
-  }, [exchangeMode, gameState?.my_rack, pendingTiles, rackCanPlace, selectedRackTile, startingRack]);
+  }, [exchangeMode, gameState?.alphabet, gameState?.my_rack, pendingTiles, rackCanPlace, selectedRackTile, startingRack]);
 
   if (!token) {
     return (

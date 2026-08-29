@@ -3,7 +3,7 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { useGameStore } from "@/hooks/useGameStore";
 
-const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
+const ENGLISH_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
 
 interface BlankPickerProps {
   onSelect: (letter: string) => void;
@@ -12,6 +12,11 @@ interface BlankPickerProps {
 export function BlankPicker({ onSelect }: BlankPickerProps) {
   const isOpen = useGameStore((s) => s.blankPickerOpen);
   const closeBlankPicker = useGameStore((s) => s.closeBlankPicker);
+  const alphabet = useGameStore((s) => s.gameState?.alphabet);
+  const letters =
+    alphabet && alphabet.length > 0
+      ? alphabet.filter((letter) => letter !== "?")
+      : ENGLISH_LETTERS;
 
   return (
     <AnimatePresence>
@@ -29,13 +34,13 @@ export function BlankPicker({ onSelect }: BlankPickerProps) {
             exit={{ scale: 0.8, y: 20 }}
             transition={{ type: "spring", stiffness: 400, damping: 25 }}
             onClick={(e) => e.stopPropagation()}
-            className="bg-stone-800/95 backdrop-blur-md rounded-2xl p-6 shadow-2xl shadow-black/50 border border-stone-700/50"
+            className="max-w-[min(92vw,28rem)] bg-stone-800/95 backdrop-blur-md rounded-2xl p-6 shadow-2xl shadow-black/50 border border-stone-700/50"
           >
             <h3 className="text-center text-stone-300 font-semibold mb-4">
               Choose a letter for blank tile
             </h3>
-            <div className="grid grid-cols-7 gap-2">
-              {LETTERS.map((letter) => (
+            <div className="grid grid-cols-7 gap-1.5 sm:gap-2">
+              {letters.map((letter) => (
                 <motion.button
                   key={letter}
                   whileHover={{ scale: 1.1 }}
@@ -44,8 +49,8 @@ export function BlankPicker({ onSelect }: BlankPickerProps) {
                     onSelect(letter);
                     closeBlankPicker();
                   }}
-                  className="w-10 h-10 rounded-lg bg-amber-50 text-stone-800 font-bold text-lg
-                    shadow-md hover:shadow-lg hover:bg-amber-100 transition-colors"
+                  className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-50 text-sm font-bold text-stone-800
+                    shadow-md hover:shadow-lg hover:bg-amber-100 transition-colors sm:h-9 sm:w-9 sm:text-base"
                 >
                   {letter}
                 </motion.button>

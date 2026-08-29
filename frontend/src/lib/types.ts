@@ -69,6 +69,9 @@ export interface GameState {
   last_move_points?: number;
   last_move_words?: WordResult[];
   last_move_player_slot?: number | null;
+  tile_points?: Record<string, number>;
+  alphabet?: string[];
+  lexicon_id?: string;
 }
 
 export interface StartingDraw {

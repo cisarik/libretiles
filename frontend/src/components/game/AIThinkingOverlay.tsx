@@ -18,8 +18,17 @@ function formatTime(seconds: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-function MiniTile({ letter, highlight }: { letter: string; highlight: boolean }) {
-  const pts = TILE_POINTS[letter.toUpperCase()] ?? 0;
+function MiniTile({
+  letter,
+  highlight,
+  tilePoints,
+}: {
+  letter: string;
+  highlight: boolean;
+  tilePoints?: Record<string, number>;
+}) {
+  const key = letter.toUpperCase();
+  const pts = tilePoints?.[key] ?? TILE_POINTS[key] ?? 0;
   return (
     <div
       className={`
@@ -48,6 +57,7 @@ function WordCandidate({
   isBest,
   isNew,
   rank,
+  tilePoints,
 }: {
   word: string;
   score: number;
@@ -55,6 +65,7 @@ function WordCandidate({
   isBest: boolean;
   isNew: boolean;
   rank: number;
+  tilePoints?: Record<string, number>;
 }) {
   const letters = word.toUpperCase().split("");
 
@@ -81,7 +92,7 @@ function WordCandidate({
       {/* Tiles */}
       <div className="flex gap-0.5 flex-1 min-w-0">
         {letters.map((ch, i) => (
-          <MiniTile key={`${ch}-${i}`} letter={ch} highlight={isBest} />
+          <MiniTile key={`${ch}-${i}`} letter={ch} highlight={isBest} tilePoints={tilePoints} />
         ))}
       </div>
 
@@ -235,6 +246,7 @@ export function AIThinkingOverlay() {
   const aiCountdown = useGameStore((s) => s.aiCountdown);
   const aiCandidates = useGameStore((s) => s.aiCandidates);
   const aiStatusMessage = useGameStore((s) => s.aiStatusMessage);
+  const tilePoints = useGameStore((s) => s.gameState?.tile_points);
   const feedEndRef = useRef<HTMLDivElement>(null);
 
   const urgent = aiCountdown > 0 && aiCountdown <= 10;
@@ -317,6 +329,7 @@ export function AIThinkingOverlay() {
                     isBest={i === 0}
                     isNew={c === aiCandidates[aiCandidates.length - 1]}
                     rank={i + 1}
+                    tilePoints={tilePoints}
                   />
                 ))}
                 {validSorted.length === 0 && rejectedCount > 0 && (
