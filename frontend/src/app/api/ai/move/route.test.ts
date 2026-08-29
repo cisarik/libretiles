@@ -76,6 +76,19 @@ const WITNESS = [
   { row: 7, col: 9, letter: "T" },
   { row: 7, col: 10, letter: "E" },
 ];
+const SK_RANKED = [
+  { row: 7, col: 7, letter: "Ľ" },
+  { row: 7, col: 8, letter: "Á" },
+  { row: 7, col: 9, letter: "Ť" },
+];
+const SK_WITNESS = [
+  { row: 7, col: 7, letter: "O" },
+  { row: 7, col: 8, letter: "S" },
+  { row: 7, col: 9, letter: "?", blank_as: "Ľ" },
+  { row: 7, col: 10, letter: "A" },
+  { row: 7, col: 11, letter: "Ť" },
+  { row: 7, col: 12, letter: "A" },
+];
 
 function jsonResponse(value: unknown, status = 200): Response {
   return new Response(JSON.stringify(value), {
@@ -1011,4 +1024,90 @@ describe("POST /api/ai/move", () => {
     expect(opts.prompt).toContain("Á=4");
     expect(opts.prompt).not.toContain("Q=10");
   });
+
+  it("keeps ranked Unicode diacritic placements instead of dropping the candidate", async () => {
+    generateTextMock.mockResolvedValue({ text: "I would play ĽÁŤ.", steps: [stepFinish(0)] });
+    const fetchMock = mockBackend({
+      "/ai-candidates/": { body: rankedPayload(46, SK_RANKED) },
+      "/ai-move/": {
+        body: { ok: true, action: "place", points: 46, words: [{ word: "ĽÁŤ", score: 46 }] },
+      },
+    });
+
+    const { done } = await runRoute();
+
+    expect(done?.completion_source).toBe("backend_ranked_candidate");
+    const moveCall = fetchMock.mock.calls.find(([url]) =>
+      String(url).endsWith("/ai-move/"),
+    );
+    expect(JSON.parse(String(moveCall?.[1]?.body))).toMatchObject({
+      placements: SK_RANKED,
+      ai_metadata: { completion_source: "backend_ranked_candidate" },
+    });
+  });
+
+  it("rescues a Slovak diacritic playability witness instead of stale_witness", async () => {
+    generateTextMock.mockRejectedValue(new DOMException("Timeout", "AbortError"));
+    const fetchMock = mockBackend({
+      "/ai-playability/": {
+        body: {
+          status: "found",
+          witness: { placements: SK_WITNESS, words: ["OSĽAŤA"], total_score: 12 },
+          exchange_allowed: false,
+          exchange_letters: [],
+          search: { complete: true, nodes: 4, elapsed_ms: 2 },
+        },
+      },
+      "/ai-move/": {
+        body: {
+          ok: true,
+          action: "place",
+          points: 12,
+          words: [{ word: "OSĽAŤA", score: 12 }],
+        },
+      },
+    });
+
+    const { done, error } = await collectEvents();
+
+    expect(error).toBeUndefined();
+    expect(done?.action).toBe("place");
+    expect(done?.completion_source).toBe("backend_witness_rescue");
+    expect(error?.code).not.toBe("stale_witness");
+    const moveCall = fetchMock.mock.calls.find(([url]) =>
+      String(url).endsWith("/ai-move/"),
+    );
+    expect(JSON.parse(String(moveCall?.[1]?.body))).toMatchObject({
+      placements: SK_WITNESS,
+      ai_metadata: { completion_source: "backend_witness_rescue" },
+    });
+  });
+
+  it.each([
+    ["1", [{ row: 7, col: 7, letter: "A" }, { row: 7, col: 8, letter: "1" }]],
+    ["😀", [{ row: 7, col: 7, letter: "A" }, { row: 7, col: 8, letter: "😀" }]],
+  ])(
+    "skips a ranked candidate when a placement letter is %s",
+    async (_label, placements) => {
+      generateTextMock.mockResolvedValue({ text: "no tool", steps: [stepFinish(0)] });
+      const fetchMock = mockBackend({
+        "/ai-candidates/": { body: rankedPayload(46, placements) },
+        "/ai-playability/": {
+          body: {
+            status: "none",
+            witness: null,
+            exchange_allowed: false,
+            exchange_letters: [],
+            search: { complete: true, nodes: 1, elapsed_ms: 1 },
+          },
+        },
+        "/ai-pass/": { body: { ok: true, action: "pass" } },
+      });
+
+      const { done } = await runRoute();
+
+      expect(done?.completion_source).toBe("genuine_no_move_pass");
+      expect(fetchUrls(fetchMock).some((url) => url.endsWith("/ai-move/"))).toBe(false);
+    },
+  );
 });

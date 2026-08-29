@@ -113,12 +113,15 @@ async function backendPatch(path: string, body: unknown, token: string) {
 const placementSchema = z.object({
   row: z.number().min(0).max(14).describe("Row index (0-14)"),
   col: z.number().min(0).max(14).describe("Column index (0-14)"),
-  letter: z.string().length(1).describe("Tile letter (A-Z) or ? for blank"),
+  letter: z
+    .string()
+    .length(1)
+    .describe("Tile letter (one Unicode letter) or ? for blank"),
   blank_as: z
     .string()
     .length(1)
     .optional()
-    .describe("If letter is ?, the letter it represents"),
+    .describe("If letter is ?, the Unicode letter it represents"),
 });
 
 type PlacementData = {
@@ -277,12 +280,15 @@ function normalizePlacementData(value: unknown): PlacementData | null {
   if (!isRecord(value)) return null;
   const row = typeof value.row === "number" ? value.row : null;
   const col = typeof value.col === "number" ? value.col : null;
-  const letter = typeof value.letter === "string" ? value.letter.trim().toUpperCase() : null;
+  const letter =
+    typeof value.letter === "string"
+      ? value.letter.normalize("NFC").trim().toUpperCase()
+      : null;
   const blankAs =
     typeof value.blank_as === "string"
-      ? value.blank_as.trim().toUpperCase()
+      ? value.blank_as.normalize("NFC").trim().toUpperCase()
       : typeof value.blankAs === "string"
-        ? value.blankAs.trim().toUpperCase()
+        ? value.blankAs.normalize("NFC").trim().toUpperCase()
         : null;
 
   if (
@@ -295,12 +301,12 @@ function normalizePlacementData(value: unknown): PlacementData | null {
     col < 0 ||
     col > 14 ||
     !letter ||
-    !/^[A-Z?]$/.test(letter)
+    !/^[\p{L}?]$/u.test(letter)
   ) {
     return null;
   }
 
-  if (letter === "?" && (!blankAs || !/^[A-Z]$/.test(blankAs))) return null;
+  if (letter === "?" && (!blankAs || !/^\p{L}$/u.test(blankAs))) return null;
   if (letter !== "?" && blankAs !== null) return null;
 
   return {
