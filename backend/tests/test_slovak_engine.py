@@ -12,6 +12,7 @@ import pytest
 from game.services import (
     _board_from_session,
     _placements_from_data,
+    _word_checker,
     _word_passes_dictionary,
 )
 from gamecore.assets import get_premiums_path
@@ -21,7 +22,7 @@ from gamecore.legality import REASON_INVALID_BLANK, evaluate_scoring_move
 from gamecore.move_search import find_legal_scoring_move
 from gamecore.scoring import score_words
 from gamecore.types import Placement
-from gamecore.variant_store import load_variant
+from gamecore.variant_store import load_two_letter_allowlist, load_variant
 
 
 @pytest.fixture(scope="module")
@@ -38,9 +39,52 @@ def test_slovak_diacritic_membership_only_on_slovak_path(
     collins_contains: Callable[[str], bool],
     slovak_index: Any,
 ) -> None:
-    assert _word_passes_dictionary(slovak_index.contains, "škola") is True
+    allowlist = load_two_letter_allowlist(load_variant("slovak"))
+    assert _word_passes_dictionary(
+        slovak_index.contains, "škola", two_letter_allowlist=allowlist
+    ) is True
     assert _word_passes_dictionary(collins_contains, "škola") is False
     assert _word_passes_dictionary(collins_contains, "qi") is True
+    assert _word_passes_dictionary(collins_contains, "za") is True
+    assert _word_passes_dictionary(collins_contains, "fe") is True
+
+
+def test_slovak_two_letter_b2_intersection_filter(slovak_index: Any) -> None:
+    allowlist = load_two_letter_allowlist(load_variant("slovak"))
+    assert allowlist is not None
+    assert _word_passes_dictionary(
+        slovak_index.contains, "as", two_letter_allowlist=allowlist
+    ) is True
+    assert _word_passes_dictionary(
+        slovak_index.contains, "ja", two_letter_allowlist=allowlist
+    ) is True
+    assert _word_passes_dictionary(
+        slovak_index.contains, "škola", two_letter_allowlist=allowlist
+    ) is True
+    assert _word_passes_dictionary(
+        slovak_index.contains, "ou", two_letter_allowlist=allowlist
+    ) is False
+    assert _word_passes_dictionary(
+        slovak_index.contains, "am", two_letter_allowlist=allowlist
+    ) is False
+    # Residual of filter-not-replace: B2 words missing from hunspell (aj, ak, či,
+    # že, na, po, …) stay unplayable until a later Cooperator-licensed replace.
+    assert _word_passes_dictionary(
+        slovak_index.contains, "aj", two_letter_allowlist=allowlist
+    ) is False
+
+
+def test_word_checker_rejects_slovak_ou_on_session_stub() -> None:
+    session = SimpleNamespace(variant_slug="slovak")
+    check = _word_checker(session)  # type: ignore[arg-type]
+    assert check("ou") is False
+    assert check("am") is False
+    assert check("as") is True
+    assert check("škola") is True
+    english = _word_checker(SimpleNamespace(variant_slug="english"))  # type: ignore[arg-type]
+    assert english("qi") is True
+    assert english("za") is True
+    assert english("fe") is True
 
 
 def test_combining_character_nfc_equivalent_is_accepted(slovak_index: Any) -> None:
@@ -115,7 +159,11 @@ def test_empty_board_slovak_rack_finds_legal_word(slovak_index: Any) -> None:
     variant = load_variant("slovak")
 
     def is_word(word: str) -> bool:
-        return _word_passes_dictionary(slovak_index.contains, word)
+        return _word_passes_dictionary(
+            slovak_index.contains,
+            word,
+            two_letter_allowlist=load_two_letter_allowlist(variant),
+        )
 
     result = find_legal_scoring_move(
         Board(get_premiums_path()),

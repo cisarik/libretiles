@@ -46,6 +46,7 @@ from gamecore.types import Placement
 from gamecore.variant_store import (
     VariantDefinition,
     list_installed_variants,
+    load_two_letter_allowlist,
     load_variant,
     normalise_letter,
 )
@@ -112,14 +113,15 @@ def _get_dictionary(session: GameSession) -> Callable[[str], bool]:
 
 
 def _is_word(session: GameSession, word: str) -> bool:
-    return _word_passes_dictionary(_get_dictionary(session), word)
+    return _word_checker(session)(word)
 
 
 def _word_checker(session: GameSession) -> Callable[[str], bool]:
     contains = _get_dictionary(session)
+    allowlist = load_two_letter_allowlist(_session_variant(session))
 
     def check(word: str) -> bool:
-        return _word_passes_dictionary(contains, word)
+        return _word_passes_dictionary(contains, word, two_letter_allowlist=allowlist)
 
     return check
 
@@ -182,13 +184,22 @@ def _stored_ai_metadata(
     return {} if ai_metadata is None else ai_metadata
 
 
-def _word_passes_dictionary(contains: Callable[[str], bool], word: str) -> bool:
+def _word_passes_dictionary(
+    contains: Callable[[str], bool],
+    word: str,
+    *,
+    two_letter_allowlist: frozenset[str] | None = None,
+) -> bool:
     w = unicodedata.normalize("NFC", word.strip()).casefold()
     if len(w) < 2:
         return False
     if not w.isalpha():
         return False
-    return bool(contains(w))
+    if not contains(w):
+        return False
+    if two_letter_allowlist is not None and len(w) == 2:
+        return w in two_letter_allowlist
+    return True
 
 
 def _board_from_session(session: GameSession) -> Board:
@@ -797,8 +808,8 @@ def _submit_move_locked(
         return {"ok": False, "error": "No words formed"}
 
     words_coords = [(word.word, word.letters) for word in words_found]
-    contains = _get_dictionary(session)
-    invalid_words = [word for word, _ in words_coords if not _word_passes_dictionary(contains, word)]
+    is_word = _word_checker(session)
+    invalid_words = [word for word, _ in words_coords if not is_word(word)]
     if invalid_words:
         return {
             "ok": False,
@@ -1548,10 +1559,10 @@ def validate_move_for_ai(
 
 def validate_words(*, game_id: str, user_id: int, words: list[str]) -> list[dict[str, Any]]:
     session, _player_slot = _load_session_for_user(game_id=game_id, user_id=user_id)
-    contains = _get_dictionary(session)
+    is_word = _word_checker(session)
     source = _lexicon_id(_session_variant(session))
     return [
-        {"word": word, "valid": _word_passes_dictionary(contains, word), "source": source}
+        {"word": word, "valid": is_word(word), "source": source}
         for word in words
     ]
 

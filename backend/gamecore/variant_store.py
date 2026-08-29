@@ -38,6 +38,7 @@ class VariantDefinition:
     variant_name: str | None = None
     language_code: str | None = None
     source_url: str | None = None
+    two_letter_allowlist_file: str | None = None
 
     @property
     def distribution(self) -> dict[str, int]:
@@ -60,6 +61,12 @@ class VariantDefinition:
     @property
     def dictionary_path(self) -> Path:
         return get_assets_path() / _DICTS_SUBDIR / self.dictionary_file
+
+    @property
+    def two_letter_allowlist_path(self) -> Path | None:
+        if self.two_letter_allowlist_file is None:
+            return None
+        return get_assets_path() / _DICTS_SUBDIR / self.two_letter_allowlist_file
 
     @property
     def playable_letters(self) -> tuple[str, ...]:
@@ -153,6 +160,10 @@ def _load_variant_from_path(path: Path) -> VariantDefinition:
         else None
     )
     dictionary_file = validate_dictionary_file(data.get("dictionary_file"))
+    two_letter_raw = data.get("two_letter_allowlist_file")
+    two_letter_allowlist_file = (
+        validate_dictionary_file(two_letter_raw) if two_letter_raw is not None else None
+    )
     letters_raw: Iterable[dict[str, object]] = data.get("letters", [])
 
     letters: list[VariantLetter] = []
@@ -186,6 +197,7 @@ def _load_variant_from_path(path: Path) -> VariantDefinition:
         variant_name=variant_name,
         language_code=language_code,
         source_url=source_url,
+        two_letter_allowlist_file=two_letter_allowlist_file,
     )
 
 
@@ -194,6 +206,21 @@ def load_variant(slug: str) -> VariantDefinition:
     if not path.exists():
         raise FileNotFoundError(f"Variant '{slug}' not found")
     return _load_variant_from_path(path)
+
+
+def load_two_letter_allowlist(variant: VariantDefinition) -> frozenset[str] | None:
+    """NFC-casefold two-letter set, or None when the variant has no allowlist file."""
+    path = variant.two_letter_allowlist_path
+    if path is None:
+        return None
+    words: set[str] = set()
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("#"):
+            continue
+        word = unicodedata.normalize("NFC", line.strip()).casefold()
+        if word:
+            words.add(word)
+    return frozenset(words)
 
 
 def get_default_variant() -> VariantDefinition:

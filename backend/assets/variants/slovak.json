@@ -6,6 +6,7 @@
   "source_url": "https://en.wikipedia.org/wiki/Scrabble_letter_distributions",
   "fetched_at": "2024-01-01T00:00:00",
   "dictionary_file": "slovak.txt",
+  "two_letter_allowlist_file": "slovak_two_letter.txt",
   "letters": [
     {"letter": "?", "count": 2, "points": 0},
     {"letter": "A", "count": 9, "points": 1},

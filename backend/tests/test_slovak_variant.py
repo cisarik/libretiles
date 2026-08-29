@@ -10,6 +10,7 @@ import pytest
 from gamecore.assets import get_assets_path
 from gamecore.variant_store import (
     _load_variant_from_path,
+    load_two_letter_allowlist,
     load_variant,
     validate_dictionary_file,
 )
@@ -32,6 +33,9 @@ def test_slovak_bag_is_official_sss_100() -> None:
     assert v.tile_points["X"] == 10
     assert "Q" not in v.tile_points
     assert v.dictionary_path.is_file()
+    assert v.two_letter_allowlist_file == "slovak_two_letter.txt"
+    assert v.two_letter_allowlist_path is not None
+    assert v.two_letter_allowlist_path.is_file()
 
 
 def test_english_dictionary_file_is_collins() -> None:
@@ -41,6 +45,9 @@ def test_english_dictionary_file_is_collins() -> None:
     assert v.distribution["E"] == 12
     assert v.dictionary_file == "collins2019.txt"
     assert v.dictionary_path.name == "collins2019.txt"
+    assert v.two_letter_allowlist_file is None
+    assert v.two_letter_allowlist_path is None
+    assert load_two_letter_allowlist(v) is None
 
 
 def test_slovak_lexicon_meets_floor() -> None:
@@ -85,6 +92,26 @@ def test_normalise_letter_composes_combining_marks() -> None:
     assert decomposed != composed
     assert normalise_letter(decomposed) == composed
     assert normalise_letter("á") == "Á"
+
+
+def test_slovak_two_letter_allowlist_is_sss_b2() -> None:
+    path = get_assets_path() / "dicts" / "slovak_two_letter.txt"
+    rows: list[str] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("#") or not line.strip():
+            continue
+        rows.append(line.strip())
+    assert len(rows) == 103
+    assert all(item.isalpha() and len(item) == 2 for item in rows)
+    folded = {item.casefold() for item in rows}
+    assert "ou" not in folded
+    assert "am" not in folded
+    assert "ch" not in folded
+    loaded = load_two_letter_allowlist(load_variant("slovak"))
+    assert loaded is not None
+    assert len(loaded) == 103
+    assert "ou" not in loaded
+    assert "am" not in loaded
 
 
 def test_dictionary_file_rejects_path_escape(tmp_path: Path) -> None:
