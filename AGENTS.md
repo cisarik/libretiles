@@ -70,6 +70,7 @@ npm run build
 | API and game state | `backend/game/services.py`, `backend/game/views.py` |
 | Multiplayer websocket/auth | `backend/game/consumers.py`, `backend/game/routing.py` |
 | Collins 2019 dictionary (Tier 1) | `backend/assets/dicts/collins2019.txt` |
+| Slovak lexicon (hunspell-sk expansion; playable, not SSS-official) + SSS 100 variant | `backend/assets/dicts/slovak.txt`, `backend/assets/variants/slovak.json` |
 | Word validation (lazy load) | `services._get_dictionary()`, `_word_passes_dictionary()` |
 | AI stream (SSE) | `frontend/src/app/api/ai/move/route.ts` |
 | OpenRouter client | `frontend/src/lib/openrouter.ts` |
@@ -172,7 +173,8 @@ Rollback:
 
 ## Not done yet (typical next steps)
 
-- LM Studio, Vercel AI Gateway, Slovak dictionary, and push/deploy are out of this cut (historical rejection / removal, not unfinished AI routing). Stripe is rejected, not unfinished work.
+- LM Studio, Vercel AI Gateway, and push/deploy are out of this cut (historical rejection / removal, not unfinished AI routing). Stripe is rejected, not unfinished work.
+- Slovak assets now ship; Settings/engine/prompt wiring is later slices of `slovak-playable-variant`; live Slovak play is not enabled until those slices land.
 - Configuring `libretiles-openrouter-catalog-refresh` on a host is separate production authority, not this cut.
 - Tier 2 dictionary (optional API) — see PRD and `docs/architecture.md`.
 - Stronger AI search / candidate generation beyond prompt-only improvements.

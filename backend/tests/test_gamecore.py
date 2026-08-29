@@ -32,6 +32,7 @@ class TestVariant:
         assert v.tile_points["Q"] == 10
         assert v.tile_points["E"] == 1
         assert v.distribution["E"] == 12
+        assert v.dictionary_file == "collins2019.txt"
 
     def test_tile_points(self) -> None:
         pts = get_tile_points("english")

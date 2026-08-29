@@ -3,6 +3,7 @@
   "slug": "english",
   "source": "builtin",
   "fetched_at": "2024-01-01T00:00:00",
+  "dictionary_file": "collins2019.txt",
   "letters": [
     {"letter": "?", "count": 2, "points": 0},
     {"letter": "A", "count": 9, "points": 1},
