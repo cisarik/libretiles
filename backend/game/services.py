@@ -7,7 +7,9 @@ game state directly.
 from __future__ import annotations
 
 import random
+import unicodedata
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, Literal
 
 from django.conf import settings
@@ -41,6 +43,12 @@ from gamecore.scoring import apply_premium_consumption, score_words
 from gamecore.state import build_ai_state_dict
 from gamecore.tiles import TileBag, get_tile_points
 from gamecore.types import Placement
+from gamecore.variant_store import (
+    VariantDefinition,
+    list_installed_variants,
+    load_variant,
+    normalise_letter,
+)
 
 from .models import ChatMessage, GameSession, Move, PlayerSlot
 from . import realtime
@@ -48,8 +56,6 @@ from . import realtime
 CHAT_HISTORY_LIMIT = 50
 WS_TICKET_SALT = "game.websocket.ticket"
 WS_TICKET_MAX_AGE_SECONDS = int(getattr(settings, "GAME_WS_TICKET_MAX_AGE_SECONDS", 60))
-_dictionary_fn: Callable[[str], bool] | None = None
-_prefix_index: PrefixIndex | None = None
 
 
 class GameNotFoundError(Exception):
@@ -97,32 +103,72 @@ def _serialize_move_history(session: GameSession, *, moves: list[Move] | None = 
     return history
 
 
-def _get_prefix_index() -> PrefixIndex:
-    global _prefix_index, _dictionary_fn
-    if _prefix_index is None:
-        _prefix_index = load_prefix_index(settings.PRIMARY_DICTIONARY_PATH)
-        _dictionary_fn = _prefix_index.contains
-    return _prefix_index
+def _get_prefix_index(session: GameSession) -> PrefixIndex:
+    return load_prefix_index(load_variant(session.variant_slug).dictionary_path)
 
 
-def _get_dictionary() -> Callable[[str], bool]:
-    return _get_prefix_index().contains
+def _get_dictionary(session: GameSession) -> Callable[[str], bool]:
+    return _get_prefix_index(session).contains
 
 
-def _is_word(word: str) -> bool:
-    return _word_passes_dictionary(_get_dictionary(), word)
+def _is_word(session: GameSession, word: str) -> bool:
+    return _word_passes_dictionary(_get_dictionary(session), word)
+
+
+def _word_checker(session: GameSession) -> Callable[[str], bool]:
+    contains = _get_dictionary(session)
+
+    def check(word: str) -> bool:
+        return _word_passes_dictionary(contains, word)
+
+    return check
+
+
+def _session_variant(session: GameSession) -> VariantDefinition:
+    return load_variant(session.variant_slug)
+
+
+def _session_letters(session: GameSession) -> frozenset[str]:
+    return frozenset(_session_variant(session).playable_letters)
+
+
+def _lexicon_id(variant: VariantDefinition) -> str:
+    return Path(variant.dictionary_file).stem
+
+
+def _variant_snapshot_fields(session: GameSession) -> dict[str, Any]:
+    variant = _session_variant(session)
+    return {
+        "tile_points": dict(variant.tile_points),
+        "alphabet": list(variant.playable_letters),
+        "lexicon_id": _lexicon_id(variant),
+    }
+
+
+def _unknown_variant_payload(variant_slug: str) -> dict[str, Any] | None:
+    installed = {item.slug for item in list_installed_variants()}
+    if variant_slug in installed:
+        return None
+    return {
+        "ok": False,
+        "error": f"Unknown variant '{variant_slug}'",
+        "code": "unknown_variant",
+    }
 
 
 def _placements_from_data(placements_data: list[dict[str, Any]]) -> list[Placement]:
     placements: list[Placement] = []
     for item in placements_data:
-        blank_as = item.get("blank_as")
+        letter_raw = item["letter"]
+        letter = normalise_letter(letter_raw) if isinstance(letter_raw, str) else letter_raw
+        blank_raw = item.get("blank_as")
+        blank_as = normalise_letter(blank_raw) if isinstance(blank_raw, str) else None
         placements.append(
             Placement(
                 row=item["row"],
                 col=item["col"],
-                letter=item["letter"],
-                blank_as=blank_as if isinstance(blank_as, str) else None,
+                letter=letter,
+                blank_as=blank_as,
             )
         )
     return placements
@@ -137,10 +183,10 @@ def _stored_ai_metadata(
 
 
 def _word_passes_dictionary(contains: Callable[[str], bool], word: str) -> bool:
-    w = word.strip().casefold()
+    w = unicodedata.normalize("NFC", word.strip()).casefold()
     if len(w) < 2:
         return False
-    if not w.isascii() or not w.isalpha():
+    if not w.isalpha():
         return False
     return bool(contains(w))
 
@@ -151,6 +197,8 @@ def _board_from_session(session: GameSession) -> Board:
     if isinstance(grid, list) and len(grid) == BOARD_SIZE:
         for r in range(BOARD_SIZE):
             row = grid[r]
+            if isinstance(row, str):
+                row = unicodedata.normalize("NFC", row)
             for c in range(BOARD_SIZE):
                 ch = row[c] if c < len(row) else "."
                 if ch != ".":
@@ -315,6 +363,7 @@ def _build_state(session: GameSession, *, current_user_id: int, my_slot: PlayerS
             for message in recent_messages
         ],
         **_serialize_last_move(session, moves=moves),
+        **_variant_snapshot_fields(session),
     }
 
 
@@ -534,12 +583,15 @@ def _probe_ai_playability(
     if max_elapsed_ms is not None:
         kwargs["max_elapsed_ms"] = max_elapsed_ms
     try:
-        index = _get_prefix_index()
+        variant = _session_variant(session)
+        index = _get_prefix_index(session)
         return find_legal_scoring_move(
             board,
             rack,
-            is_word=_is_word,
+            is_word=_word_checker(session),
             has_prefix=index.has_prefix,
+            blank_letters=variant.playable_letters,
+            variant=session.variant_slug,
             **kwargs,
         )
     except Exception:
@@ -628,14 +680,17 @@ def _probe_ai_ranked_candidates(
     board = _board_from_session(session)
     rack = list(player_slot.rack) if isinstance(player_slot.rack, list) else []
     try:
-        index = _get_prefix_index()
+        variant = _session_variant(session)
+        index = _get_prefix_index(session)
         return find_ranked_scoring_moves(
             board,
             rack,
-            is_word=_is_word,
+            is_word=_word_checker(session),
             has_prefix=index.has_prefix,
             bag_count=len(session.bag_tiles),
             tile_points=get_tile_points(session.variant_slug),
+            blank_letters=variant.playable_letters,
+            variant=session.variant_slug,
         )
     except Exception:
         return RankedSearchResult(
@@ -700,7 +755,14 @@ def _submit_move_locked(
     placements = _placements_from_data(placements_data)
 
     if player_slot.is_ai:
-        legality = evaluate_scoring_move(board, rack, placements, _is_word)
+        legality = evaluate_scoring_move(
+            board,
+            rack,
+            placements,
+            _word_checker(session),
+            letters=_session_letters(session),
+            variant=session.variant_slug,
+        )
         if not legality.ok:
             return {
                 "ok": False,
@@ -735,7 +797,7 @@ def _submit_move_locked(
         return {"ok": False, "error": "No words formed"}
 
     words_coords = [(word.word, word.letters) for word in words_found]
-    contains = _get_dictionary()
+    contains = _get_dictionary(session)
     invalid_words = [word for word, _ in words_coords if not _word_passes_dictionary(contains, word)]
     if invalid_words:
         return {
@@ -744,7 +806,9 @@ def _submit_move_locked(
             "invalid_words": invalid_words,
         }
 
-    total, breakdowns = score_words(board, placements, words_coords)
+    total, breakdowns = score_words(
+        board, placements, words_coords, variant=session.variant_slug
+    )
     bingo = len(placements) == 7
     if bingo:
         total += 50
@@ -912,6 +976,10 @@ def create_game(
 ) -> dict[str, Any]:
     if game_mode != "vs_ai":
         return {"ok": False, "error": "Human multiplayer starts from the queue"}
+
+    unknown = _unknown_variant_payload(variant_slug)
+    if unknown is not None:
+        return unknown
 
     selected_ai_model = _resolve_ai_model(
         ai_model_id=ai_model_id,
@@ -1160,6 +1228,10 @@ def verify_ws_ticket(*, game_id: str, ticket: str) -> int:
 
 
 def join_human_queue(*, user_id: int, variant_slug: str = "english") -> dict[str, Any]:
+    unknown = _unknown_variant_payload(variant_slug)
+    if unknown is not None:
+        return unknown
+
     with transaction.atomic():
         existing_waiting = (
             GameSession.objects.select_for_update()
@@ -1418,6 +1490,7 @@ def get_ai_context(game_id: str, user_id: int) -> dict[str, Any]:
         "is_first_move": _is_board_empty(session),
         "ai_move_max_output_tokens": settings.AI_MOVE_MAX_OUTPUT_TOKENS,
         "ai_move_timeout_seconds": settings.AI_MOVE_TIMEOUT_SECONDS,
+        **_variant_snapshot_fields(session),
     }
 
 
@@ -1436,7 +1509,14 @@ def validate_move_for_ai(
     else:
         rack_slot = player_slot
     rack = list(rack_slot.rack) if isinstance(rack_slot.rack, list) else []
-    legality = evaluate_scoring_move(board, rack, placements, _is_word)
+    legality = evaluate_scoring_move(
+        board,
+        rack,
+        placements,
+        _word_checker(session),
+        letters=_session_letters(session),
+        variant=session.variant_slug,
+    )
     words_payload = [
         {"word": verdict.word, "valid": verdict.valid} for verdict in legality.word_results
     ]
@@ -1467,10 +1547,11 @@ def validate_move_for_ai(
 
 
 def validate_words(*, game_id: str, user_id: int, words: list[str]) -> list[dict[str, Any]]:
-    _load_session_for_user(game_id=game_id, user_id=user_id)
-    contains = _get_dictionary()
+    session, _player_slot = _load_session_for_user(game_id=game_id, user_id=user_id)
+    contains = _get_dictionary(session)
+    source = _lexicon_id(_session_variant(session))
     return [
-        {"word": word, "valid": _word_passes_dictionary(contains, word), "source": "collins2019"}
+        {"word": word, "valid": _word_passes_dictionary(contains, word), "source": source}
         for word in words
     ]
 

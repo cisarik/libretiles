@@ -7,6 +7,7 @@ from catalog.selection import (
     get_selectable_prompts,
     is_selectable_model,
 )
+from gamecore.variant_store import list_installed_variants
 
 COMPLETION_SOURCES = frozenset(
     {
@@ -173,6 +174,13 @@ class CreateGameSerializer(serializers.Serializer):
     ai_prompt_id = serializers.IntegerField(required=False, allow_null=True)
     variant_slug = serializers.CharField(default="english", max_length=50)
 
+    def validate_variant_slug(self, value: str) -> str:
+        slug = value.strip()
+        installed = {variant.slug for variant in list_installed_variants()}
+        if slug not in installed:
+            raise serializers.ValidationError("unknown_variant")
+        return slug
+
     def validate(self, attrs: dict) -> dict:
         if attrs.get("game_mode") != "vs_ai":
             return attrs
@@ -200,6 +208,13 @@ class CreateGameSerializer(serializers.Serializer):
 
 class QueueJoinSerializer(serializers.Serializer):
     variant_slug = serializers.CharField(default="english", max_length=50)
+
+    def validate_variant_slug(self, value: str) -> str:
+        slug = value.strip()
+        installed = {variant.slug for variant in list_installed_variants()}
+        if slug not in installed:
+            raise serializers.ValidationError("unknown_variant")
+        return slug
 
 
 class QueueCancelSerializer(serializers.Serializer):

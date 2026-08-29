@@ -132,7 +132,9 @@ class Game:
             self.board.clear_letters(placements_list)
             raise ValueError("Move did not form any valid words")
 
-        total, _ = score_words(self.board, placements_list, words_coords)
+        total, _ = score_words(
+            self.board, placements_list, words_coords, variant=self.bag.variant_slug
+        )
         if len(placements_list) == 7:
             total += 50
         apply_premium_consumption(self.board, placements_list)

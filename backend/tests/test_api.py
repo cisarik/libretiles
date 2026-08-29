@@ -579,6 +579,85 @@ class GameAPITest(TestCase):
         assert data["ai_model_id"] == self.ai_model.model_id
         assert len(data["human_rack"]) == 7
 
+    def test_create_rejects_unknown_variant(self) -> None:
+        before = GameSession.objects.count()
+        resp = self.client.post(
+            "/api/game/create/",
+            {"game_mode": "vs_ai", "variant_slug": "klingon"},
+            format="json",
+        )
+        assert resp.status_code == 400
+        assert "unknown_variant" in str(resp.json())
+        from game import services
+
+        result = services.create_game(user_id=self.user.id, variant_slug="klingon")
+        assert result["ok"] is False
+        assert result["code"] == "unknown_variant"
+        assert GameSession.objects.count() == before
+
+    def test_queue_join_rejects_unknown_variant(self) -> None:
+        resp = self.client.post(
+            "/api/game/queue/join/",
+            {"variant_slug": "klingon"},
+            format="json",
+        )
+        assert resp.status_code == 400
+        assert "unknown_variant" in str(resp.json())
+        from game import services
+
+        result = services.join_human_queue(user_id=self.user.id, variant_slug="klingon")
+        assert result["ok"] is False
+        assert result["code"] == "unknown_variant"
+        assert not GameSession.objects.filter(variant_slug="klingon").exists()
+
+    def test_create_game_default_lexicon_is_collins(self) -> None:
+        resp = self.client.post("/api/game/create/", {"game_mode": "vs_ai"})
+        assert resp.status_code == 201
+        game_id = resp.json()["game_id"]
+        state = self.client.get(f"/api/game/{game_id}/").json()
+        assert state["variant_slug"] == "english"
+        assert state["lexicon_id"] == "collins2019"
+        assert "A" in state["alphabet"]
+        assert "Á" not in state["alphabet"]
+        assert state["tile_points"]["Q"] == 10
+
+    def test_create_slovak_game_exposes_engine_snapshot(self) -> None:
+        resp = self.client.post(
+            "/api/game/create/",
+            {"game_mode": "vs_ai", "variant_slug": "slovak"},
+            format="json",
+        )
+        assert resp.status_code == 201
+        game_id = resp.json()["game_id"]
+        state = self.client.get(f"/api/game/{game_id}/").json()
+        assert state["variant_slug"] == "slovak"
+        assert state["lexicon_id"] == "slovak"
+        assert "Á" in state["alphabet"]
+        assert state["tile_points"]["Á"] == 4
+        ctx = self.client.get(f"/api/game/{game_id}/ai-context/").json()
+        assert ctx["lexicon_id"] == "slovak"
+        assert ctx["tile_points"]["Á"] == 4
+        assert "Á" in ctx["alphabet"]
+
+    def test_validate_words_source_is_slovak_for_slovak_game(self) -> None:
+        create_resp = self.client.post(
+            "/api/game/create/",
+            {"game_mode": "vs_ai", "variant_slug": "slovak"},
+            format="json",
+        )
+        game_id = create_resp.json()["game_id"]
+        resp = self.client.post(
+            f"/api/game/{game_id}/validate-words/",
+            {"words": ["škola", "hello"]},
+            format="json",
+        )
+        assert resp.status_code == 200
+        results = resp.json()["results"]
+        assert results[0]["source"] == "slovak"
+        assert results[0]["valid"] is True
+        assert results[1]["source"] == "slovak"
+        assert results[1]["valid"] is False
+
     def test_create_game_with_model_id_string(self) -> None:
         resp = self.client.post("/api/game/create/", {
             "game_mode": "vs_ai",
@@ -943,6 +1022,8 @@ class GameAPITest(TestCase):
         assert results[0]["word"] == "hello"
         assert results[1]["valid"] is False
         assert results[2]["valid"] is True
+        assert results[0]["source"] == "collins2019"
+        assert results[1]["source"] == "collins2019"
 
     @override_settings(
         AI_MOVE_MAX_OUTPUT_TOKENS=4321,
@@ -961,6 +1042,9 @@ class GameAPITest(TestCase):
         assert "compact_state" in data
         assert "grid:" in data["compact_state"]
         assert data["variant"] == "english"
+        assert data["lexicon_id"] == "collins2019"
+        assert "A" in data["alphabet"]
+        assert data["tile_points"]["Q"] == 10
         assert data["ai_move_max_output_tokens"] == 4321
         assert data["ai_move_timeout_seconds"] == 180
 
@@ -1391,7 +1475,7 @@ class GameAPITest(TestCase):
 
         from gamecore.legality import evaluate_scoring_move
         from gamecore.types import Placement
-        from game.services import _board_from_session, _is_word
+        from game.services import _board_from_session, _is_word, _session_letters
 
         placements = [
             Placement(
@@ -1406,7 +1490,9 @@ class GameAPITest(TestCase):
             _board_from_session(session),
             ["A", "T", "C", "D", "E", "F", "G"],
             placements,
-            _is_word,
+            lambda word: _is_word(session, word),
+            letters=_session_letters(session),
+            variant=session.variant_slug,
         )
         assert legality.ok
         validate = self.client.post(

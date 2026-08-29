@@ -68,3 +68,31 @@ def test_prefix_index_matches_collins_membership(contains: Callable[[str], bool]
     assert index.has_prefix("HEL")
     assert index.has_prefix("qi")
     assert not index.has_prefix("qzzz")
+
+
+def test_word_passes_dictionary_english_lock(contains: Callable[[str], bool]) -> None:
+    from game.services import _word_passes_dictionary
+
+    assert _word_passes_dictionary(contains, "qi") is True
+    assert _word_passes_dictionary(contains, "za") is True
+    assert _word_passes_dictionary(contains, "fe") is True
+    assert _word_passes_dictionary(contains, "qlet") is False
+
+
+def test_word_passes_dictionary_rejects_short_and_non_alpha(
+    contains: Callable[[str], bool],
+) -> None:
+    from game.services import _word_passes_dictionary
+
+    assert _word_passes_dictionary(contains, "a") is False
+    assert _word_passes_dictionary(contains, "hi!") is False
+    assert _word_passes_dictionary(contains, "12") is False
+    assert _word_passes_dictionary(contains, "") is False
+
+
+def test_word_passes_dictionary_has_no_isascii() -> None:
+    import inspect
+
+    from game.services import _word_passes_dictionary
+
+    assert "isascii" not in inspect.getsource(_word_passes_dictionary)

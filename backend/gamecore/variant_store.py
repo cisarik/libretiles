@@ -77,6 +77,7 @@ def slugify(text: str) -> str:
 def normalise_letter(letter: str) -> str:
     if not letter:
         return ""
+    letter = unicodedata.normalize("NFC", letter)
     upper = letter.upper().replace(" ", "")
     if upper in {"BLANK", "WILDCARD", "WILD", "JOKER", "BLANK TILE"}:
         return "?"

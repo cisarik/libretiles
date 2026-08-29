@@ -102,8 +102,12 @@ def evaluate_scoring_move(
     rack: Sequence[str],
     placements: Sequence[Placement],
     is_word: Callable[[str], bool],
+    *,
+    letters: frozenset[str] | None = None,
+    variant: object = None,
 ) -> LegalityResult:
     """Return whether `placements` are a legal scoring move for `rack` on `board`."""
+    alphabet = LETTERS if letters is None else letters
     if not placements:
         return _fail(REASON_EMPTY, "Move must contain at least one tile")
     if len(placements) > MAX_PLACEMENTS:
@@ -124,11 +128,11 @@ def evaluate_scoring_move(
         seen.add(cell)
 
         letter = placement.letter
-        if not isinstance(letter, str) or (letter not in LETTERS and letter != "?"):
+        if not isinstance(letter, str) or (letter not in alphabet and letter != "?"):
             return _fail(REASON_INVALID_LETTER, "Letter must be A-Z or '?'")
         if letter == "?":
             blank_as = placement.blank_as
-            if not isinstance(blank_as, str) or blank_as not in LETTERS:
+            if not isinstance(blank_as, str) or blank_as not in alphabet:
                 return _fail(REASON_INVALID_BLANK, "blank_as must be A-Z for a blank")
         elif placement.blank_as is not None:
             return _fail(REASON_INVALID_BLANK, "blank_as is forbidden for a non-blank tile")
@@ -176,7 +180,7 @@ def evaluate_scoring_move(
                 word_results=word_results,
             )
 
-        total, breakdowns = score_words(board, placed, words_coords)
+        total, breakdowns = score_words(board, placed, words_coords, variant=variant)
         if len(placed) == 7:
             total += 50
         if total <= 0:

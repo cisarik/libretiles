@@ -75,6 +75,18 @@ def test_slovak_has_no_ch_tile() -> None:
     assert "CH" not in letters
 
 
+def test_normalise_letter_composes_combining_marks() -> None:
+    import unicodedata
+
+    from gamecore.variant_store import normalise_letter
+
+    composed = "Á"
+    decomposed = unicodedata.normalize("NFD", composed)
+    assert decomposed != composed
+    assert normalise_letter(decomposed) == composed
+    assert normalise_letter("á") == "Á"
+
+
 def test_dictionary_file_rejects_path_escape(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="basename"):
         validate_dictionary_file("../collins2019.txt")

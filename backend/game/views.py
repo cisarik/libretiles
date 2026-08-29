@@ -69,7 +69,7 @@ class QueueJoinView(APIView):
             user_id=request.user.id,
             variant_slug=serializer.validated_data["variant_slug"],
         )
-        return Response(result)
+        return Response(result, status=200 if result.get("ok", True) else 400)
 
 
 class QueueCancelView(APIView):

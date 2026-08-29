@@ -77,6 +77,8 @@ def find_legal_scoring_move(
     *,
     max_nodes: int = DEFAULT_MAX_NODES,
     max_elapsed_ms: int = DEFAULT_MAX_ELAPSED_MS,
+    blank_letters: Sequence[str] = _BLANK_LETTERS,
+    variant: object = None,
 ) -> SearchResult:
     """Search for the first legal scoring move on `board` with `rack`."""
     searcher = _Searcher(
@@ -86,6 +88,8 @@ def find_legal_scoring_move(
         has_prefix=has_prefix,
         max_nodes=max_nodes,
         max_elapsed_ms=max_elapsed_ms,
+        blank_letters=blank_letters,
+        variant=variant,
     )
     return searcher.run()
 
@@ -102,6 +106,8 @@ def find_ranked_scoring_moves(
     max_elapsed_ms: int = DEFAULT_RANKED_MAX_ELAPSED_MS,
     max_unique_placements: int = DEFAULT_RANKED_MAX_UNIQUE_PLACEMENTS,
     tile_points: Mapping[str, int] | None = None,
+    blank_letters: Sequence[str] = _BLANK_LETTERS,
+    variant: object = None,
 ) -> RankedSearchResult:
     """Return the strongest re-certified moves found within fixed bounds.
 
@@ -120,6 +126,8 @@ def find_ranked_scoring_moves(
         max_elapsed_ms=max_elapsed_ms,
         max_unique_placements=max_unique_placements,
         tile_points=tile_points,
+        blank_letters=blank_letters,
+        variant=variant,
     )
     return searcher.run_ranked()
 
@@ -134,6 +142,8 @@ class _Searcher:
         has_prefix: Callable[[str], bool],
         max_nodes: int,
         max_elapsed_ms: int,
+        blank_letters: Sequence[str] = _BLANK_LETTERS,
+        variant: object = None,
     ) -> None:
         self.board = board
         self.grid = tuple(tuple(cell.letter for cell in row) for row in board.cells)
@@ -141,6 +151,9 @@ class _Searcher:
         self.has_prefix = has_prefix
         self.max_nodes = max_nodes
         self.max_elapsed_ms = max_elapsed_ms
+        self.blank_letters = blank_letters
+        self.letter_set = frozenset(blank_letters)
+        self.variant = variant
         self.rack_size = len(rack)
         self.initial_rack = Counter(rack)
         self.nodes = 0
@@ -311,7 +324,7 @@ class _Searcher:
             nxt["?"] -= 1
             if nxt["?"] <= 0:
                 del nxt["?"]
-            for letter in _BLANK_LETTERS:
+            for letter in self.blank_letters:
                 yield "?", letter, letter, nxt
 
     def _cross_ok(self, row: int, col: int, letter: str, dr: int, dc: int) -> bool:
@@ -346,7 +359,14 @@ class _Searcher:
             return
         if not self.is_word(prefix):
             return
-        result = evaluate_scoring_move(self.board, list(self.initial_rack.elements()), placed, self.is_word)
+        result = evaluate_scoring_move(
+            self.board,
+            list(self.initial_rack.elements()),
+            placed,
+            self.is_word,
+            letters=self.letter_set,
+            variant=self.variant,
+        )
         if result.ok:
             self.found = SearchResult(
                 status="found",
@@ -441,6 +461,8 @@ class _RankedSearcher(_Searcher):
         max_elapsed_ms: int,
         max_unique_placements: int,
         tile_points: Mapping[str, int] | None,
+        blank_letters: Sequence[str] = _BLANK_LETTERS,
+        variant: object = None,
     ) -> None:
         super().__init__(
             board=board,
@@ -449,6 +471,8 @@ class _RankedSearcher(_Searcher):
             has_prefix=has_prefix,
             max_nodes=max_nodes,
             max_elapsed_ms=max_elapsed_ms,
+            blank_letters=blank_letters,
+            variant=variant,
         )
         self.rack_tiles = tuple(rack)
         self.bag_count = bag_count
@@ -548,6 +572,8 @@ class _RankedSearcher(_Searcher):
             self.rack_tiles,
             placed,
             self.is_word,
+            letters=self.letter_set,
+            variant=self.variant,
         )
         if not certified.ok:
             return
