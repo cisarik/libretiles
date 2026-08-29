@@ -126,6 +126,21 @@ def _word_checker(session: GameSession) -> Callable[[str], bool]:
     return check
 
 
+def _prefix_checker(session: GameSession) -> Callable[[str], bool]:
+    index = _get_prefix_index(session)
+    allowlist = load_two_letter_allowlist(_session_variant(session))
+
+    def check(prefix: str) -> bool:
+        if index.has_prefix(prefix):
+            return True
+        if allowlist is None:
+            return False
+        folded = unicodedata.normalize("NFC", prefix).casefold()
+        return len(folded) == 2 and folded in allowlist
+
+    return check
+
+
 def _session_variant(session: GameSession) -> VariantDefinition:
     return load_variant(session.variant_slug)
 
@@ -195,11 +210,9 @@ def _word_passes_dictionary(
         return False
     if not w.isalpha():
         return False
-    if not contains(w):
-        return False
     if two_letter_allowlist is not None and len(w) == 2:
         return w in two_letter_allowlist
-    return True
+    return bool(contains(w))
 
 
 def _board_from_session(session: GameSession) -> Board:
@@ -595,12 +608,11 @@ def _probe_ai_playability(
         kwargs["max_elapsed_ms"] = max_elapsed_ms
     try:
         variant = _session_variant(session)
-        index = _get_prefix_index(session)
         return find_legal_scoring_move(
             board,
             rack,
             is_word=_word_checker(session),
-            has_prefix=index.has_prefix,
+            has_prefix=_prefix_checker(session),
             blank_letters=variant.playable_letters,
             variant=session.variant_slug,
             **kwargs,
@@ -692,12 +704,11 @@ def _probe_ai_ranked_candidates(
     rack = list(player_slot.rack) if isinstance(player_slot.rack, list) else []
     try:
         variant = _session_variant(session)
-        index = _get_prefix_index(session)
         return find_ranked_scoring_moves(
             board,
             rack,
             is_word=_word_checker(session),
-            has_prefix=index.has_prefix,
+            has_prefix=_prefix_checker(session),
             bag_count=len(session.bag_tiles),
             tile_points=get_tile_points(session.variant_slug),
             blank_letters=variant.playable_letters,

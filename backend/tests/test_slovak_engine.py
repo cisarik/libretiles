@@ -49,7 +49,7 @@ def test_slovak_diacritic_membership_only_on_slovak_path(
     assert _word_passes_dictionary(collins_contains, "fe") is True
 
 
-def test_slovak_two_letter_b2_intersection_filter(slovak_index: Any) -> None:
+def test_slovak_two_letter_b2_is_the_lexicon(slovak_index: Any) -> None:
     allowlist = load_two_letter_allowlist(load_variant("slovak"))
     assert allowlist is not None
     assert _word_passes_dictionary(
@@ -67,11 +67,16 @@ def test_slovak_two_letter_b2_intersection_filter(slovak_index: Any) -> None:
     assert _word_passes_dictionary(
         slovak_index.contains, "am", two_letter_allowlist=allowlist
     ) is False
-    # Residual of filter-not-replace: B2 words missing from hunspell (aj, ak, či,
-    # že, na, po, …) stay unplayable until a later Cooperator-licensed replace.
+    # Residual is hunspell junk of length ≥3, not missing B2.
     assert _word_passes_dictionary(
         slovak_index.contains, "aj", two_letter_allowlist=allowlist
-    ) is False
+    ) is True
+    assert _word_passes_dictionary(
+        slovak_index.contains, "ak", two_letter_allowlist=allowlist
+    ) is True
+    assert _word_passes_dictionary(
+        slovak_index.contains, "či", two_letter_allowlist=allowlist
+    ) is True
 
 
 def test_word_checker_rejects_slovak_ou_on_session_stub() -> None:
@@ -80,6 +85,8 @@ def test_word_checker_rejects_slovak_ou_on_session_stub() -> None:
     assert check("ou") is False
     assert check("am") is False
     assert check("as") is True
+    assert check("aj") is True
+    assert check("či") is True
     assert check("škola") is True
     english = _word_checker(SimpleNamespace(variant_slug="english"))  # type: ignore[arg-type]
     assert english("qi") is True
