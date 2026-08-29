@@ -28,6 +28,7 @@ import {
   parseCatalogModelRows,
   type ProviderRequestTracker,
 } from "@/lib/ai-runtimes";
+import { judgePromptSpecFromBody, judgeSystemPromptFor } from "@/lib/prompts";
 
 const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8000";
 const ATTEMPT_TIMEOUT_MS = 10_000;
@@ -185,9 +186,19 @@ function parseJudgeResults(
 }
 
 export async function POST(req: NextRequest) {
-  let body: { words?: unknown; model_id?: unknown };
+  let body: {
+    words?: unknown;
+    model_id?: unknown;
+    lexicon_id?: unknown;
+    variant?: unknown;
+  };
   try {
-    body = (await req.json()) as { words?: unknown; model_id?: unknown };
+    body = (await req.json()) as {
+      words?: unknown;
+      model_id?: unknown;
+      lexicon_id?: unknown;
+      variant?: unknown;
+    };
   } catch {
     return NextResponse.json({ error: "No words provided" }, { status: 400 });
   }
@@ -201,6 +212,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "No words provided" }, { status: 400 });
   }
   const words = rawWords.map((word) => word.trim().toUpperCase());
+  const judgeSpec = judgePromptSpecFromBody(body);
 
   const catalogRows = await fetchCatalogModelRows();
   if (!catalogRows || catalogRows.length === 0) {
@@ -250,10 +262,8 @@ export async function POST(req: NextRequest) {
         temperature: 0.1,
         maxRetries: 0,
         abortSignal: AbortSignal.timeout(attemptTimeoutMs),
-        system:
-          "You are the Libre Tiles word referee. Judge only against Collins " +
-          "Scrabble Words (2019). Reply with JSON only.",
-        prompt: `Validate these words for English Libre Tiles play: ${words.join(", ")}. Return JSON exactly matching the schema.`,
+        system: judgeSystemPromptFor(judgeSpec),
+        prompt: `Validate these words for ${judgeSpec.language} Libre Tiles play: ${words.join(", ")}. Return JSON exactly matching the schema.`,
       });
 
       runtime.tracker.recordUsage(result.usage);

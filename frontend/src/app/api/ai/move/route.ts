@@ -33,6 +33,7 @@ import {
   MOVE_PROMPT_VERSION,
   composeMoveSystemPrompt,
   buildMoveUserPrompt,
+  movePromptSpecFromContext,
 } from "@/lib/prompts";
 
 const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8000";
@@ -739,8 +740,10 @@ export async function POST(req: NextRequest) {
           ? EXTENDED_AUTO_FINALIZE_VALID_CAP
           : AUTO_FINALIZE_VALID_CAP;
 
+        const moveSpec = movePromptSpecFromContext(context);
         const systemPrompt = composeMoveSystemPrompt(
           typeof context.ai_prompt_text === "string" ? context.ai_prompt_text : null,
+          moveSpec,
         );
         const userPrompt = buildMoveUserPrompt(context);
         let model: Awaited<ReturnType<typeof getLanguageRuntime>>["model"];

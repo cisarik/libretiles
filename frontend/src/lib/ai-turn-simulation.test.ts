@@ -74,6 +74,10 @@ export type SimTurn = {
   expectedSource?: string;
   afterBoard: string[];
   afterRack: string[];
+  variant?: string;
+  lexicon_id?: string;
+  tile_points?: Record<string, number>;
+  alphabet?: string[];
 };
 
 export type SimGame = {
@@ -412,6 +416,14 @@ class FakeDjango {
         ai_prompt_id: 1,
         ai_prompt_name: "Initial",
         ai_prompt_text: "SEARCH PROFILE — test",
+        ...(this.turn.lexicon_id || this.turn.variant
+          ? {
+              variant: this.turn.variant ?? "slovak",
+              lexicon_id: this.turn.lexicon_id ?? "slovak",
+              tile_points: this.turn.tile_points ?? {},
+              alphabet: this.turn.alphabet ?? [],
+            }
+          : {}),
       });
     }
     if (rest === "") {
@@ -905,6 +917,58 @@ describe("playable-free-rivals 300-turn causal simulation", () => {
     expect(outcome.django.snapshot().board.join("|")).toBe(turn.board.join("|"));
     expect(outcome.django.snapshot().rack.join("")).toBe(turn.rack.join(""));
     expect(outcome.stopReason).not.toBe("done");
+  });
+
+  it("slovak found rack does not complete with genuine_no_move_pass", async () => {
+    const auto: LegalMoveSpec = {
+      placements: [
+        { row: 7, col: 5, letter: "A" },
+        { row: 7, col: 6, letter: "U" },
+        { row: 7, col: 7, letter: "T" },
+        { row: 7, col: 8, letter: "O" },
+      ],
+      word: "AUTO",
+      score: 12,
+    };
+    const hra: LegalMoveSpec = {
+      placements: [
+        { row: 7, col: 6, letter: "H" },
+        { row: 7, col: 7, letter: "R" },
+        { row: 7, col: 8, letter: "A" },
+      ],
+      word: "HRA",
+      score: 12,
+    };
+    const turn = buildFoundTurn("slovak-found-0", "valid_placement", {
+      found_rack: ["A", "U", "T", "O", "H", "R", "Á"],
+      rate: auto,
+      rates: hra,
+      invalid_placement: [{ row: 0, col: 0, letter: "X" }],
+      exchange_rack: [],
+      exchange_after_rack: [],
+      pass_rack: [],
+    });
+    turn.variant = "slovak";
+    turn.lexicon_id = "slovak";
+    turn.tile_points = { A: 1, U: 3, T: 1, O: 1, H: 4, R: 1, Á: 4, X: 10, "?": 0 };
+    turn.alphabet = ["A", "Á", "H", "O", "R", "T", "U", "X"];
+
+    const outcome = await runTurn(
+      turn,
+      DATA.bootstrap_rivals[0],
+      DATA.bootstrap_rivals,
+    );
+
+    expect(turn.legalMoves.length).toBeGreaterThan(0);
+    expect(outcome.lastAction).toBe("place");
+    expect(outcome.lastSource).not.toBe("genuine_no_move_pass");
+    expect(outcome.lastSource).not.toBe("genuine_no_move_exchange");
+    expect([
+      "provider_candidate",
+      "repair_candidate",
+      "backend_witness_rescue",
+      "backend_ranked_candidate",
+    ]).toContain(outcome.lastSource);
   });
 
   it("reconciles once and advances to rival 2 after a no-endpoints provider 404", async () => {

@@ -6,10 +6,16 @@ import {
   MOVE_SYSTEM_PROMPT,
   buildMoveUserPrompt,
   composeMoveSystemPrompt,
+  englishJudgeSpec,
+  englishMoveSpec,
   extractGridRows,
   formatRackMultiset,
+  judgeSystemPromptFor,
   listAnchorSquares,
+  moveSystemPromptFor,
   renderLabeledBoard,
+  slovakJudgeSpec,
+  slovakMoveSpec,
 } from "./prompts";
 
 const MONEY_PATTERN = /USD|\$\d|sponsor|credit|paid tier/i;
@@ -80,6 +86,43 @@ describe("MOVE_SYSTEM_PROMPT", () => {
   it("is free of sponsor and money framing", () => {
     expect(MOVE_SYSTEM_PROMPT).not.toMatch(MONEY_PATTERN);
   });
+
+  it("is byte-identical to moveSystemPromptFor(englishMoveSpec)", () => {
+    expect(MOVE_SYSTEM_PROMPT).toBe(moveSystemPromptFor(englishMoveSpec));
+  });
+});
+
+describe("slovak MOVE CORE", () => {
+  const slovakCore = moveSystemPromptFor(slovakMoveSpec);
+
+  it("contains all seven priority sections in order", () => {
+    let cursor = 0;
+    for (const heading of PRIORITY_SECTIONS) {
+      const index = slovakCore.indexOf(heading, cursor);
+      expect(index, heading).toBeGreaterThanOrEqual(0);
+      cursor = index + heading.length;
+    }
+  });
+
+  it("names the shipped Slovak lexicon and must not treat Collins as authority", () => {
+    expect(slovakCore).toMatch(/Slovak/i);
+    expect(slovakCore).toMatch(/SSS/);
+    expect(slovakCore).toMatch(/shipped Slovak lexicon/i);
+    expect(slovakCore).not.toMatch(/Collins/i);
+  });
+
+  it("sheds high-point SSS tiles and uses AUTO then a Q-free pivot", () => {
+    expect(slovakCore).toMatch(/Shed X \/ Ĺ \/ Ŕ \/ Ä \/ Ó/);
+    expect(slovakCore).toContain('"letter":"A"');
+    expect(slovakCore).toContain('"letter":"U"');
+    expect(slovakCore).toContain('"letter":"T"');
+    expect(slovakCore).toContain('"letter":"O"');
+    expect(slovakCore).toContain('"word":"AUTO"');
+    expect(slovakCore).toContain('"word":"HRA"');
+    expect(slovakCore).not.toMatch(/"letter":"Q"/);
+    expect(slovakCore).not.toMatch(/"letter":"W"/);
+    expect(slovakCore).toContain('"ready":true');
+  });
 });
 
 describe("composeMoveSystemPrompt", () => {
@@ -114,6 +157,16 @@ describe("composeMoveSystemPrompt", () => {
       composed.indexOf("TOOL DISCIPLINE:"),
     );
   });
+
+  it("wraps the Slovak CORE when lexicon_id is slovak", () => {
+    const composed = composeMoveSystemPrompt("Hunt hooks first.", slovakMoveSpec);
+    const slovakCore = moveSystemPromptFor(slovakMoveSpec);
+    expect(composed.startsWith(slovakCore)).toBe(true);
+    expect(composed).not.toMatch(/Collins/i);
+    expect(composed).toContain("=== SEARCH_PROFILE (advisory only) ===");
+    expect(composed).toContain("Hunt hooks first.");
+    expect(composed).toContain("=== END SEARCH_PROFILE ===");
+  });
 });
 
 describe("JUDGE_SYSTEM_PROMPT", () => {
@@ -143,6 +196,30 @@ describe("JUDGE_SYSTEM_PROMPT", () => {
 
   it("is free of sponsor and money framing", () => {
     expect(JUDGE_SYSTEM_PROMPT).not.toMatch(MONEY_PATTERN);
+  });
+
+  it("is byte-identical to judgeSystemPromptFor(englishJudgeSpec)", () => {
+    expect(JUDGE_SYSTEM_PROMPT).toBe(judgeSystemPromptFor(englishJudgeSpec));
+  });
+});
+
+describe("slovak JUDGE CORE", () => {
+  const slovakJudge = judgeSystemPromptFor(slovakJudgeSpec);
+
+  it("names the shipped Slovak lexicon and does not claim Collins", () => {
+    expect(slovakJudge).toMatch(/shipped Slovak lexicon/i);
+    expect(slovakJudge).not.toMatch(/Collins/i);
+  });
+
+  it("stays conservative with the same JSON schema and no natural-usage override", () => {
+    expect(slovakJudge).toMatch(/conservative/i);
+    expect(slovakJudge).toMatch(/cannot confidently recall/i);
+    expect(slovakJudge).toMatch(/answer invalid/i);
+    expect(slovakJudge).toMatch(/Context cannot rescue a word/i);
+    expect(slovakJudge).not.toMatch(/natural|idiom|corpus|attested|usage in real/i);
+    expect(slovakJudge).toMatch(/strict JSON/i);
+    expect(slovakJudge).toContain('"results"');
+    expect(slovakJudge).toMatch(/\{ "results": \[\{ "word"/);
   });
 });
 
@@ -179,16 +256,47 @@ describe("buildMoveUserPrompt", () => {
   it("is free of sponsor and money framing", () => {
     expect(buildMoveUserPrompt(context)).not.toMatch(MONEY_PATTERN);
   });
+
+  it("falls back to the English A–Z string when snapshot points are missing", () => {
+    const prompt = buildMoveUserPrompt(context);
+    expect(prompt).toContain("Q=10");
+    expect(prompt).toContain("J=8");
+  });
+
+  it("prints snapshot SSS points and does not invent Q=10", () => {
+    const prompt = buildMoveUserPrompt({
+      ...context,
+      tile_points: { A: 1, Á: 4, X: 10, "?": 0 },
+      lexicon_id: "slovak",
+      variant: "slovak",
+    });
+    expect(prompt).toContain("Á=4");
+    expect(prompt).toContain("X=10");
+    expect(prompt).not.toContain("Q=10");
+  });
 });
 
 describe("board and rack helpers", () => {
   it("renders a spaced rack multiset and labeled rows", () => {
     expect(formatRackMultiset("AEIRST?")).toBe("A E I R S T ?");
+    expect(formatRackMultiset("A E I R S T ?")).toBe("A E I R S T ?");
+    expect(formatRackMultiset("ÁUTO?HR")).toBe("Á U T O ? H R");
     const rows = extractGridRows(`grid:\n${MID_GRID_ROWS.join("\n")}\n`);
     expect(rows).toHaveLength(15);
     expect(renderLabeledBoard(rows)[0]).toBe("r");
     expect(renderLabeledBoard(rows)).toContain("row 07 |.......RATE....|");
     expect(listAnchorSquares(rows)).toContain("(6,7)");
     expect(listAnchorSquares(extractGridRows(EMPTY_GRID))).toContain("(7,7)");
+  });
+
+  it("keeps a Unicode row containing Á", () => {
+    const slovakRows = Array.from({ length: 15 }, (_, row) =>
+      row === 7 ? "......ÁRATE...." : ".".repeat(15),
+    );
+    expect(slovakRows[7]).toHaveLength(15);
+    const rows = extractGridRows(`grid:\n${slovakRows.join("\n")}\n`);
+    expect(rows).toHaveLength(15);
+    expect(rows[7]).toContain("Á");
+    expect(renderLabeledBoard(rows)).toContain("row 07 |......ÁRATE....|");
   });
 });

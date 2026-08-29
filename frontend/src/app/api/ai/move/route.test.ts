@@ -983,4 +983,32 @@ describe("POST /api/ai/move", () => {
       }),
     );
   });
+
+  it("does not send Collins as the sole authority for a slovak context", async () => {
+    mockBackend({
+      context: {
+        body: {
+          ...defaultContext(),
+          lexicon_id: "slovak",
+          variant: "slovak",
+          tile_points: { A: 1, Á: 4, X: 10, "?": 0 },
+        },
+      },
+      "/validate-move/": {
+        body: { valid: true, total_score: 2, words: [{ word: "A", valid: true }] },
+      },
+      "/ai-move/": {
+        body: { ok: true, action: "place", points: 2, words: [{ word: "A", score: 2 }] },
+      },
+    });
+    await runRoute();
+    const opts = generateTextMock.mock.calls[0][0] as {
+      system: string;
+      prompt: string;
+    };
+    expect(opts.system).not.toMatch(/Collins Scrabble Words \(2019\)/);
+    expect(opts.system).toMatch(/shipped Slovak lexicon/i);
+    expect(opts.prompt).toContain("Á=4");
+    expect(opts.prompt).not.toContain("Q=10");
+  });
 });

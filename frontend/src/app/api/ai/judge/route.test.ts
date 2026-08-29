@@ -44,15 +44,18 @@ const NEWEST_CATALOG = [
   { provider: "openrouter", model_id: "google/gemma-4-31b-it:free" },
 ];
 
-function judgeRequest(modelId?: string): NextRequest {
+function judgeRequest(
+  modelId?: string,
+  extra: Record<string, unknown> = {},
+): NextRequest {
   return new NextRequest("http://localhost/api/ai/judge", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(
-      modelId === undefined
-        ? { words: ["QI", "ZA"] }
-        : { words: ["QI", "ZA"], model_id: modelId },
-    ),
+    body: JSON.stringify({
+      words: ["QI", "ZA"],
+      ...(modelId === undefined ? {} : { model_id: modelId }),
+      ...extra,
+    }),
   });
 }
 
@@ -463,6 +466,51 @@ describe("POST /api/ai/judge", () => {
         retry_after_seconds: 86_400,
       }),
     );
+    expect(generateTextMock).toHaveBeenCalledTimes(5);
+    vi.unstubAllGlobals();
+  });
+
+  it("does not claim Collins when lexicon_id is slovak", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify(NEWEST_CATALOG), { status: 200 })),
+    );
+    generateTextMock.mockResolvedValue(
+      validPayload(
+        JSON.stringify({
+          results: [
+            { word: "QI", valid: true, reason: "shipped Slovak lexicon" },
+            { word: "ZA", valid: true, reason: "shipped Slovak lexicon" },
+          ],
+        }),
+      ),
+    );
+
+    const response = await POST(judgeRequest(undefined, { lexicon_id: "slovak" }));
+    expect(response.status).toBe(200);
+    const opts = generateTextMock.mock.calls[0][0] as {
+      system: string;
+      prompt: string;
+    };
+    expect(opts.system).not.toMatch(/Collins/i);
+    expect(opts.system).toMatch(/shipped Slovak lexicon/i);
+    expect(opts.prompt).toMatch(/Slovak/);
+    expect(opts.prompt).not.toMatch(/Collins/i);
+    vi.unstubAllGlobals();
+  });
+
+  it("returns 503 without fabricating invalids for a slovak lexicon request", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify(NEWEST_CATALOG), { status: 200 })),
+    );
+    generateTextMock.mockResolvedValue(validPayload("garbage output"));
+
+    const response = await POST(judgeRequest(undefined, { lexicon_id: "slovak" }));
+    expect(response.status).toBe(503);
+    const payload = await response.json();
+    expect(payload.error).toBeDefined();
+    expect(payload.results).toBeUndefined();
     expect(generateTextMock).toHaveBeenCalledTimes(5);
     vi.unstubAllGlobals();
   });
