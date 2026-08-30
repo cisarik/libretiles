@@ -567,7 +567,7 @@ def _check_endgame(session: GameSession) -> dict[str, Any]:
         )
         for slot in slots
     ]
-    leftover = apply_final_scoring(players)
+    leftover = apply_final_scoring(players, variant=session.variant_slug)
 
     for slot, player in zip(slots, players, strict=False):
         slot.score = player.score

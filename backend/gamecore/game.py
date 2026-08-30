@@ -52,9 +52,12 @@ def determine_end_reason(
     return None
 
 
-def apply_final_scoring(players: Iterable[PlayerState]) -> dict[str, int]:
+def apply_final_scoring(
+    players: Iterable[PlayerState],
+    variant: object = None,
+) -> dict[str, int]:
     player_list = list(players)
-    leftover: dict[str, int] = {p.name: p.rack_points() for p in player_list}
+    leftover: dict[str, int] = {p.name: p.rack_points(variant) for p in player_list}
     finisher = next((p for p in player_list if not p.rack), None)
     total_bonus = sum(leftover.values())
 
@@ -206,7 +209,9 @@ class Game:
         if reason is None:
             return
         self.end_reason = reason
-        self.leftover_points = apply_final_scoring(self.players)
+        self.leftover_points = apply_final_scoring(
+            self.players, variant=self.bag.variant_slug
+        )
         top_score = max(player.score for player in self.players)
         leaders = [player.name for player in self.players if player.score == top_score]
         self.winner_name = leaders[0] if len(leaders) == 1 else None
