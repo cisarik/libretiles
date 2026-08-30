@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import Any
 from urllib.parse import parse_qs
 
 from channels.db import database_sync_to_async
@@ -72,7 +73,7 @@ class GameConsumer(AsyncJsonWebsocketConsumer):
                     },
                 )
 
-    async def receive_json(self, content: dict, **kwargs) -> None:
+    async def receive_json(self, content: dict[str, Any], **kwargs: Any) -> None:
         event_type = str(content.get("type") or "")
         if event_type != "chat_message":
             await self.send_json({"type": "error", "error": "Unsupported event"})
@@ -86,7 +87,7 @@ class GameConsumer(AsyncJsonWebsocketConsumer):
         if not result["ok"]:
             await self.send_json({"type": "error", "error": result["error"]})
 
-    async def room_game_state(self, event: dict) -> None:
+    async def room_game_state(self, event: dict[str, Any]) -> None:
         try:
             state = await database_sync_to_async(services.get_game_state_for_user)(
                 self.game_id,
@@ -98,12 +99,12 @@ class GameConsumer(AsyncJsonWebsocketConsumer):
         self.player_slot = state["my_slot"]
         await self.send_json({"type": event["event_name"], "state": state})
 
-    async def room_chat_message(self, event: dict) -> None:
+    async def room_chat_message(self, event: dict[str, Any]) -> None:
         payload = dict(event["payload"])
         payload["mine"] = payload.get("author_slot") == self.player_slot
         await self.send_json({"type": event["event_name"], "message": payload})
 
-    async def room_presence(self, event: dict) -> None:
+    async def room_presence(self, event: dict[str, Any]) -> None:
         if event.get("sender_channel") == self.channel_name:
             return
         await self.send_json(

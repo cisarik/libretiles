@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from typing import cast
+
 from .board import Board
 from .tiles import get_tile_points
 from .types import Placement, Premium, ScoreBreakdown
+from .variant_store import VariantDefinition
 
 
 def score_words(
@@ -20,7 +23,7 @@ def score_words(
     total_score = 0
     breakdowns: list[ScoreBreakdown] = []
     new_cells = set(placed.keys())
-    tile_points = get_tile_points(variant)
+    tile_points = get_tile_points(cast(VariantDefinition | str | None, variant))
 
     for word, coords in words_coords:
         word_multiplier = 1

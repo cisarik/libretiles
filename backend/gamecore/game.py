@@ -16,6 +16,7 @@ from .rules import (
 from .scoring import apply_premium_consumption, score_words
 from .tiles import TileBag, get_tile_points
 from .types import Placement
+from .variant_store import VariantDefinition
 
 
 class GameEndReason(Enum):
@@ -31,7 +32,7 @@ class PlayerState:
     score: int = 0
     pass_streak: int = 0
 
-    def rack_points(self, variant: object = None) -> int:
+    def rack_points(self, variant: VariantDefinition | str | None = None) -> int:
         points = get_tile_points(variant)
         return sum(points.get(letter, 0) for letter in self.rack)
 
@@ -54,7 +55,7 @@ def determine_end_reason(
 
 def apply_final_scoring(
     players: Iterable[PlayerState],
-    variant: object = None,
+    variant: VariantDefinition | str | None = None,
 ) -> dict[str, int]:
     player_list = list(players)
     leftover: dict[str, int] = {p.name: p.rack_points(variant) for p in player_list}

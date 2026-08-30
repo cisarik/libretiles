@@ -90,7 +90,7 @@ class PlayerSlot(models.Model):
         db_table = "game_player_slot"
 
     def __str__(self) -> str:
-        name = "AI" if self.is_ai else (self.user.username if self.user else "???")  # type: ignore[union-attr]
+        name = "AI" if self.is_ai else (self.user.username if self.user else "???")
         return f"Slot {self.slot}: {name} (score={self.score})"
 
 
@@ -156,5 +156,5 @@ class ChatMessage(models.Model):
         db_table = "game_chat_message"
 
     def __str__(self) -> str:
-        username = self.user.username if self.user else "Unknown"  # type: ignore[union-attr]
+        username = self.user.username if self.user else "Unknown"
         return f"{username}: {self.body[:40]}"

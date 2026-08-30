@@ -1,3 +1,5 @@
+from typing import Any
+
 from django.db import migrations
 
 
@@ -93,7 +95,7 @@ OUTPUT FORMAT (strict JSON, no markdown, nothing else):
 }"""
 
 
-def seed_grandmaster(apps, schema_editor):
+def seed_grandmaster(apps: Any, schema_editor: Any) -> None:
     AIPrompt = apps.get_model("catalog", "AIPrompt")
     AIPrompt.objects.update_or_create(
         name="Grandmaster",
@@ -109,7 +111,7 @@ def seed_grandmaster(apps, schema_editor):
     )
 
 
-def remove_grandmaster(apps, schema_editor):
+def remove_grandmaster(apps: Any, schema_editor: Any) -> None:
     AIPrompt = apps.get_model("catalog", "AIPrompt")
     AIPrompt.objects.filter(name="Grandmaster").delete()
 

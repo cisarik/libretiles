@@ -71,6 +71,7 @@ ASGI_APPLICATION = "config.asgi.application"
 
 # Database — PostgreSQL in production, SQLite for dev/test convenience
 _DB_ENGINE = os.getenv("DB_ENGINE", "sqlite3")
+DATABASES: dict[str, dict[str, str | Path]]
 if _DB_ENGINE == "postgresql":
     DATABASES = {
         "default": {

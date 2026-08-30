@@ -3,7 +3,7 @@ from rest_framework import serializers
 from .models import AIModel, AIPrompt
 
 
-class AIModelSerializer(serializers.ModelSerializer):
+class AIModelSerializer(serializers.ModelSerializer[AIModel]):
     is_flagship = serializers.SerializerMethodField()
     recommended = serializers.SerializerMethodField()
 
@@ -30,7 +30,7 @@ class AIModelSerializer(serializers.ModelSerializer):
         return self.get_is_flagship(obj)
 
 
-class AIPromptSerializer(serializers.ModelSerializer):
+class AIPromptSerializer(serializers.ModelSerializer[AIPrompt]):
     class Meta:
         model = AIPrompt
         fields = (

@@ -37,6 +37,23 @@ python_version = "3.11"
 strict = true
 plugins = ["mypy_django_plugin.main", "mypy_drf_plugin.main"]
 
+# channels has no published type stubs; do not install types-channels or weaken global strictness.
+[[tool.mypy.overrides]]
+module = [
+    "channels.db",
+    "channels.generic.websocket",
+    "channels.layers",
+    "channels.routing",
+    "channels.security.websocket",
+]
+ignore_missing_imports = true
+
+# AsyncJsonWebsocketConsumer is Any under the channels override above; this is the
+# minimum extra relaxation so GameConsumer can subclass it without a type: ignore.
+[[tool.mypy.overrides]]
+module = "game.consumers"
+disallow_subclassing_any = false
+
 [tool.django-stubs]
 django_settings_module = "config.settings"
 

@@ -6,7 +6,7 @@ from .models import User
 from .serializers import ChangePasswordSerializer, RegisterSerializer, UserSerializer
 
 
-class RegisterView(generics.CreateAPIView):
+class RegisterView(generics.CreateAPIView[User]):
     queryset = User.objects.all()
     serializer_class = RegisterSerializer
     permission_classes = [permissions.AllowAny]

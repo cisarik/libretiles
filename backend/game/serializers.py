@@ -168,7 +168,7 @@ def sanitize_ai_metadata(value: object) -> dict[str, Any]:
     return out
 
 
-class CreateGameSerializer(serializers.Serializer):
+class CreateGameSerializer(serializers.Serializer[dict[str, Any]]):
     game_mode = serializers.ChoiceField(choices=["vs_ai"], default="vs_ai")
     ai_model_id = serializers.IntegerField(required=False, allow_null=True)
     ai_model_model_id = serializers.CharField(required=False, allow_blank=False, max_length=200)
@@ -182,7 +182,7 @@ class CreateGameSerializer(serializers.Serializer):
             raise serializers.ValidationError("unknown_variant")
         return slug
 
-    def validate(self, attrs: dict) -> dict:
+    def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
         if attrs.get("game_mode") != "vs_ai":
             return attrs
 
@@ -207,7 +207,7 @@ class CreateGameSerializer(serializers.Serializer):
         return attrs
 
 
-class QueueJoinSerializer(serializers.Serializer):
+class QueueJoinSerializer(serializers.Serializer[dict[str, Any]]):
     variant_slug = serializers.CharField(default="english", max_length=50)
 
     def validate_variant_slug(self, value: str) -> str:
@@ -218,11 +218,11 @@ class QueueJoinSerializer(serializers.Serializer):
         return slug
 
 
-class QueueCancelSerializer(serializers.Serializer):
+class QueueCancelSerializer(serializers.Serializer[dict[str, Any]]):
     game_id = serializers.CharField(required=True, max_length=100)
 
 
-class GameHistoryQuerySerializer(serializers.Serializer):
+class GameHistoryQuerySerializer(serializers.Serializer[dict[str, Any]]):
     game_mode = serializers.ChoiceField(
         choices=["all", "vs_ai", "vs_human"],
         required=False,
@@ -237,13 +237,13 @@ class GameHistoryQuerySerializer(serializers.Serializer):
     page_size = serializers.IntegerField(required=False, min_value=1, max_value=25, default=8)
 
 
-class SubmitMoveSerializer(serializers.Serializer):
+class SubmitMoveSerializer(serializers.Serializer[dict[str, Any]]):
     placements = serializers.ListField(
         child=serializers.DictField(), min_length=1, max_length=7
     )
 
 
-class ExchangeSerializer(serializers.Serializer):
+class ExchangeSerializer(serializers.Serializer[dict[str, Any]]):
     letters = serializers.ListField(
         child=serializers.CharField(max_length=1), min_length=1, max_length=7
     )
@@ -253,7 +253,7 @@ class ExchangeSerializer(serializers.Serializer):
         return sanitize_ai_metadata(value)
 
 
-class ValidateMoveSerializer(serializers.Serializer):
+class ValidateMoveSerializer(serializers.Serializer[dict[str, Any]]):
     placements = serializers.ListField(child=serializers.DictField(), min_length=1)
     rack_owner = serializers.ChoiceField(
         choices=["player", "ai"],
@@ -262,7 +262,7 @@ class ValidateMoveSerializer(serializers.Serializer):
     )
 
 
-class ValidateWordsSerializer(serializers.Serializer):
+class ValidateWordsSerializer(serializers.Serializer[dict[str, Any]]):
     words = serializers.ListField(child=serializers.CharField(max_length=50), min_length=1)
 
 
@@ -309,7 +309,7 @@ class PlacementSerializer(serializers.Serializer[dict[str, Any]]):
         return super().to_internal_value(data)  # type: ignore[no-any-return]
 
 
-class ApplyAIMoveSerializer(serializers.Serializer):
+class ApplyAIMoveSerializer(serializers.Serializer[dict[str, Any]]):
     placements = PlacementSerializer(many=True)
     ai_metadata = serializers.DictField(required=False, allow_null=True)
 
@@ -334,7 +334,7 @@ class AIPassSerializer(serializers.Serializer[dict[str, Any]]):
         return sanitize_ai_metadata(value)
 
 
-class UpdateGameAIModelSerializer(serializers.Serializer):
+class UpdateGameAIModelSerializer(serializers.Serializer[dict[str, Any]]):
     ai_model_model_id = serializers.CharField(required=True, allow_blank=False, max_length=200)
 
     def validate_ai_model_model_id(self, value: str) -> str:
@@ -343,7 +343,7 @@ class UpdateGameAIModelSerializer(serializers.Serializer):
         return value
 
 
-class UpdateGameAIPromptSerializer(serializers.Serializer):
+class UpdateGameAIPromptSerializer(serializers.Serializer[dict[str, Any]]):
     ai_prompt_id = serializers.IntegerField(required=True)
 
     def validate_ai_prompt_id(self, value: int) -> int:

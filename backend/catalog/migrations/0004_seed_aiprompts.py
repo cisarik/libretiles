@@ -1,3 +1,5 @@
+from typing import Any
+
 from django.db import migrations
 
 
@@ -167,7 +169,7 @@ OUTPUT FORMAT (strict JSON, no markdown):
 }"""
 
 
-def seed_prompts(apps, schema_editor):
+def seed_prompts(apps: Any, schema_editor: Any) -> None:
     AIPrompt = apps.get_model("catalog", "AIPrompt")
     prompts = [
         {"name": "Initial", "prompt": INITIAL_PROMPT, "fitness": 0.0, "sort_order": 10},
@@ -178,7 +180,7 @@ def seed_prompts(apps, schema_editor):
         AIPrompt.objects.update_or_create(name=data["name"], defaults=data)
 
 
-def remove_prompts(apps, schema_editor):
+def remove_prompts(apps: Any, schema_editor: Any) -> None:
     AIPrompt = apps.get_model("catalog", "AIPrompt")
     AIPrompt.objects.filter(name__in=["Initial", "Fast Search", "Short Hooks"]).delete()
 

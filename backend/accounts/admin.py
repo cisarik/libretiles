@@ -1,11 +1,18 @@
+from typing import TYPE_CHECKING
+
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 
 from .models import User
 
+if TYPE_CHECKING:
+    _BaseUserAdmin = BaseUserAdmin[User]
+else:
+    _BaseUserAdmin = BaseUserAdmin
+
 
 @admin.register(User)
-class UserAdmin(BaseUserAdmin):
+class UserAdmin(_BaseUserAdmin):
     list_display = (
         "username",
         "email",

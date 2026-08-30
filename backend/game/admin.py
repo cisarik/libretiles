@@ -1,14 +1,27 @@
 from collections import defaultdict
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from django.contrib import admin
-from django.db.models import Count
+from django.db.models import Count, QuerySet
 from django.http import HttpRequest, HttpResponse
 from django.template.response import TemplateResponse
-from django.urls import path, reverse
+from django.urls import URLPattern, path, reverse
 
 from accounts.models import User
 from .models import ChatMessage, GameSession, Move, PlayerSlot
+
+if TYPE_CHECKING:
+    _PlayerSlotInline = admin.TabularInline[PlayerSlot, GameSession]
+    _MoveInline = admin.TabularInline[Move, GameSession]
+    _GameSessionAdmin = admin.ModelAdmin[GameSession]
+    _MoveAdmin = admin.ModelAdmin[Move]
+    _ChatMessageAdmin = admin.ModelAdmin[ChatMessage]
+else:
+    _PlayerSlotInline = admin.TabularInline
+    _MoveInline = admin.TabularInline
+    _GameSessionAdmin = admin.ModelAdmin
+    _MoveAdmin = admin.ModelAdmin
+    _ChatMessageAdmin = admin.ModelAdmin
 
 def _extract_usage(ai_metadata: Any) -> dict[str, int]:
     if not isinstance(ai_metadata, dict):
@@ -54,20 +67,20 @@ def _slot_snapshot(game: GameSession) -> tuple[str, int, str, int]:
     slots = list(game.slots.all().order_by("slot"))
     slot0 = next((slot for slot in slots if slot.slot == 0), None)
     slot1 = next((slot for slot in slots if slot.slot == 1), None)
-    slot0_name = "AI" if slot0 and slot0.is_ai else (slot0.user.username if slot0 and slot0.user else "Waiting")  # type: ignore[union-attr]
-    slot1_name = "AI" if slot1 and slot1.is_ai else (slot1.user.username if slot1 and slot1.user else "Waiting")  # type: ignore[union-attr]
+    slot0_name = "AI" if slot0 and slot0.is_ai else (slot0.user.username if slot0 and slot0.user else "Waiting")
+    slot1_name = "AI" if slot1 and slot1.is_ai else (slot1.user.username if slot1 and slot1.user else "Waiting")
     slot0_score = slot0.score if slot0 else 0
     slot1_score = slot1.score if slot1 else 0
     return slot0_name, slot0_score, slot1_name, slot1_score
 
 
-class PlayerSlotInline(admin.TabularInline):
+class PlayerSlotInline(_PlayerSlotInline):
     model = PlayerSlot
     extra = 0
     readonly_fields = ("slot", "user", "is_ai", "rack", "score", "pass_streak")
 
 
-class MoveInline(admin.TabularInline):
+class MoveInline(_MoveInline):
     model = Move
     extra = 0
     readonly_fields = ("seq", "player_slot", "kind", "points", "placements", "created_at")
@@ -75,7 +88,7 @@ class MoveInline(admin.TabularInline):
 
 
 @admin.register(GameSession)
-class GameSessionAdmin(admin.ModelAdmin):
+class GameSessionAdmin(_GameSessionAdmin):
     change_list_template = "admin/game/gamesession/change_list.html"
     list_display = (
         "public_id_short",
@@ -104,7 +117,7 @@ class GameSessionAdmin(admin.ModelAdmin):
     )
     date_hierarchy = "created_at"
 
-    def get_queryset(self, request: HttpRequest):
+    def get_queryset(self, request: HttpRequest) -> QuerySet[GameSession]:
         return (
             super()
             .get_queryset(request)
@@ -113,7 +126,7 @@ class GameSessionAdmin(admin.ModelAdmin):
             .annotate(move_count_total=Count("moves"))
         )
 
-    def get_urls(self):
+    def get_urls(self) -> list[URLPattern]:
         custom_urls = [
             path(
                 "dashboard/",
@@ -250,7 +263,7 @@ class GameSessionAdmin(admin.ModelAdmin):
 
 
 @admin.register(Move)
-class MoveAdmin(admin.ModelAdmin):
+class MoveAdmin(_MoveAdmin):
     list_display = (
         "game_short",
         "seq",
@@ -280,7 +293,7 @@ class MoveAdmin(admin.ModelAdmin):
 
 
 @admin.register(ChatMessage)
-class ChatMessageAdmin(admin.ModelAdmin):
+class ChatMessageAdmin(_ChatMessageAdmin):
     list_display = ("game", "user", "body", "created_at")
     search_fields = ("game__public_id", "user__username", "body")
     readonly_fields = ("created_at",)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
@@ -15,7 +16,7 @@ def room_name(game_id: str) -> str:
     return f"game_{game_id}"
 
 
-def _group_send(group: str, message: dict) -> None:
+def _group_send(group: str, message: dict[str, Any]) -> None:
     channel_layer = get_channel_layer()
     if channel_layer is None:
         return
@@ -43,7 +44,7 @@ def publish_game_state_refresh(session: GameSession, *, event_name: str) -> None
     transaction.on_commit(send)
 
 
-def publish_chat_message(session: GameSession, *, payload: dict) -> None:
+def publish_chat_message(session: GameSession, *, payload: dict[str, Any]) -> None:
     game_id = str(session.public_id)
 
     def send() -> None:

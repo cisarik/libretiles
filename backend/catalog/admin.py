@@ -1,17 +1,25 @@
 from io import StringIO
+from typing import TYPE_CHECKING
 
 from django.contrib import admin, messages
 from django.core.management import call_command
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import redirect
 from django.template.response import TemplateResponse
-from django.urls import path, reverse
+from django.urls import URLPattern, path, reverse
 
 from .models import AIModel, AIPrompt
 
+if TYPE_CHECKING:
+    _AIModelAdmin = admin.ModelAdmin[AIModel]
+    _AIPromptAdmin = admin.ModelAdmin[AIPrompt]
+else:
+    _AIModelAdmin = admin.ModelAdmin
+    _AIPromptAdmin = admin.ModelAdmin
+
 
 @admin.register(AIModel)
-class AIModelAdmin(admin.ModelAdmin):
+class AIModelAdmin(_AIModelAdmin):
     change_list_template = "admin/catalog/aimodel/change_list.html"
     list_display = (
         "display_name",
@@ -37,7 +45,7 @@ class AIModelAdmin(admin.ModelAdmin):
     ordering = ("sort_order", "display_name")
     readonly_fields = ("created_at", "updated_at", "last_synced_at", "released_at")
 
-    def get_urls(self):
+    def get_urls(self) -> list[URLPattern]:
         custom_urls = [
             path(
                 "sync/",
@@ -100,7 +108,7 @@ class AIModelAdmin(admin.ModelAdmin):
 
 
 @admin.register(AIPrompt)
-class AIPromptAdmin(admin.ModelAdmin):
+class AIPromptAdmin(_AIPromptAdmin):
     list_display = ("name", "fitness", "is_active", "sort_order", "updated_at")
     list_editable = ("fitness", "is_active", "sort_order")
     search_fields = ("name", "prompt")

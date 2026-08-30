@@ -310,9 +310,9 @@ def _resolve_ai_prompt(*, ai_prompt_id: int | None) -> AIPrompt | None:
 def _serialize_slot(slot: PlayerSlot) -> dict[str, Any]:
     username: str | None
     if slot.is_ai:
-        username = slot.user.username if slot.user else "AI"  # type: ignore[union-attr]
+        username = slot.user.username if slot.user else "AI"
     else:
-        username = slot.user.username if slot.user else None  # type: ignore[union-attr]
+        username = slot.user.username if slot.user else None
 
     return {
         "slot": slot.slot,
@@ -334,7 +334,7 @@ def _serialize_chat_message(
     return {
         "id": message.id,
         "author_slot": author_slot,
-        "author_username": message.user.username if message.user else "Unknown",  # type: ignore[union-attr]
+        "author_username": message.user.username if message.user else "Unknown",
         "body": message.body,
         "created_at": message.created_at.isoformat(),
         "mine": message.user_id == current_user_id,
@@ -1600,7 +1600,7 @@ def create_chat_message_for_user(*, game_id: str, user_id: int, body: str) -> di
         payload = {
             "id": message.id,
             "author_slot": player_slot.slot,
-            "author_username": player_slot.user.username if player_slot.user else "Unknown",  # type: ignore[union-attr]
+            "author_username": player_slot.user.username if player_slot.user else "Unknown",
             "body": message.body,
             "created_at": message.created_at.isoformat(),
             "mine": False,
