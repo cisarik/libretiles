@@ -12,7 +12,7 @@ import subprocess
 import tempfile
 import unicodedata
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
@@ -56,6 +56,14 @@ QUEUE_MODES = frozenset({"selected-only", "catalog-fallback"})
 LIVE_SENTINEL = "LIBRETILES_AI_PLAY_LIVE"
 HANDOFF_ENV = "LIBRETILES_AI_PLAY_HANDOFF"
 TURN_PROBE_NODE = "tests/diagnostics/test_turn_probe.py::test_run_turn_from_handoff"
+FAKE_WORKER_SCRIPT = "src/lib/ai-play-diagnostic.worker.test.ts"
+LIVE_WORKER_SCRIPT = "src/lib/ai-play-diagnostic.live.worker.test.ts"
+SHIPPED_LIVE_PROVIDERS = frozenset({"nvidia-nim", "openrouter"})
+CREDENTIAL_ENV_BY_PROVIDER = {
+    "nvidia-nim": "NVIDIA_API_KEY",
+    "openrouter": "OPENROUTER_API_KEY",
+}
+CREDENTIAL_FORWARD_NAMES = ("NVIDIA_API_KEY", "OPENROUTER_API_KEY")
 MESSAGE_LIMIT = 200
 SOURCE_REVISION_UNKNOWN = "unknown"
 REASON_OK = "ok"
@@ -71,6 +79,7 @@ REASON_UNICODE_MISMATCH = "unicode_or_formed_word_mismatch"
 REASON_CODED_PROVIDER_UNCHANGED = "coded_provider_unchanged"
 REASON_PERSIST_LOST_TERMINAL = "persist_then_lost_terminal"
 REASON_LIVE_REFUSED = "live_mode_requires_opt_in"
+REASON_RUNTIME_MODE_NOT_HONORED = "runtime_mode_not_honored"
 SECRET_KEY_FRAGMENTS = (
     "authorization",
     "token",
@@ -197,6 +206,7 @@ class TurnSample:
     external_provider_invocations: int
     backend_origins: tuple[str, ...]
     foreign_origins: tuple[str, ...]
+    executed_runtime_mode: str
     verdict: TurnVerdict
     reason_code: str
 
@@ -856,6 +866,100 @@ def live_opt_in_enabled(environ: Mapping[str, str] | None = None) -> bool:
     return source.get(LIVE_SENTINEL) == "1"
 
 
+def worker_script_for_runtime_mode(runtime_mode: str) -> str:
+    if runtime_mode == "live":
+        return LIVE_WORKER_SCRIPT
+    return FAKE_WORKER_SCRIPT
+
+
+def is_shipped_live_provider(provider: str) -> bool:
+    return provider in SHIPPED_LIVE_PROVIDERS
+
+
+def credential_env_name_for_provider(provider: str) -> str | None:
+    return CREDENTIAL_ENV_BY_PROVIDER.get(provider)
+
+
+def is_obvious_placeholder(value: str) -> bool:
+    normalized = value.strip().casefold()
+    if not normalized:
+        return True
+    return (
+        normalized.startswith("your-")
+        or "placeholder" in normalized
+        or "replace-me" in normalized
+        or normalized in {"changeme", "change-me"}
+    )
+
+
+def live_named_credential_usable(
+    environ: Mapping[str, str],
+    provider: str,
+) -> tuple[bool, str | None]:
+    name = credential_env_name_for_provider(provider)
+    if name is None:
+        return False, None
+    raw = environ.get(name)
+    if raw is None or is_obvious_placeholder(raw):
+        return False, name
+    return True, name
+
+
+def derive_executed_runtime_mode(*, driver: str, sentinel_present: bool) -> str:
+    if driver == "live" and sentinel_present:
+        return "live"
+    return "fake"
+
+
+def prepare_probe_environment(
+    source: Mapping[str, str],
+    *,
+    runtime_mode: str,
+) -> dict[str, str]:
+    env = dict(source)
+    env.pop("APPIMAGE", None)
+    env.pop("ARGV0", None)
+    env.pop("APPDIR", None)
+    for name in CREDENTIAL_FORWARD_NAMES:
+        env.pop(name, None)
+    if runtime_mode == "live":
+        env[LIVE_SENTINEL] = "1"
+        for name in CREDENTIAL_FORWARD_NAMES:
+            value = source.get(name)
+            if value:
+                env[name] = value
+    else:
+        env.pop(LIVE_SENTINEL, None)
+    return env
+
+
+def apply_runtime_mode_reconciliation(
+    samples: Sequence[TurnSample],
+    *,
+    requested_runtime_mode: str,
+) -> list[TurnSample]:
+    reconciled: list[TurnSample] = []
+    for sample in samples:
+        if sample.executed_runtime_mode != requested_runtime_mode:
+            reconciled.append(
+                replace(
+                    sample,
+                    verdict="fail",
+                    reason_code=REASON_RUNTIME_MODE_NOT_HONORED,
+                )
+            )
+        else:
+            reconciled.append(sample)
+    return reconciled
+
+
+def report_executed_runtime_mode(samples: Sequence[TurnSample]) -> str:
+    modes = {sample.executed_runtime_mode for sample in samples}
+    if len(modes) == 1:
+        return next(iter(modes))
+    return "fake"
+
+
 def redacted_copy(value: object) -> object:
     if isinstance(value, dict):
         redacted: dict[str, object] = {}
@@ -925,6 +1029,7 @@ def turn_sample_to_dict(sample: TurnSample) -> dict[str, Any]:
         "external_provider_invocations": sample.external_provider_invocations,
         "backend_origins": list(sample.backend_origins),
         "foreign_origins": list(sample.foreign_origins),
+        "executed_runtime_mode": sample.executed_runtime_mode,
         "verdict": sample.verdict,
         "reason_code": sample.reason_code,
     }
@@ -954,7 +1059,15 @@ def classify_turn_sample(
     move_id: int | None,
     lost_terminal: bool,
     variant_letters: frozenset[str] | None = None,
+    requested_runtime_mode: str | None = None,
+    executed_runtime_mode: str | None = None,
 ) -> tuple[TurnVerdict, str]:
+    if (
+        requested_runtime_mode is not None
+        and executed_runtime_mode is not None
+        and requested_runtime_mode != executed_runtime_mode
+    ):
+        return ("fail", REASON_RUNTIME_MODE_NOT_HONORED)
     if rejected_two_letter_words:
         return ("fail", REASON_ILLEGAL_TWO_LETTER)
     if sse_words and persisted_words and not formed_words_nfc_equal(sse_words, persisted_words):
@@ -1069,6 +1182,7 @@ def build_turn_report(
         "generated_at": generated,
         "source_revision": source_revision or observe_source_revision(),
         "requested": dict(requested),
+        "executed_runtime_mode": report_executed_runtime_mode(samples),
         "variant": {
             "slug": context.variant.slug,
             "lexicon_id": _lexicon_id(context.variant),
@@ -1194,6 +1308,8 @@ def _turn_sample_from_dict(item: Mapping[str, Any]) -> TurnSample:
     external_raw = item.get("external_provider_invocations")
     backend_raw = item.get("backend_origins")
     foreign_raw = item.get("foreign_origins")
+    executed_raw = item.get("executed_runtime_mode")
+    executed_runtime_mode = executed_raw if executed_raw in RUNTIME_MODES else "fake"
     verdict_raw = item.get("verdict")
     verdict: TurnVerdict = (
         verdict_raw
@@ -1232,6 +1348,7 @@ def _turn_sample_from_dict(item: Mapping[str, Any]) -> TurnSample:
         )
         if isinstance(foreign_raw, list)
         else (),
+        executed_runtime_mode=executed_runtime_mode,
         verdict=verdict,
         reason_code=reason,
     )

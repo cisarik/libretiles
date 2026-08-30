@@ -31,6 +31,9 @@
       "minLength": 1,
       "maxLength": 64
     },
+    "executed_runtime_mode": {
+      "enum": ["fake", "live"]
+    },
     "requested": {
       "type": "object",
       "additionalProperties": true,
@@ -251,6 +254,7 @@
         },
         "lost_terminal": { "type": "boolean" },
         "external_provider_invocations": { "type": "integer", "minimum": 0 },
+        "executed_runtime_mode": { "enum": ["fake", "live"] },
         "verdict": {
           "enum": ["pass", "pass_with_telemetry", "fail", "external_incomplete"]
         },

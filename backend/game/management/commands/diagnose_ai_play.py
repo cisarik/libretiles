@@ -23,6 +23,7 @@ from game.diagnostics import (
     DEFAULT_RUNTIME_MODE,
     DEFAULT_TIMEOUT_SECONDS,
     DEFAULT_TURN_COUNT,
+    CREDENTIAL_ENV_BY_PROVIDER,
     DiagnosticInputError,
     HANDOFF_ENV,
     LIVE_SENTINEL,
@@ -36,12 +37,16 @@ from game.diagnostics import (
     TURN_COUNT_MIN,
     TURN_PROBE_NODE,
     UINT32_MAX,
+    apply_runtime_mode_reconciliation,
     bound_text,
     build_turn_report,
     dump_report_json,
     format_turn_metric_line,
+    is_obvious_placeholder,
+    is_shipped_live_provider,
     live_opt_in_enabled,
     load_variant_context,
+    prepare_probe_environment,
     resolve_engine_scenario,
     samples_from_result_payload,
     turn_exit_code,
@@ -90,10 +95,22 @@ class Command(BaseCommand):
         temp_dir: Path | None = None
         try:
             request = _validated_request(options)
-            if request["runtime_mode"] == "live" and not live_opt_in_enabled():
-                raise DiagnosticInputError(
-                    f"--runtime-mode live requires {LIVE_SENTINEL}=1"
-                )
+            if request["runtime_mode"] == "live":
+                if not live_opt_in_enabled():
+                    raise DiagnosticInputError(
+                        f"--runtime-mode live requires {LIVE_SENTINEL}=1"
+                    )
+                if not is_shipped_live_provider(request["provider"]):
+                    raise DiagnosticInputError(
+                        "--runtime-mode live requires a shipped provider "
+                        "(nvidia-nim or openrouter)"
+                    )
+                credential_name = CREDENTIAL_ENV_BY_PROVIDER[request["provider"]]
+                credential_raw = os.environ.get(credential_name)
+                if credential_raw is None or is_obvious_placeholder(credential_raw):
+                    raise DiagnosticInputError(
+                        f"--runtime-mode live requires {credential_name} (value redacted)"
+                    )
             scenario = resolve_engine_scenario(
                 variant_slug=request["variant_slug"],
                 fixture_id=request["fixture_id"],
@@ -114,11 +131,10 @@ class Command(BaseCommand):
                 json.dumps(handoff, ensure_ascii=False, indent=2) + "\n",
                 encoding="utf-8",
             )
-            env = os.environ.copy()
+            env = prepare_probe_environment(
+                os.environ, runtime_mode=request["runtime_mode"]
+            )
             env[HANDOFF_ENV] = str(handoff_path)
-            env.pop("APPIMAGE", None)
-            env.pop("ARGV0", None)
-            env.pop("APPDIR", None)
             timeout_seconds = request["timeout_seconds"]
             turn_count = request["turn_count"]
             completed = subprocess.run(
@@ -144,7 +160,10 @@ class Command(BaseCommand):
             result = json.loads(result_path.read_text(encoding="utf-8"))
             if not isinstance(result, dict):
                 raise DiagnosticInputError("turn probe result is not an object")
-            samples = samples_from_result_payload(result)
+            samples = apply_runtime_mode_reconciliation(
+                samples_from_result_payload(result),
+                requested_runtime_mode=request["runtime_mode"],
+            )
             requested: dict[str, str | int] = {
                 "variant_slug": request["variant_slug"],
                 "provider": request["provider"],

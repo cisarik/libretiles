@@ -23,21 +23,27 @@ from catalog.selection import FREE_RIVAL_PAIRS, NVIDIA_NIM_PROVIDER
 from game import services
 from game.diagnostics import (
     DiagnosticScenario,
+    FAKE_WORKER_SCRIPT,
     HANDOFF_ENV,
+    LIVE_SENTINEL,
+    LIVE_WORKER_SCRIPT,
     TurnAttemptRecord,
     TurnPersistenceEvidence,
     TurnSample,
     build_seeded_scenario,
     classify_complete_formed_words,
     classify_turn_sample,
+    derive_executed_runtime_mode,
     formed_words_from_payload,
     is_diacritic_letter,
     load_named_scenario,
     load_variant_context,
     nfc_upper,
     placements_from_payload,
+    prepare_probe_environment,
     resolve_engine_scenario,
     turn_sample_to_dict,
+    worker_script_for_runtime_mode,
 )
 from game.models import GameSession
 
@@ -154,12 +160,9 @@ def spawn_worker(
     queue_mode: str,
     script: str,
     observation_path: Path,
+    runtime_mode: str = "fake",
 ) -> dict[str, Any]:
-    env = os.environ.copy()
-    env.pop("APPIMAGE", None)
-    env.pop("ARGV0", None)
-    env.pop("APPDIR", None)
-    env.pop("LIBRETILES_AI_PLAY_LIVE", None)
+    env = prepare_probe_environment(os.environ, runtime_mode=runtime_mode)
     env["LIBRETILES_AI_PLAY_WORKER"] = "1"
     env["BACKEND_URL"] = live_origin.rstrip("/")
     env["LIBRETILES_AI_PLAY_JWT"] = token
@@ -171,8 +174,9 @@ def spawn_worker(
     env["LIBRETILES_AI_PLAY_QUEUE_MODE"] = queue_mode
     env["LIBRETILES_AI_PLAY_SCRIPT"] = script
     env["LIBRETILES_AI_PLAY_OBSERVATION"] = str(observation_path)
+    worker = worker_script_for_runtime_mode(runtime_mode)
     completed = subprocess.run(
-        ["npx", "vitest", "run", "src/lib/ai-play-diagnostic.worker.test.ts"],
+        ["npx", "vitest", "run", worker],
         cwd=_FRONTEND,
         env=env,
         capture_output=True,
@@ -222,6 +226,7 @@ def merge_turn_sample(
     playability: dict[str, Any],
     observation: dict[str, Any],
     variant_slug: str,
+    requested_runtime_mode: str = "fake",
 ) -> TurnSample:
     session.refresh_from_db()
     moves = list(session.moves.order_by("seq"))
@@ -258,6 +263,17 @@ def merge_turn_sample(
     lost = bool(observation.get("lost_terminal"))
     coded = bool(observation.get("coded_provider_error"))
     score = move.points if move is not None else int(observation.get("score") or 0)
+    driver_raw = observation.get("driver")
+    driver = driver_raw if driver_raw in {"fake", "live"} else "fake"
+    sentinel_present = bool(observation.get("sentinel_present"))
+    executed_raw = observation.get("executed_runtime_mode")
+    executed_runtime_mode = (
+        executed_raw
+        if executed_raw in {"fake", "live"}
+        else derive_executed_runtime_mode(
+            driver=driver, sentinel_present=sentinel_present
+        )
+    )
     verdict, reason = classify_turn_sample(
         playability_status=playability_status,
         action=action if isinstance(action, str) else None,
@@ -275,6 +291,8 @@ def merge_turn_sample(
         move_id=move.id if move is not None else None,
         lost_terminal=lost,
         variant_letters=context.letters,
+        requested_runtime_mode=requested_runtime_mode,
+        executed_runtime_mode=executed_runtime_mode,
     )
     queue_raw = observation.get("queue_length")
     used_raw = observation.get("turn_provider_requests_used")
@@ -325,6 +343,7 @@ def merge_turn_sample(
         )
         if isinstance(foreign_raw, list)
         else (),
+        executed_runtime_mode=executed_runtime_mode,
         verdict=verdict,
         reason_code=reason,
     )
@@ -343,6 +362,7 @@ def run_isolated_turn(
     timeout_seconds: int = 60,
     max_steps: int = 30,
     seed: int | None = None,
+    runtime_mode: str = "fake",
 ) -> tuple[TurnSample, GameSession, dict[str, Any]]:
     tmp_path.mkdir(parents=True, exist_ok=True)
     seed_catalog()
@@ -372,6 +392,7 @@ def run_isolated_turn(
         queue_mode=queue_mode,
         script=script,
         observation_path=observation_path,
+        runtime_mode=runtime_mode,
     )
     sample = merge_turn_sample(
         session=session,
@@ -379,6 +400,7 @@ def run_isolated_turn(
         playability=playability,
         observation=observation,
         variant_slug=variant_slug,
+        requested_runtime_mode=runtime_mode,
     )
     return sample, session, observation
 
@@ -400,6 +422,7 @@ def test_run_turn_from_handoff(live_server: Any, tmp_path: Path) -> None:
     script = str(handoff.get("script") or "noop_rescue")
     timeout_seconds = int(handoff.get("timeout_seconds") or 60)
     max_steps = int(handoff.get("max_steps") or 30)
+    runtime_mode = str(handoff.get("runtime_mode") or "fake")
     result_path = Path(str(handoff["result_path"]))
     samples: list[dict[str, Any]] = []
     for index in range(turn_count):
@@ -415,6 +438,7 @@ def test_run_turn_from_handoff(live_server: Any, tmp_path: Path) -> None:
             script=script,
             timeout_seconds=timeout_seconds,
             max_steps=max_steps,
+            runtime_mode=runtime_mode,
         )
         samples.append(turn_sample_to_dict(sample))
     result_path.parent.mkdir(parents=True, exist_ok=True)
@@ -612,4 +636,103 @@ def test_fake_mode_contacts_no_origin_other_than_the_ephemeral_backend(
     assert observation.get("foreign_origins") == []
     assert origin in sample.backend_origins
     assert sample.external_provider_invocations == 0
+    assert sample.executed_runtime_mode == "fake"
     assert sample.verdict == "pass"
+
+
+def _capture_spawn(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+    captured: list[dict[str, Any]] = []
+
+    def fake_run(
+        args: list[object],
+        **kwargs: Any,
+    ) -> subprocess.CompletedProcess[str]:
+        argv = [str(item) for item in args]
+        env = kwargs.get("env") or {}
+        observation_raw = env.get("LIBRETILES_AI_PLAY_OBSERVATION")
+        assert isinstance(observation_raw, str)
+        Path(observation_raw).write_text("{}\n", encoding="utf-8")
+        captured.append({"args": argv, "env": env})
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    return captured
+
+
+def test_probe_selects_live_driver_for_live_and_fake_driver_for_fake(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    captured = _capture_spawn(monkeypatch)
+    spawn_worker(
+        live_origin="http://127.0.0.1:9",
+        token="t",
+        game_id="g",
+        provider=_NIM_PROVIDER,
+        model_id=_NIM,
+        timeout_seconds=60,
+        max_steps=30,
+        queue_mode="selected-only",
+        script="noop_rescue",
+        observation_path=tmp_path / "live.obs.json",
+        runtime_mode="live",
+    )
+    spawn_worker(
+        live_origin="http://127.0.0.1:9",
+        token="t",
+        game_id="g",
+        provider="openrouter",
+        model_id=_GEMMA,
+        timeout_seconds=60,
+        max_steps=30,
+        queue_mode="selected-only",
+        script="noop_rescue",
+        observation_path=tmp_path / "fake.obs.json",
+        runtime_mode="fake",
+    )
+    assert captured[0]["args"] == ["npx", "vitest", "run", LIVE_WORKER_SCRIPT]
+    assert captured[1]["args"] == ["npx", "vitest", "run", FAKE_WORKER_SCRIPT]
+    assert FAKE_WORKER_SCRIPT not in captured[0]["args"]
+    assert LIVE_WORKER_SCRIPT not in captured[1]["args"]
+
+
+def test_probe_preserves_sentinel_for_live_and_omits_it_for_fake(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    captured = _capture_spawn(monkeypatch)
+    monkeypatch.setenv("NVIDIA_API_KEY", "nim-diagnostic-fixture-key")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-diagnostic-fixture-key")
+    monkeypatch.setenv("UNRELATED_API_KEY", "decoy-must-not-be-special-cased")
+    spawn_worker(
+        live_origin="http://127.0.0.1:9",
+        token="t",
+        game_id="g",
+        provider=_NIM_PROVIDER,
+        model_id=_NIM,
+        timeout_seconds=60,
+        max_steps=30,
+        queue_mode="selected-only",
+        script="noop_rescue",
+        observation_path=tmp_path / "live.obs.json",
+        runtime_mode="live",
+    )
+    spawn_worker(
+        live_origin="http://127.0.0.1:9",
+        token="t",
+        game_id="g",
+        provider="openrouter",
+        model_id=_GEMMA,
+        timeout_seconds=60,
+        max_steps=30,
+        queue_mode="selected-only",
+        script="noop_rescue",
+        observation_path=tmp_path / "fake.obs.json",
+        runtime_mode="fake",
+    )
+    live_env = captured[0]["env"]
+    fake_env = captured[1]["env"]
+    assert live_env.get(LIVE_SENTINEL) == "1"
+    assert LIVE_SENTINEL not in fake_env
+    assert "NVIDIA_API_KEY" in live_env
+    assert "OPENROUTER_API_KEY" in live_env
+    assert "NVIDIA_API_KEY" not in fake_env
+    assert "OPENROUTER_API_KEY" not in fake_env

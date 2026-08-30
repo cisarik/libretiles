@@ -93,7 +93,7 @@ describe("ai-play-diagnostic worker", () => {
     expect(liveOptInEnabled()).toBe(false);
     const backendUrl = requiredEnv("BACKEND_URL").replace(/\/$/, "");
     process.env.BACKEND_URL = backendUrl;
-    const guard = installFetchGuard(new URL(backendUrl).origin);
+    const guard = installFetchGuard(new URL(backendUrl).origin, { mode: "fake" });
     try {
       const { POST } = await import("@/app/api/ai/move/route");
       const script = (process.env.LIBRETILES_AI_PLAY_SCRIPT ?? "noop_rescue") as FakeScript;
@@ -113,9 +113,16 @@ describe("ai-play-diagnostic worker", () => {
         script,
         backendOrigins: guard.backend,
         foreignOrigins: guard.foreign,
+        providerOrigins: guard.provider,
+        executedRuntimeMode: "fake",
+        driver: "fake",
       });
       observation.backend_origins = [...new Set(guard.backend)];
       observation.foreign_origins = [...new Set(guard.foreign)];
+      observation.external_provider_invocations = guard.provider.length;
+      observation.executed_runtime_mode = "fake";
+      observation.driver = "fake";
+      observation.sentinel_present = liveOptInEnabled();
       expect(observation.foreign_origins).toEqual([]);
       if (script !== "generic_unchanged") {
         expect(observation.backend_origins.length).toBeGreaterThan(0);

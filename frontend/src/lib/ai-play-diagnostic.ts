@@ -32,6 +32,13 @@ export const COMPLETION_SOURCES: readonly AiCompletionSource[] = [
 
 export type QueueMode = "selected-only" | "catalog-fallback";
 export type FakeScript = "noop_rescue" | "drop_done" | "generic_unchanged" | "validate_scripted";
+export type DiagnosticRuntimeMode = "fake" | "live";
+export type DiagnosticDriver = "fake" | "live";
+
+export const SHIPPED_PROVIDER_ORIGINS: readonly string[] = [
+  "https://openrouter.ai",
+  "https://integrate.api.nvidia.com",
+];
 
 export type DiagnosticQueueInput = {
   provider: string;
@@ -68,6 +75,9 @@ export type TerminalObservation = {
   external_provider_invocations: number;
   backend_origins: string[];
   foreign_origins: string[];
+  executed_runtime_mode?: DiagnosticRuntimeMode;
+  driver?: DiagnosticDriver;
+  sentinel_present?: boolean;
 };
 
 const SECRET_KEY_FRAGMENTS = [
@@ -120,13 +130,29 @@ export function originOf(input: RequestInfo | URL): string {
   }
 }
 
-export function installFetchGuard(allowedOrigin: string): {
+export function derivedExternalProviderInvocations(
+  providerOrigins: readonly string[],
+): number {
+  return providerOrigins.length;
+}
+
+export function installFetchGuard(
+  allowedOrigin: string,
+  options?: {
+    mode?: DiagnosticRuntimeMode;
+    providerOrigins?: readonly string[];
+  },
+): {
   backend: string[];
   foreign: string[];
+  provider: string[];
   restore: () => void;
 } {
+  const mode: DiagnosticRuntimeMode = options?.mode ?? "fake";
+  const providerOrigins = [...(options?.providerOrigins ?? SHIPPED_PROVIDER_ORIGINS)];
   const backend: string[] = [];
   const foreign: string[] = [];
+  const provider: string[] = [];
   const original = globalThis.fetch;
   globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
     const origin = originOf(input);
@@ -134,14 +160,23 @@ export function installFetchGuard(allowedOrigin: string): {
       backend.push(origin);
       return original(input, init);
     }
+    if (mode === "live" && providerOrigins.includes(origin)) {
+      provider.push(origin);
+      return original(input, init);
+    }
     foreign.push(origin);
     return Promise.reject(
-      new Error(`diagnostic fake mode blocked foreign origin ${origin}`),
+      new Error(
+        mode === "live"
+          ? `diagnostic live mode blocked origin ${origin}`
+          : `diagnostic fake mode blocked foreign origin ${origin}`,
+      ),
     );
   }) as typeof fetch;
   return {
     backend,
     foreign,
+    provider,
     restore: () => {
       globalThis.fetch = original;
     },
@@ -242,6 +277,9 @@ export function serializeTerminalObservation(input: {
   externalProviderInvocations: number;
   backendOrigins: string[];
   foreignOrigins: string[];
+  executedRuntimeMode?: DiagnosticRuntimeMode;
+  driver?: DiagnosticDriver;
+  sentinelPresent?: boolean;
 }): TerminalObservation {
   const terminal = input.terminal;
   const data =
@@ -295,6 +333,15 @@ export function serializeTerminalObservation(input: {
     backend_origins: [...new Set(input.backendOrigins)],
     foreign_origins: [...new Set(input.foreignOrigins)],
   };
+  if (input.executedRuntimeMode) {
+    observation.executed_runtime_mode = input.executedRuntimeMode;
+  }
+  if (input.driver) {
+    observation.driver = input.driver;
+  }
+  if (typeof input.sentinelPresent === "boolean") {
+    observation.sentinel_present = input.sentinelPresent;
+  }
   return redactValue(observation) as TerminalObservation;
 }
 
@@ -351,7 +398,12 @@ export async function runDiagnosticTurn(opts: {
   scriptedPlacements?: Array<Record<string, unknown>>;
   backendOrigins?: string[];
   foreignOrigins?: string[];
+  providerOrigins?: string[];
+  executedRuntimeMode?: DiagnosticRuntimeMode;
+  driver?: DiagnosticDriver;
 }): Promise<TerminalObservation> {
+  const providerOrigins = opts.providerOrigins ?? [];
+  const invocations = derivedExternalProviderInvocations(providerOrigins);
   if (opts.script === "generic_unchanged") {
     return serializeTerminalObservation({
       terminal: { kind: "generic_error", message: "AI move failed" },
@@ -359,9 +411,12 @@ export async function runDiagnosticTurn(opts: {
       queue: [{ provider: opts.provider, model_id: opts.modelId }],
       turnProviderRequestsUsed: 0,
       lostTerminal: false,
-      externalProviderInvocations: 0,
+      externalProviderInvocations: invocations,
       backendOrigins: [],
       foreignOrigins: [],
+      executedRuntimeMode: opts.executedRuntimeMode,
+      driver: opts.driver,
+      sentinelPresent: liveOptInEnabled(),
     });
   }
 
@@ -427,9 +482,12 @@ export async function runDiagnosticTurn(opts: {
     queue,
     turnProviderRequestsUsed: result.providerRequestsUsed,
     lostTerminal,
-    externalProviderInvocations: 0,
+    externalProviderInvocations: invocations,
     backendOrigins: opts.backendOrigins ?? [],
     foreignOrigins: opts.foreignOrigins ?? [],
+    executedRuntimeMode: opts.executedRuntimeMode,
+    driver: opts.driver,
+    sentinelPresent: liveOptInEnabled(),
   });
   if (lostTerminal && !observation.terminal_cause) {
     observation.terminal_cause = "lost_sse_done";

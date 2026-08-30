@@ -16,9 +16,11 @@ from django.core.management.base import CommandError
 from game.diagnostics import (
     ARTIFACT_ID,
     COMPLETION_SOURCE_VOCABULARY,
+    LIVE_SENTINEL,
     REASON_FOUND_NONSCORING_ACTION,
     REASON_GENERIC_UNCHANGED,
     REASON_PERSIST_LOST_TERMINAL,
+    REASON_RUNTIME_MODE_NOT_HONORED,
     classify_turn_sample,
     observe_source_revision,
 )
@@ -232,9 +234,11 @@ def test_report_matches_v1_turn_branch_and_redacts_secrets(
     assert "should-be-redacted" not in dumped
     assert "token" not in sample
     assert report["summary"]["external_provider_invocations"] == 0
+    assert report["executed_runtime_mode"] == "fake"
+    assert sample["executed_runtime_mode"] == "fake"
 
 
-def test_live_mode_refuses_without_opt_in_sentinel(
+def test_live_mode_requires_sentinel_and_exits_two_without_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("LIBRETILES_AI_PLAY_LIVE", raising=False)
@@ -255,6 +259,210 @@ def test_live_mode_refuses_without_opt_in_sentinel(
             stderr=StringIO(),
         )
     assert exc.value.returncode == 2
+    assert LIVE_SENTINEL in str(exc.value)
+
+
+def test_live_mode_refuses_when_named_credential_is_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LIBRETILES_AI_PLAY_LIVE", "1")
+    monkeypatch.delenv("NVIDIA_API_KEY", raising=False)
+
+    def forbidden(*args: object, **kwargs: object) -> object:
+        raise AssertionError("live mode must not spawn without the named credential")
+
+    monkeypatch.setattr("game.management.commands.diagnose_ai_play.subprocess.run", forbidden)
+    stdout = StringIO()
+    with pytest.raises(CommandError) as exc:
+        call_command(
+            "diagnose_ai_play",
+            variant_slug="slovak",
+            provider="nvidia-nim",
+            model_id=_NIM,
+            runtime_mode="live",
+            fixture_id="slovak-hooks-umenasi",
+            stdout=stdout,
+            stderr=StringIO(),
+        )
+    assert exc.value.returncode == 2
+    message = str(exc.value)
+    assert "NVIDIA_API_KEY" in message
+    assert "redacted" in message.casefold()
+    assert stdout.getvalue() == ""
+    monkeypatch.setenv("NVIDIA_API_KEY", "your-nvidia-api-key")
+    with pytest.raises(CommandError) as placeholder:
+        call_command(
+            "diagnose_ai_play",
+            variant_slug="slovak",
+            provider="nvidia-nim",
+            model_id=_NIM,
+            runtime_mode="live",
+            fixture_id="slovak-hooks-umenasi",
+            stdout=StringIO(),
+            stderr=StringIO(),
+        )
+    assert placeholder.value.returncode == 2
+    assert "NVIDIA_API_KEY" in str(placeholder.value)
+    assert "your-nvidia-api-key" not in str(placeholder.value)
+
+
+def test_live_mode_refuses_unsupported_provider_before_any_network(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LIBRETILES_AI_PLAY_LIVE", "1")
+    monkeypatch.setenv("NVIDIA_API_KEY", "nim-diagnostic-fixture-key")
+
+    def forbidden(*args: object, **kwargs: object) -> object:
+        raise AssertionError("unsupported live provider must not spawn")
+
+    monkeypatch.setattr("game.management.commands.diagnose_ai_play.subprocess.run", forbidden)
+    with pytest.raises(CommandError) as exc:
+        call_command(
+            "diagnose_ai_play",
+            variant_slug="slovak",
+            provider="groq",
+            model_id="openai/gpt-oss-120b",
+            runtime_mode="live",
+            fixture_id="slovak-hooks-umenasi",
+            stdout=StringIO(),
+            stderr=StringIO(),
+        )
+    assert exc.value.returncode == 2
+    assert "shipped provider" in str(exc.value)
+
+
+def test_handoff_carries_runtime_mode_to_the_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _fake_pytest(monkeypatch, _sample_payload())
+    call_command(
+        "diagnose_ai_play",
+        variant_slug="slovak",
+        provider="nvidia-nim",
+        model_id=_NIM,
+        runtime_mode="fake",
+        fixture_id="slovak-turn-diacritic-blank",
+        stdout=StringIO(),
+        stderr=StringIO(),
+    )
+    assert captured["handoff"]["runtime_mode"] == "fake"
+    monkeypatch.setenv("LIBRETILES_AI_PLAY_LIVE", "1")
+    monkeypatch.setenv("NVIDIA_API_KEY", "nim-diagnostic-fixture-key")
+    live_captured = _fake_pytest(monkeypatch, _sample_payload(executed_runtime_mode="live"))
+    call_command(
+        "diagnose_ai_play",
+        variant_slug="slovak",
+        provider="nvidia-nim",
+        model_id=_NIM,
+        runtime_mode="live",
+        fixture_id="slovak-turn-diacritic-blank",
+        stdout=StringIO(),
+        stderr=StringIO(),
+    )
+    assert live_captured["handoff"]["runtime_mode"] == "live"
+
+
+def test_report_records_executed_runtime_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_pytest(monkeypatch, _sample_payload(executed_runtime_mode="fake"))
+    stdout = StringIO()
+    call_command(
+        "diagnose_ai_play",
+        variant_slug="slovak",
+        provider="nvidia-nim",
+        model_id=_NIM,
+        runtime_mode="fake",
+        fixture_id="slovak-turn-diacritic-blank",
+        stdout=stdout,
+        stderr=StringIO(),
+    )
+    report = json.loads(stdout.getvalue())
+    assert report["requested"]["runtime_mode"] == "fake"
+    assert report["executed_runtime_mode"] == "fake"
+    assert report["samples"][0]["executed_runtime_mode"] == "fake"
+
+
+def test_requested_live_but_executed_fake_is_a_verdict_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LIBRETILES_AI_PLAY_LIVE", "1")
+    monkeypatch.setenv("NVIDIA_API_KEY", "nim-diagnostic-fixture-key")
+    _fake_pytest(monkeypatch, _sample_payload(executed_runtime_mode="fake"))
+    stdout = StringIO()
+    with pytest.raises(CommandError) as exc:
+        call_command(
+            "diagnose_ai_play",
+            variant_slug="slovak",
+            provider="nvidia-nim",
+            model_id=_NIM,
+            runtime_mode="live",
+            fixture_id="slovak-turn-diacritic-blank",
+            stdout=stdout,
+            stderr=StringIO(),
+        )
+    assert exc.value.returncode == 1
+    report = json.loads(stdout.getvalue())
+    assert report["requested"]["runtime_mode"] == "live"
+    assert report["executed_runtime_mode"] == "fake"
+    sample = report["samples"][0]
+    assert sample["verdict"] == "fail"
+    assert sample["reason_code"] == REASON_RUNTIME_MODE_NOT_HONORED
+    dumped = json.dumps(report)
+    assert "nim-diagnostic-fixture-key" not in dumped
+
+
+def test_command_forwards_only_named_credential_variables(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NVIDIA_API_KEY", "nim-diagnostic-fixture-key")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-diagnostic-fixture-key")
+    monkeypatch.setenv("UNRELATED_API_KEY", "decoy-must-not-be-special-cased")
+    fake_captured = _fake_pytest(monkeypatch, _sample_payload())
+    stdout = StringIO()
+    call_command(
+        "diagnose_ai_play",
+        variant_slug="slovak",
+        provider="nvidia-nim",
+        model_id=_NIM,
+        runtime_mode="fake",
+        fixture_id="slovak-turn-diacritic-blank",
+        stdout=stdout,
+        stderr=StringIO(),
+    )
+    fake_env = fake_captured["env"]
+    assert "NVIDIA_API_KEY" not in fake_env
+    assert "OPENROUTER_API_KEY" not in fake_env
+    fake_report = json.loads(stdout.getvalue())
+    fake_dump = json.dumps(fake_report)
+    assert "nim-diagnostic-fixture-key" not in fake_dump
+    assert "or-diagnostic-fixture-key" not in fake_dump
+    assert "runtime_mode" in fake_captured["handoff"]
+    assert "NVIDIA_API_KEY" not in fake_captured["handoff"]
+    monkeypatch.setenv("LIBRETILES_AI_PLAY_LIVE", "1")
+    live_captured = _fake_pytest(
+        monkeypatch, _sample_payload(executed_runtime_mode="live")
+    )
+    live_stdout = StringIO()
+    call_command(
+        "diagnose_ai_play",
+        variant_slug="slovak",
+        provider="nvidia-nim",
+        model_id=_NIM,
+        runtime_mode="live",
+        fixture_id="slovak-turn-diacritic-blank",
+        stdout=live_stdout,
+        stderr=StringIO(),
+    )
+    live_env = live_captured["env"]
+    assert "NVIDIA_API_KEY" in live_env
+    assert "OPENROUTER_API_KEY" in live_env
+    live_dump = json.dumps(json.loads(live_stdout.getvalue()))
+    assert "nim-diagnostic-fixture-key" not in live_dump
+    assert "or-diagnostic-fixture-key" not in live_dump
+    handoff_dump = json.dumps(live_captured["handoff"])
+    assert "nim-diagnostic-fixture-key" not in handoff_dump
+    assert "or-diagnostic-fixture-key" not in handoff_dump
 
 
 def test_classify_found_pass_is_fail() -> None:
