@@ -44,7 +44,8 @@ export type ProviderScript =
   | "highest_score_retained"
   | "genuine_exchange"
   | "genuine_pass"
-  | "indeterminate_probe";
+  | "indeterminate_probe"
+  | "no_valid_provider_candidate";
 
 export type PlacementSpec = {
   row: number;
@@ -155,7 +156,10 @@ export function buildFoundTurn(
   const rack = [...tiles.found_rack];
   const rate = tiles.rate;
   const rates = tiles.rates;
-  const committed = script === "highest_score_retained" ? rates : rate;
+  const committed =
+    script === "highest_score_retained" || script === "no_valid_provider_candidate"
+      ? rates
+      : rate;
   return {
     id,
     kind: "found",
@@ -174,7 +178,9 @@ export function buildFoundTurn(
         : script === "timeout_witness_rescue" ||
             script === "commit_reject_reprobe_rescue"
           ? "backend_witness_rescue"
-          : "provider_candidate",
+          : script === "no_valid_provider_candidate"
+            ? "backend_ranked_candidate"
+            : "provider_candidate",
     afterBoard: placeOnBoard(board, committed.placements),
     afterRack: remainingRack(rack, committed.placements),
   };
@@ -280,6 +286,7 @@ export function buildReplayGames(data: FixtureShape = DATA): SimGame[] {
 type GenerationOpts = {
   temperature?: number;
   stopWhen?: unknown;
+  abortSignal?: AbortSignal;
   tools?: {
     validateMove?: { execute?: (input: { placements: PlacementSpec[] }) => Promise<unknown> };
   };
@@ -447,6 +454,9 @@ class FakeDjango {
     if (rest === "ai-model") {
       return jsonResponse({ ok: true, ai_model_id: this.preferenceModelId });
     }
+    if (rest === "ai-candidates") {
+      return this.rankedCandidates();
+    }
     throw new Error(`Unexpected backend request: ${path}`);
   }
 
@@ -494,6 +504,42 @@ class FakeDjango {
       exchange_allowed: this.turn.exchangeAllowed,
       exchange_letters: this.turn.exchangeLetters,
       search: { complete: true, nodes: 1, elapsed_ms: 1 },
+    });
+  }
+
+  rankedCandidates(): Response {
+    if (
+      this.turn.script === "no_valid_provider_candidate" &&
+      this.turn.legalMoves.length > 0
+    ) {
+      return jsonResponse({
+        status: "found",
+        candidates: this.turn.legalMoves.map((move) => ({
+          placements: move.placements,
+          words: [move.word],
+          score: move.score,
+          tiles_used: move.placements.length,
+          leave_value: 0,
+        })),
+        search: {
+          complete: true,
+          nodes: 10,
+          elapsed_ms: 5,
+          unique_placements: this.turn.legalMoves.length,
+          candidate_count: this.turn.legalMoves.length,
+        },
+      });
+    }
+    return jsonResponse({
+      status: "none",
+      candidates: [],
+      search: {
+        complete: true,
+        nodes: 1,
+        elapsed_ms: 1,
+        unique_placements: 0,
+        candidate_count: 0,
+      },
     });
   }
 
@@ -651,6 +697,22 @@ async function runScriptedGeneration(
   engine.searchCalls += 1;
   const script = engine.turn.script;
 
+  if (script === "no_valid_provider_candidate") {
+    const signal = opts.abortSignal;
+    await new Promise<never>((_, reject) => {
+      const fail = () => reject(new DOMException("Timeout", "AbortError"));
+      if (!signal) {
+        reject(new Error("abortSignal missing"));
+        return;
+      }
+      if (signal.aborted) {
+        fail();
+        return;
+      }
+      signal.addEventListener("abort", fail, { once: true });
+    });
+  }
+
   if (script === "retryable_429_fallback" && engine.searchCalls === 1) {
     throw Object.assign(new Error("rate limit"), { statusCode: 429 });
   }
@@ -698,6 +760,7 @@ async function runTurn(
   turn: SimTurn,
   rival: CatalogPair,
   catalog: CatalogPair[],
+  routeBody?: Record<string, unknown>,
 ): Promise<{
   django: FakeDjango;
   engine: EngineState;
@@ -762,6 +825,7 @@ async function runTurn(
           runtime_model_id: pair.model_id,
           timeout: timeoutSeconds,
           max_steps: maxStepsRemaining,
+          ...routeBody,
         }),
       });
       const response = await POST(req);
@@ -801,6 +865,7 @@ describe("playable-free-rivals 300-turn causal simulation", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
+    vi.useRealTimers();
   });
 
   it("pins anti-pass recovery across five bootstrap rivals in under 10s", async () => {
@@ -991,5 +1056,38 @@ describe("playable-free-rivals 300-turn causal simulation", () => {
     expect(outcome.django.terminalPersisted).toBe(1);
     expect(outcome.django.persistedInvalid).toBe(0);
     expect(outcome.lastAction).toBe("place");
+  });
+
+  it("finalizes a no-progress model from the ranked candidate before the hard timeout", async () => {
+    vi.useFakeTimers();
+    const turn = buildFoundTurn(
+      "no-valid-provider-0",
+      "no_valid_provider_candidate",
+    );
+    const pending = runTurn(
+      turn,
+      DATA.bootstrap_rivals[0],
+      DATA.bootstrap_rivals,
+      { no_provider_progress_deadline: 3 },
+    );
+    for (let i = 0; i < 100 && harness.generateText.mock.calls.length === 0; i += 1) {
+      await Promise.resolve();
+    }
+    expect(harness.generateText.mock.calls.length).toBeGreaterThan(0);
+    await vi.advanceTimersByTimeAsync(3_000);
+    await Promise.resolve();
+    await Promise.resolve();
+    const outcome = await pending;
+
+    expect(outcome.lastAction).toBe("place");
+    expect(outcome.lastSource).toBe("backend_ranked_candidate");
+    expect(outcome.lastAction).not.toBe("pass");
+    expect(outcome.lastAction).not.toBe("exchange");
+    expect(outcome.django.persistedInvalid).toBe(0);
+    expect(outcome.django.terminalPersisted).toBe(1);
+    expect(outcome.posts).toBeLessThanOrEqual(3);
+    expect(new Set(outcome.engine.distinctPairs).size).toBeLessThanOrEqual(3);
+    expect(outcome.engine.distinctPairs.length).toBeLessThanOrEqual(3);
+    expect(outcome.django.snapshot().board.join("|")).toBe(turn.afterBoard.join("|"));
   });
 });

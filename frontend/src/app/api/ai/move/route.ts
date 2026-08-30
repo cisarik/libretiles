@@ -51,6 +51,10 @@ const EXTENDED_AUTO_FINALIZE_GRACE_MS = 6000;
 const EXTENDED_AUTO_FINALIZE_VALID_CAP = 7;
 const REPAIR_RESERVE_STEPS = 2;
 const REPAIR_MIN_REMAINING_SECONDS = 2;
+/** Wall-clock abort when the model has produced no backend-valid candidate. */
+const DEFAULT_NO_PROVIDER_PROGRESS_DEADLINE_S = 20;
+const MIN_NO_PROVIDER_PROGRESS_DEADLINE_S = 1;
+const MAX_NO_PROVIDER_PROGRESS_DEADLINE_S = 120;
 const SEARCH_TEMPERATURE = 0.15;
 const REPAIR_TEMPERATURE = 0;
 
@@ -61,7 +65,7 @@ type CompletionSource =
   | "backend_witness_rescue"
   | "genuine_no_move_exchange"
   | "genuine_no_move_pass";
-type AbortReason = "timeout" | "auto_finalize" | "finish";
+type AbortReason = "timeout" | "auto_finalize" | "finish" | "no_provider_progress";
 
 function summarizeBackendBody(body: string) {
   return body.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 220);
@@ -272,6 +276,26 @@ function clampNumber(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
 }
 
+/**
+ * Deadline never exceeds the attempt timeout and leaves REPAIR_MIN_REMAINING_SECONDS
+ * of headroom when the attempt is long enough for that reserve.
+ */
+function resolveNoProgressDeadlineSeconds(
+  requested: number,
+  attemptTimeoutS: number,
+): number {
+  const clamped = clampNumber(
+    requested,
+    MIN_NO_PROVIDER_PROGRESS_DEADLINE_S,
+    MAX_NO_PROVIDER_PROGRESS_DEADLINE_S,
+  );
+  const repairHeadroom = Math.max(
+    attemptTimeoutS - REPAIR_MIN_REMAINING_SECONDS,
+    MIN_NO_PROVIDER_PROGRESS_DEADLINE_S,
+  );
+  return Math.min(clamped, attemptTimeoutS, repairHeadroom);
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -436,6 +460,7 @@ export async function POST(req: NextRequest) {
     runtime_model_id?: string;
     timeout?: number;
     max_steps?: number;
+    no_provider_progress_deadline?: number;
   };
 
   const requestedTimeout =
@@ -450,6 +475,15 @@ export async function POST(req: NextRequest) {
   const maxSteps = Math.max(
     MIN_STEPS,
     Math.min(requestedMaxSteps, MAX_STEPS),
+  );
+  const requestedNoProgressDeadline =
+    typeof body.no_provider_progress_deadline === "number" &&
+    Number.isFinite(body.no_provider_progress_deadline)
+      ? Math.floor(body.no_provider_progress_deadline)
+      : DEFAULT_NO_PROVIDER_PROGRESS_DEADLINE_S;
+  const noProgressDeadlineS = resolveNoProgressDeadlineSeconds(
+    requestedNoProgressDeadline,
+    timeoutS,
   );
   const searchStepCap = maxSteps - REPAIR_RESERVE_STEPS;
   const startTime = Date.now();
@@ -490,6 +524,7 @@ export async function POST(req: NextRequest) {
       let bestScore = -1;
       let autoFinalized = false;
       let autoFinalizeTimer: ReturnType<typeof setTimeout> | null = null;
+      let noProgressDeadlineTimer: ReturnType<typeof setTimeout> | null = null;
       const abortController = new AbortController();
       let abortReason: AbortReason | null = null;
       let autoFinalizeGraceMs = AUTO_FINALIZE_GRACE_MS;
@@ -534,6 +569,30 @@ export async function POST(req: NextRequest) {
         }
       }
 
+      function clearNoProgressDeadlineTimer() {
+        if (noProgressDeadlineTimer) {
+          clearTimeout(noProgressDeadlineTimer);
+          noProgressDeadlineTimer = null;
+        }
+      }
+
+      async function maybeAbortForNoProviderProgress() {
+        if (abortReason !== null) return;
+        if (getBestCandidate() !== null) return;
+        const ranked = await fetchRankedCandidatesOnce();
+        if (abortReason !== null) return;
+        if (getBestCandidate() !== null) return;
+        if (ranked.length === 0) return;
+        emit({
+          type: "thinking",
+          status: "no_provider_progress",
+          message: "model made no progress; using backend move",
+          provider_path: providerPath,
+          runtime_model: runtimeModelId,
+        });
+        abortGeneration("no_provider_progress");
+      }
+
       function remainingSeconds(): number {
         return timeoutS - (Date.now() - startTime) / 1000;
       }
@@ -562,6 +621,7 @@ export async function POST(req: NextRequest) {
 
         if (allValid) {
           candidates.push(candidate);
+          clearNoProgressDeadlineTimer();
 
           const validCount = candidates.length;
           const best = getBestCandidate();
@@ -1150,6 +1210,7 @@ export async function POST(req: NextRequest) {
           runtime_model: runtimeModelId,
           timeout: timeoutS,
           max_steps: maxSteps,
+          no_provider_progress_deadline: noProgressDeadlineS,
           max_output_tokens: maxOutputTokens,
           requested_max_output_tokens: requestedMaxOutputTokens,
           provider_path: providerPath,
@@ -1285,6 +1346,9 @@ export async function POST(req: NextRequest) {
 
         runGenerationImpl = runGeneration;
 
+        noProgressDeadlineTimer = setTimeout(() => {
+          void maybeAbortForNoProviderProgress();
+        }, noProgressDeadlineS * 1000);
         const timeoutId = setTimeout(() => {
           abortGeneration("timeout");
         }, timeoutS * 1000);
@@ -1300,16 +1364,18 @@ export async function POST(req: NextRequest) {
             });
           } catch (err) {
             if (err instanceof DOMException && err.name === "AbortError") {
-              // timeout / auto-finalize / finishMove — continue with tracked candidates
+              // timeout / auto-finalize / finishMove / no-progress — continue with tracked candidates
             } else {
               throw err;
             }
           } finally {
             clearAutoFinalizeTimer();
+            clearNoProgressDeadlineTimer();
             noteGenerationResult(aiResult);
           }
 
           const timedOut = abortReason === "timeout";
+          const noProviderProgress = abortReason === "no_provider_progress";
           const best = getBestCandidate();
           if (best) {
             if (timedOut) {
@@ -1326,7 +1392,11 @@ export async function POST(req: NextRequest) {
               });
             }
           }
-          const committed = await commitBestAvailable();
+          const committed = await commitBestAvailable(
+            noProviderProgress
+              ? { terminalCause: "no_provider_progress_deadline" }
+              : undefined,
+          );
           if (committed) {
             closeStream();
             return;
@@ -1336,11 +1406,14 @@ export async function POST(req: NextRequest) {
               ? "commit_rejected"
               : timedOut
                 ? "timeout_no_candidate"
-                : "no_valid_candidate",
+                : noProviderProgress
+                  ? "no_provider_progress_no_ranked"
+                  : "no_valid_candidate",
           );
         } finally {
           clearTimeout(timeoutId);
           clearAutoFinalizeTimer();
+          clearNoProgressDeadlineTimer();
         }
       } catch (error) {
         const normalizedError = normalizeProviderError(error);

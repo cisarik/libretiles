@@ -315,6 +315,42 @@ describe("consumeAIStream terminals", () => {
     expect(JSON.stringify(events)).not.toMatch(/sk-live|Bearer |api[_-]?key/i);
   });
 
+  it("explains a no-provider-progress ranked commit in human overlay copy", async () => {
+    const events: AiTurnTelemetry[] = [];
+    const terminal = await consumeAIStream(
+      sseResponse([
+        eventLine({
+          type: "thinking",
+          status: "no_provider_progress",
+          message: "model made no progress; using backend move",
+        }),
+        eventLine({
+          type: "done",
+          ok: true,
+          action: "place",
+          completion_source: "backend_ranked_candidate",
+          repair_attempted: false,
+          terminal_cause: "no_provider_progress_deadline",
+        }),
+      ]),
+      {
+        onCandidate: () => {},
+        onStatus: () => {},
+        onTelemetry: (item) => events.push(item),
+      },
+    );
+
+    expect(terminal.kind).toBe("done");
+    expect(events.map((item) => item.humanState)).toEqual([
+      "model made no progress; using backend move",
+      "model made no progress; using backend move",
+    ]);
+    expect(events[1]).toMatchObject({
+      completionSource: "backend_ranked_candidate",
+      terminalCause: "no_provider_progress_deadline",
+    });
+  });
+
   it("recognizes a backend-ranked placement as bounded terminal telemetry", async () => {
     const events: AiTurnTelemetry[] = [];
     const terminal = await consumeAIStream(

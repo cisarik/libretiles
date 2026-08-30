@@ -287,6 +287,7 @@ export function describeAiTurnTelemetry(input: {
   if (message === "genuine dead rack — exchanging") return message;
   if (message === "genuine dead rack — passing") return message;
   if (message === "providers exhausted") return message;
+  if (message === "model made no progress; using backend move") return message;
   if (
     input.thinkingStatus === "probe_found" ||
     (input.probeStatus === "found" &&
@@ -313,6 +314,9 @@ export function describeAiTurnTelemetry(input: {
     input.terminalCause === "commit_rejected"
   ) {
     return "backend rescue failed";
+  }
+  if (input.terminalCause === "no_provider_progress_deadline") {
+    return "model made no progress; using backend move";
   }
   return null;
 }

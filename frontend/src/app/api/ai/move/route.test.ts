@@ -256,6 +256,39 @@ function searchWithPassText(valid = true) {
   };
 }
 
+function hangUntilAbort(
+  opts: {
+    abortSignal?: AbortSignal;
+    onStepFinish?: (step: ReturnType<typeof stepFinish>) => void;
+  },
+  completedSteps = 0,
+) {
+  for (let i = 0; i < completedSteps; i += 1) {
+    opts.onStepFinish?.(stepFinish(i));
+  }
+  return new Promise<never>((_, reject) => {
+    const signal = opts.abortSignal;
+    const fail = () => reject(new DOMException("Timeout", "AbortError"));
+    if (!signal) {
+      reject(new Error("abortSignal missing"));
+      return;
+    }
+    if (signal.aborted) {
+      fail();
+      return;
+    }
+    signal.addEventListener("abort", fail, { once: true });
+  });
+}
+
+async function waitForGenerateText() {
+  for (let i = 0; i < 100; i += 1) {
+    if (generateTextMock.mock.calls.length > 0) return;
+    await Promise.resolve();
+  }
+  throw new Error("generateText was not called");
+}
+
 async function collectEvents(req: NextRequest = request()) {
   const response = await POST(req);
   expect(response.headers.get("content-type")).toContain("text/event-stream");
@@ -289,6 +322,7 @@ describe("POST /api/ai/move", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.useRealTimers();
   });
 
   it("applies a place without a billing request or monetary done fields", async () => {
@@ -1203,4 +1237,281 @@ describe("POST /api/ai/move", () => {
       expect(fetchUrls(fetchMock).some((url) => url.endsWith("/ai-move/"))).toBe(false);
     },
   );
+
+  it("test_no_progress_deadline_commits_ranked_candidate_when_model_produces_nothing", async () => {
+    vi.useFakeTimers();
+    generateTextMock.mockImplementation(async (opts) => hangUntilAbort(opts));
+    const fetchMock = mockBackend({
+      "/ai-candidates/": { body: rankedPayload(46) },
+      "/ai-move/": {
+        body: { ok: true, action: "place", points: 46, words: [{ word: "AT", score: 46 }] },
+      },
+    });
+
+    const pending = collectEvents(
+      request({ timeout: 30, no_provider_progress_deadline: 5 }),
+    );
+    await waitForGenerateText();
+    await vi.advanceTimersByTimeAsync(5_000);
+    await Promise.resolve();
+    const { done } = await pending;
+
+    expect(done?.action).toBe("place");
+    expect(done?.completion_source).toBe("backend_ranked_candidate");
+    expect(done?.timed_out).toBe(false);
+    expect(fetchUrls(fetchMock).some((url) => url.includes("/ai-pass/"))).toBe(false);
+    expect(fetchUrls(fetchMock).some((url) => url.includes("/ai-exchange/"))).toBe(false);
+  });
+
+  it("test_deadline_does_not_fire_when_model_produced_a_valid_candidate", async () => {
+    vi.useFakeTimers();
+    generateTextMock.mockImplementation(async (opts) => {
+      await invokeValidateMove(opts);
+      return hangUntilAbort(opts);
+    });
+    mockBackend({
+      "/validate-move/": {
+        body: { valid: true, total_score: 50, words: [{ word: "A", valid: true }] },
+      },
+      "/ai-candidates/": { body: rankedPayload(46) },
+      "/ai-move/": {
+        body: { ok: true, action: "place", points: 50, words: [{ word: "A", score: 50 }] },
+      },
+    });
+
+    const pending = collectEvents(
+      request({ timeout: 30, no_provider_progress_deadline: 5 }),
+    );
+    await waitForGenerateText();
+    const signal = (
+      generateTextMock.mock.calls[0][0] as { abortSignal: AbortSignal }
+    ).abortSignal;
+    await vi.advanceTimersByTimeAsync(2_500);
+    await Promise.resolve();
+    expect(signal.aborted).toBe(true);
+    const { done } = await pending;
+
+    expect(done?.completion_source).toBe("provider_candidate");
+    expect(done?.terminal_cause).not.toBe("no_provider_progress_deadline");
+    expect(done?.auto_finalized).toBe(true);
+  });
+
+  it("test_deadline_does_not_fire_without_a_ranked_candidate", async () => {
+    vi.useFakeTimers();
+    generateTextMock.mockImplementation(async (opts) => hangUntilAbort(opts));
+    mockBackend({
+      "/ai-playability/": {
+        body: {
+          status: "found",
+          witness: { placements: WITNESS, words: ["RATE"], total_score: 8 },
+          exchange_allowed: false,
+          exchange_letters: [],
+          search: { complete: true, nodes: 4, elapsed_ms: 2 },
+        },
+      },
+      "/ai-move/": {
+        body: { ok: true, action: "place", points: 8, words: [{ word: "RATE", score: 8 }] },
+      },
+    });
+
+    const pending = collectEvents(
+      request({ timeout: 12, no_provider_progress_deadline: 4 }),
+    );
+    await waitForGenerateText();
+    const signal = (
+      generateTextMock.mock.calls[0][0] as { abortSignal: AbortSignal }
+    ).abortSignal;
+    await vi.advanceTimersByTimeAsync(4_000);
+    await Promise.resolve();
+    expect(signal.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(8_000);
+    const { done } = await pending;
+
+    expect(signal.aborted).toBe(true);
+    expect(done?.completion_source).toBe("backend_witness_rescue");
+    expect(done?.terminal_cause).not.toBe("no_provider_progress_deadline");
+  });
+
+  it("test_deadline_never_causes_pass_or_exchange_while_probe_found", async () => {
+    vi.useFakeTimers();
+    generateTextMock.mockImplementation(async (opts) => hangUntilAbort(opts));
+    const fetchMock = mockBackend({
+      "/ai-candidates/": { body: rankedPayload(46) },
+      "/ai-playability/": {
+        body: {
+          status: "found",
+          witness: { placements: WITNESS, words: ["RATE"], total_score: 8 },
+          exchange_allowed: false,
+          exchange_letters: [],
+          search: { complete: true, nodes: 4, elapsed_ms: 2 },
+        },
+      },
+      "/ai-move/": {
+        body: { ok: true, action: "place", points: 46, words: [{ word: "AT", score: 46 }] },
+      },
+    });
+
+    const pending = collectEvents(
+      request({ timeout: 30, no_provider_progress_deadline: 5 }),
+    );
+    await waitForGenerateText();
+    await vi.advanceTimersByTimeAsync(5_000);
+    await Promise.resolve();
+    const { done } = await pending;
+
+    expect(done?.action).toBe("place");
+    expect(done?.completion_source).toBe("backend_ranked_candidate");
+    expect(fetchUrls(fetchMock).some((url) => url.includes("/ai-pass/"))).toBe(false);
+    expect(fetchUrls(fetchMock).some((url) => url.includes("/ai-exchange/"))).toBe(false);
+    expect(fetchUrls(fetchMock).filter((url) => url.includes("/ai-playability/"))).toHaveLength(
+      0,
+    );
+  });
+
+  it("test_deadline_terminal_reports_backend_ranked_candidate_with_no_progress_cause", async () => {
+    vi.useFakeTimers();
+    generateTextMock.mockImplementation(async (opts) => hangUntilAbort(opts));
+    mockBackend({
+      "/ai-candidates/": { body: rankedPayload(46) },
+      "/ai-move/": {
+        body: { ok: true, action: "place", points: 46, words: [{ word: "AT", score: 46 }] },
+      },
+    });
+
+    const pending = collectEvents(
+      request({ timeout: 30, no_provider_progress_deadline: 5 }),
+    );
+    await waitForGenerateText();
+    await vi.advanceTimersByTimeAsync(5_000);
+    await Promise.resolve();
+    const { done } = await pending;
+
+    expect(done?.completion_source).toBe("backend_ranked_candidate");
+    expect(done?.terminal_cause).toBe("no_provider_progress_deadline");
+    expect(done?.action).toBe("place");
+  });
+
+  it("test_deadline_respects_repair_reserve_and_hard_timeout", async () => {
+    vi.useFakeTimers();
+    generateTextMock.mockImplementation(async (opts) => hangUntilAbort(opts));
+    mockBackend({
+      "/ai-candidates/": { body: rankedPayload(46) },
+      "/ai-move/": {
+        body: { ok: true, action: "place", points: 46, words: [{ word: "AT", score: 46 }] },
+      },
+    });
+
+    const pending = collectEvents(
+      request({ timeout: 30, max_steps: 10, no_provider_progress_deadline: 100 }),
+    );
+    await waitForGenerateText();
+    expect(stepCountIsMock).toHaveBeenCalledWith(8);
+    const signal = (
+      generateTextMock.mock.calls[0][0] as { abortSignal: AbortSignal }
+    ).abortSignal;
+    await vi.advanceTimersByTimeAsync(20_000);
+    await Promise.resolve();
+    expect(signal.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(8_000);
+    const { done, events } = await pending;
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "thinking",
+        timeout: 30,
+        no_provider_progress_deadline: 28,
+      }),
+    );
+    expect(done?.completion_source).toBe("backend_ranked_candidate");
+    expect(done?.timed_out).toBe(false);
+    expect(signal.aborted).toBe(true);
+  });
+
+  it("test_deadline_is_clamped_and_never_exceeds_attempt_timeout", async () => {
+    generateTextMock.mockImplementation(searchWithPassText(true));
+    mockBackend({
+      "/validate-move/": {
+        body: { valid: true, total_score: 2, words: [{ word: "A", valid: true }] },
+      },
+      "/ai-move/": {
+        body: { ok: true, action: "place", points: 2, words: [{ word: "A", score: 2 }] },
+      },
+    });
+
+    const oversized = await runRoute(
+      request({ timeout: 7, max_steps: 5, no_provider_progress_deadline: 100 }),
+    );
+    expect(oversized.events).toContainEqual(
+      expect.objectContaining({
+        type: "thinking",
+        timeout: 7,
+        no_provider_progress_deadline: 5,
+      }),
+    );
+
+    const omitted = await runRoute(
+      request({ timeout: 30, max_steps: 10, no_provider_progress_deadline: undefined }),
+    );
+    expect(omitted.events).toContainEqual(
+      expect.objectContaining({
+        type: "thinking",
+        timeout: 30,
+        no_provider_progress_deadline: 20,
+      }),
+    );
+
+    const explicit = await runRoute(
+      request({ timeout: 30, max_steps: 10, no_provider_progress_deadline: 3 }),
+    );
+    expect(explicit.events).toContainEqual(
+      expect.objectContaining({
+        type: "thinking",
+        timeout: 30,
+        no_provider_progress_deadline: 3,
+      }),
+    );
+  });
+
+  it("test_provider_accounting_is_exact_when_an_in_flight_call_is_abandoned", async () => {
+    vi.useFakeTimers();
+    generateTextMock.mockImplementation(async (opts) => hangUntilAbort(opts, 1));
+    mockBackend({
+      "/ai-candidates/": { body: rankedPayload(46) },
+      "/ai-move/": {
+        body: { ok: true, action: "place", points: 46, words: [{ word: "AT", score: 46 }] },
+      },
+    });
+
+    const pending = collectEvents(
+      request({ timeout: 30, no_provider_progress_deadline: 5 }),
+    );
+    await waitForGenerateText();
+    await vi.advanceTimersByTimeAsync(5_000);
+    await Promise.resolve();
+    const { done } = await pending;
+
+    expect(done?.provider_requests_used).toBe(1);
+    expect(done?.turn_provider_requests_used).toBe(1);
+    expect(done?.completion_source).toBe("backend_ranked_candidate");
+  });
+
+  it("test_english_ranked_rescue_behaviour_is_unchanged_by_the_deadline", async () => {
+    generateTextMock.mockResolvedValue({ text: "I would play AT.", steps: [stepFinish(0)] });
+    mockBackend({
+      "/ai-candidates/": { body: rankedPayload(46) },
+      "/ai-move/": {
+        body: { ok: true, action: "place", points: 46, words: [{ word: "AT", score: 46 }] },
+      },
+    });
+
+    const { done } = await runRoute(
+      request({ timeout: 30, no_provider_progress_deadline: 20 }),
+    );
+
+    expect(done?.action).toBe("place");
+    expect(done?.completion_source).toBe("backend_ranked_candidate");
+    expect(done?.terminal_cause).not.toBe("no_provider_progress_deadline");
+    const opts = generateTextMock.mock.calls[0][0] as { system: string };
+    expect(opts.system).toMatch(/Collins Scrabble Words 2019/);
+  });
 });
