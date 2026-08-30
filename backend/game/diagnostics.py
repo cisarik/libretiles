@@ -35,6 +35,7 @@ from gamecore.variant_store import (
 ARTIFACT_ID = "libretiles.ai-play-diagnostic/v1"
 REPORT_KIND_ENGINE = "engine"
 REPORT_KIND_TURN = "turn"
+REPORT_KIND_POLICY_COMPARISON = "policy-comparison"
 SCENARIO_ASSET_NAME = "ai_play_scenarios_v1.json"
 UINT32_MAX = 4_294_967_295
 PROBE_COUNT_MIN = 1
@@ -603,6 +604,118 @@ def build_diagnostic_report(
 
 def dump_report_json(report: Mapping[str, Any]) -> str:
     return json.dumps(report, ensure_ascii=False, indent=2) + "\n"
+
+
+@dataclass(frozen=True)
+class PolicySearchCost:
+    nodes_sum: int
+    elapsed_ms_sum: int
+    decision_count: int
+
+
+@dataclass(frozen=True)
+class PolicyComparisonSample:
+    variant_slug: str
+    policy_id: str
+    seed: int
+    plies: int
+    end_reason: str
+    bag_remaining: int
+    rack_remaining: dict[str, tuple[str, ...]]
+    stranded_total: int
+    rare_unplayed: int
+    rare_total: int
+    exchanges: int
+    passes: int
+    placement_scores: dict[str, int]
+    final_scores: dict[str, int]
+    leftover_points: dict[str, int]
+    search_cost: PolicySearchCost
+    formed_words: tuple[str, ...]
+    rejected_two_letter_words: tuple[str, ...]
+    verdict: Verdict
+    reason_code: str
+
+
+def policy_sample_to_dict(sample: PolicyComparisonSample) -> dict[str, Any]:
+    return {
+        "variant_slug": sample.variant_slug,
+        "policy_id": sample.policy_id,
+        "seed": sample.seed,
+        "plies": sample.plies,
+        "end_reason": sample.end_reason,
+        "bag_remaining": sample.bag_remaining,
+        "rack_remaining": {
+            name: list(tiles) for name, tiles in sample.rack_remaining.items()
+        },
+        "stranded_total": sample.stranded_total,
+        "rare_unplayed": sample.rare_unplayed,
+        "rare_total": sample.rare_total,
+        "exchanges": sample.exchanges,
+        "passes": sample.passes,
+        "placement_scores": dict(sample.placement_scores),
+        "final_scores": dict(sample.final_scores),
+        "leftover_points": dict(sample.leftover_points),
+        "search_cost": {
+            "nodes_sum": sample.search_cost.nodes_sum,
+            "elapsed_ms_sum": sample.search_cost.elapsed_ms_sum,
+            "decision_count": sample.search_cost.decision_count,
+        },
+        "two_letter_policy": {
+            "complete_formed_words": list(sample.formed_words),
+            "rejected": list(sample.rejected_two_letter_words),
+        },
+        "verdict": sample.verdict,
+        "reason_code": sample.reason_code,
+    }
+
+
+def format_policy_metric_line(sample: PolicyComparisonSample) -> str:
+    racks = ",".join(
+        f"{name}:{len(tiles)}" for name, tiles in sample.rack_remaining.items()
+    )
+    return (
+        f"{sample.variant_slug} policy={sample.policy_id} seed={sample.seed} "
+        f"plies={sample.plies} end_reason={sample.end_reason} "
+        f"bag={sample.bag_remaining} racks={racks} "
+        f"stranded={sample.stranded_total} "
+        f"rare_unplayed={sample.rare_unplayed}/{sample.rare_total} "
+        f"exchanges={sample.exchanges} passes={sample.passes} "
+        f"placement={sample.placement_scores} final={sample.final_scores}"
+    )
+
+
+def build_policy_comparison_report(
+    *,
+    requested: Mapping[str, str | int],
+    context: VariantProbeContext,
+    samples: Sequence[PolicyComparisonSample],
+    generated_at: datetime | None = None,
+    source_revision: str | None = None,
+) -> dict[str, Any]:
+    stamp = generated_at or datetime.now(timezone.utc)
+    generated = stamp.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    pass_count = sum(1 for sample in samples if sample.verdict == "pass")
+    fail_count = sum(1 for sample in samples if sample.verdict == "fail")
+    allowlist_size = len(context.allowlist) if context.allowlist is not None else None
+    return {
+        "artifact": ARTIFACT_ID,
+        "report_kind": REPORT_KIND_POLICY_COMPARISON,
+        "generated_at": generated,
+        "source_revision": source_revision or observe_source_revision(),
+        "requested": dict(requested),
+        "variant": {
+            "slug": context.variant.slug,
+            "lexicon_id": _lexicon_id(context.variant),
+            "two_letter_lexicon_size": allowlist_size,
+        },
+        "samples": [policy_sample_to_dict(sample) for sample in samples],
+        "summary": {
+            "sample_count": len(samples),
+            "pass_count": pass_count,
+            "fail_count": fail_count,
+        },
+    }
 
 
 def write_report_atomically(path: Path, payload: str) -> None:

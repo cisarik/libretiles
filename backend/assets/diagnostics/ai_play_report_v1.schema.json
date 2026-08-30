@@ -20,7 +20,7 @@
       "const": "libretiles.ai-play-diagnostic/v1"
     },
     "report_kind": {
-      "enum": ["engine", "turn"]
+      "enum": ["engine", "turn", "policy-comparison"]
     },
     "generated_at": {
       "type": "string",
@@ -67,7 +67,8 @@
       "items": {
         "oneOf": [
           { "$ref": "#/$defs/engineSample" },
-          { "$ref": "#/$defs/turnSample" }
+          { "$ref": "#/$defs/turnSample" },
+          { "$ref": "#/$defs/policyComparisonSample" }
         ]
       }
     },
@@ -253,6 +254,88 @@
         "verdict": {
           "enum": ["pass", "pass_with_telemetry", "fail", "external_incomplete"]
         },
+        "reason_code": { "type": "string", "minLength": 1, "maxLength": 64 }
+      }
+    },
+    "policyComparisonSample": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "variant_slug",
+        "policy_id",
+        "seed",
+        "plies",
+        "end_reason",
+        "bag_remaining",
+        "rack_remaining",
+        "stranded_total",
+        "rare_unplayed",
+        "rare_total",
+        "exchanges",
+        "passes",
+        "placement_scores",
+        "final_scores",
+        "leftover_points",
+        "search_cost",
+        "two_letter_policy",
+        "verdict",
+        "reason_code"
+      ],
+      "properties": {
+        "variant_slug": { "type": "string" },
+        "policy_id": {
+          "enum": ["witness-first", "ranked-best", "ranked-rack-aware"]
+        },
+        "seed": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+        "plies": { "type": "integer", "minimum": 1 },
+        "end_reason": { "type": "string", "minLength": 1 },
+        "bag_remaining": { "type": "integer", "minimum": 0 },
+        "rack_remaining": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        },
+        "stranded_total": { "type": "integer", "minimum": 0 },
+        "rare_unplayed": { "type": "integer", "minimum": 0 },
+        "rare_total": { "type": "integer", "minimum": 0 },
+        "exchanges": { "type": "integer", "minimum": 0 },
+        "passes": { "type": "integer", "minimum": 0 },
+        "placement_scores": {
+          "type": "object",
+          "additionalProperties": { "type": "integer" }
+        },
+        "final_scores": {
+          "type": "object",
+          "additionalProperties": { "type": "integer" }
+        },
+        "leftover_points": {
+          "type": "object",
+          "additionalProperties": { "type": "integer" }
+        },
+        "search_cost": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["nodes_sum", "elapsed_ms_sum", "decision_count"],
+          "properties": {
+            "nodes_sum": { "type": "integer", "minimum": 0 },
+            "elapsed_ms_sum": { "type": "integer", "minimum": 0 },
+            "decision_count": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "two_letter_policy": {
+          "type": "object",
+          "required": ["complete_formed_words", "rejected"],
+          "properties": {
+            "complete_formed_words": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "rejected": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "verdict": { "enum": ["pass", "fail"] },
         "reason_code": { "type": "string", "minLength": 1, "maxLength": 64 }
       }
     }
