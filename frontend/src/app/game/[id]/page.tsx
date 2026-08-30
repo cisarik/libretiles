@@ -44,17 +44,19 @@ import { api, readAiTurnTelemetry } from "@/lib/api";
 import { PREMIUM_FOOTER_STYLE, handlePremiumSurfacePointer } from "@/lib/premiumSurface";
 import { isPlausibleRack } from "@/lib/rack";
 import { buildGameWebSocketUrl } from "@/lib/ws";
-import type {
-  AIPrompt,
-  GameHistoryFilter,
-  GameHistoryItem,
-  GameHistoryResponse,
-  GameHistorySort,
-  GameState,
-  MoveResult,
-  MoveValidationResult,
-  UserProfile,
-  WSTicketResponse,
+import {
+  describeAiMoveFailure,
+  shouldHideLostAiTerminal,
+  type AIPrompt,
+  type GameHistoryFilter,
+  type GameHistoryItem,
+  type GameHistoryResponse,
+  type GameHistorySort,
+  type GameState,
+  type MoveResult,
+  type MoveValidationResult,
+  type UserProfile,
+  type WSTicketResponse,
 } from "@/lib/types";
 import { Tile } from "@/components/tiles/Tile";
 
@@ -1068,10 +1070,30 @@ export default function GamePage() {
           setAIBlockerModal(blocker);
         }
       } else if (result.stopReason === "generic_error" || result.stopReason === "no_terminal") {
-        setAiApproved(false);
-        const message = last?.kind === "generic_error" ? last.message : "AI move failed";
-        console.error("AI move failed:", message);
-        setAiError(message);
+        const latest = await syncState();
+        if (
+          !shouldHideLostAiTerminal(latest, {
+            moveCount: turnAnchor.moveCount,
+            aiSlot: turnAnchor.aiSlot,
+          })
+        ) {
+          setAiApproved(false);
+          const telemetry =
+            last && "telemetry" in last ? last.telemetry : undefined;
+          const storeTelemetry = useGameStore.getState().aiTurnTelemetry;
+          setAiError(
+            describeAiMoveFailure({
+              message: last?.kind === "generic_error" ? last.message : null,
+              code: last?.kind === "generic_error" ? last.code : null,
+              terminalCause: telemetry?.terminalCause ?? storeTelemetry?.terminalCause,
+              probeStatus: telemetry?.probeStatus ?? storeTelemetry?.probeStatus,
+              repairAttempted:
+                telemetry?.repairAttempted ?? storeTelemetry?.repairAttempted,
+              completionSource:
+                telemetry?.completionSource ?? storeTelemetry?.completionSource,
+            }),
+          );
+        }
       }
 
       const latest = await syncState((doneData as unknown as MoveResult | null)?.state);

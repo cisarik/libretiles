@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { consumeAIStream, type AiMoveStreamTerminal } from "./ai-move-stream";
-import type { AICandidate, AiTurnTelemetry } from "./types";
+import {
+  describeAiMoveFailure,
+  shouldHideLostAiTerminal,
+  type AICandidate,
+  type AiTurnTelemetry,
+} from "./types";
 
 function sseResponse(chunks: string[]): Response {
   const encoder = new TextEncoder();
@@ -338,5 +343,104 @@ describe("consumeAIStream terminals", () => {
         terminalCause: "backend_ranked_candidate",
       }),
     ]);
+  });
+
+  it("preserves error terminal cause and probe status on telemetry", async () => {
+    const { terminal } = await collect(
+      sseResponse([
+        eventLine({
+          type: "error",
+          code: "ai_move_internal_error",
+          error: "The AI turn could not be completed.",
+          terminal_cause: "backend_rescue_error",
+          probe_status: "failed",
+          raw_headers: { authorization: "Bearer should-not-survive" },
+          response_body: "secret-rack-and-token",
+        }),
+      ]),
+    );
+    expect(terminal.kind).toBe("generic_error");
+    if (terminal.kind === "generic_error") {
+      expect(terminal.code).toBe("ai_move_internal_error");
+      expect(terminal.telemetry).toMatchObject({
+        terminalCause: "backend_rescue_error",
+        probeStatus: "failed",
+      });
+    }
+    expect(JSON.stringify(terminal)).not.toMatch(
+      /Bearer |secret-rack-and-token|raw_headers|response_body/,
+    );
+  });
+
+  it("returns no_terminal with the last bounded telemetry", async () => {
+    const { terminal } = await collect(
+      sseResponse([
+        eventLine({
+          type: "thinking",
+          status: "probe_found",
+          message: "backend found a legal rescue; repairing",
+          probe_status: "found",
+          repair_attempted: true,
+        }),
+      ]),
+    );
+    expect(terminal.kind).toBe("no_terminal");
+    if (terminal.kind === "no_terminal") {
+      expect(terminal.telemetry).toMatchObject({
+        probeStatus: "found",
+        repairAttempted: true,
+        humanState: "backend found a legal rescue; repairing",
+      });
+    }
+  });
+});
+
+describe("describeAiMoveFailure and shouldHideLostAiTerminal", () => {
+  it("describes unchanged-turn failures without bare AI move failed", () => {
+    expect(
+      describeAiMoveFailure({
+        message: "AI move failed",
+        terminalCause: "backend_rescue_error",
+        probeStatus: "failed",
+      }),
+    ).toBe("backend rescue failed");
+    expect(
+      describeAiMoveFailure({
+        message: "AI move failed",
+        probeStatus: "indeterminate",
+      }),
+    ).not.toBe("AI move failed");
+    expect(describeAiMoveFailure({ message: "AI move failed" })).not.toBe(
+      "AI move failed",
+    );
+  });
+
+  it("hides a lost terminal only after the anchored turn has advanced", () => {
+    const anchor = { moveCount: 3, aiSlot: 1 };
+    expect(shouldHideLostAiTerminal(null, anchor)).toBe(false);
+    expect(
+      shouldHideLostAiTerminal(
+        { game_over: false, move_count: 3, current_turn_slot: 1 },
+        anchor,
+      ),
+    ).toBe(false);
+    expect(
+      shouldHideLostAiTerminal(
+        { game_over: true, move_count: 3, current_turn_slot: 1 },
+        anchor,
+      ),
+    ).toBe(true);
+    expect(
+      shouldHideLostAiTerminal(
+        { game_over: false, move_count: 4, current_turn_slot: 1 },
+        anchor,
+      ),
+    ).toBe(true);
+    expect(
+      shouldHideLostAiTerminal(
+        { game_over: false, move_count: 3, current_turn_slot: 0 },
+        anchor,
+      ),
+    ).toBe(true);
   });
 });

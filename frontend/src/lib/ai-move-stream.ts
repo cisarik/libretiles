@@ -23,6 +23,7 @@ export type AiMoveStreamTerminal =
       providerRequestsUsed?: number;
       /** Sanitized delay hint only; raw headers and bodies are never retained. */
       retryAfterSeconds?: number;
+      telemetry?: AiTurnTelemetry;
     }
   | {
       kind: "generic_error";
@@ -30,8 +31,9 @@ export type AiMoveStreamTerminal =
       code?: string;
       providerRequestsUsed?: number;
       retryAfterSeconds?: number;
+      telemetry?: AiTurnTelemetry;
     }
-  | { kind: "no_terminal" };
+  | { kind: "no_terminal"; telemetry?: AiTurnTelemetry };
 
 export type ConsumeAIStreamCallbacks = {
   onCandidate: (candidate: AICandidate) => void;
@@ -82,8 +84,17 @@ function isCodedProviderErrorCode(value: string): value is CodedProviderErrorCod
   return (CODED_PROVIDER_ERROR_CODES as readonly string[]).includes(value);
 }
 
+function attachTelemetry<T extends object>(
+  terminal: T,
+  telemetry: AiTurnTelemetry | null | undefined,
+): T {
+  if (!telemetry) return terminal;
+  return { ...terminal, telemetry };
+}
+
 function recordErrorEvent(
   json: Record<string, unknown>,
+  lastTelemetry: AiTurnTelemetry | null,
 ): Exclude<AiMoveStreamTerminal, { kind: "done" } | { kind: "no_terminal" }> {
   const message = typeof json.error === "string" ? json.error : "AI error";
   const code = typeof json.code === "string" ? json.code : undefined;
@@ -100,34 +111,44 @@ function recordErrorEvent(
     json.retry_after_seconds <= 86_400
       ? Math.floor(json.retry_after_seconds)
       : undefined;
+  const telemetry = telemetryFromSsePayload(json) ?? lastTelemetry;
   if (code && isCodedProviderErrorCode(code)) {
-    return {
-      kind: "coded_provider_error",
-      code,
+    return attachTelemetry(
+      {
+        kind: "coded_provider_error" as const,
+        code,
+        message,
+        ...(providerRequestsUsed !== undefined ? { providerRequestsUsed } : {}),
+        ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
+      },
+      telemetry,
+    );
+  }
+  return attachTelemetry(
+    {
+      kind: "generic_error" as const,
       message,
+      code,
       ...(providerRequestsUsed !== undefined ? { providerRequestsUsed } : {}),
       ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
-    };
-  }
-  return {
-    kind: "generic_error",
-    message,
-    code,
-    ...(providerRequestsUsed !== undefined ? { providerRequestsUsed } : {}),
-    ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
-  };
+    },
+    telemetry,
+  );
 }
+
+type StreamParseState = {
+  doneData: Record<string, unknown> | null;
+  lastError: Exclude<
+    AiMoveStreamTerminal,
+    { kind: "done" } | { kind: "no_terminal" }
+  > | null;
+  lastTelemetry: AiTurnTelemetry | null;
+};
 
 function applySseEvent(
   json: Record<string, unknown>,
   callbacks: ConsumeAIStreamCallbacks,
-  state: {
-    doneData: Record<string, unknown> | null;
-    lastError: Exclude<
-      AiMoveStreamTerminal,
-      { kind: "done" } | { kind: "no_terminal" }
-    > | null;
-  },
+  state: StreamParseState,
 ): void {
   const type = json.type;
   if (type === "candidate") {
@@ -150,7 +171,10 @@ function applySseEvent(
       callbacks.onStatus(`Thinking with ${json.model}`);
     }
     const telemetry = telemetryFromSsePayload(json);
-    if (telemetry) callbacks.onTelemetry?.(telemetry);
+    if (telemetry) {
+      state.lastTelemetry = telemetry;
+      callbacks.onTelemetry?.(telemetry);
+    }
     return;
   }
   if (type === "tool_use") {
@@ -175,27 +199,27 @@ function applySseEvent(
     state.doneData = json;
     callbacks.onDone?.(json);
     const telemetry = telemetryFromSsePayload(json);
-    if (telemetry) callbacks.onTelemetry?.(telemetry);
+    if (telemetry) {
+      state.lastTelemetry = telemetry;
+      callbacks.onTelemetry?.(telemetry);
+    }
     return;
   }
   if (type === "error") {
     if (state.doneData) return;
-    state.lastError = recordErrorEvent(json);
-    const telemetry = telemetryFromSsePayload(json);
-    if (telemetry) callbacks.onTelemetry?.(telemetry);
+    state.lastError = recordErrorEvent(json, state.lastTelemetry);
+    const telemetry = telemetryFromSsePayload(json) ?? state.lastTelemetry;
+    if (telemetry) {
+      state.lastTelemetry = telemetry;
+      callbacks.onTelemetry?.(telemetry);
+    }
   }
 }
 
 function consumeSseBuffer(
   chunk: string,
   callbacks: ConsumeAIStreamCallbacks,
-  state: {
-    doneData: Record<string, unknown> | null;
-    lastError: Exclude<
-      AiMoveStreamTerminal,
-      { kind: "done" } | { kind: "no_terminal" }
-    > | null;
-  },
+  state: StreamParseState,
 ): void {
   const trimmed = chunk.trim();
   if (!trimmed.startsWith("data: ")) return;
@@ -208,16 +232,10 @@ function consumeSseBuffer(
   }
 }
 
-function finishTerminal(state: {
-  doneData: Record<string, unknown> | null;
-  lastError: Exclude<
-    AiMoveStreamTerminal,
-    { kind: "done" } | { kind: "no_terminal" }
-  > | null;
-}): AiMoveStreamTerminal {
+function finishTerminal(state: StreamParseState): AiMoveStreamTerminal {
   if (state.doneData) return { kind: "done", data: state.doneData };
   if (state.lastError) return state.lastError;
-  return { kind: "no_terminal" };
+  return attachTelemetry({ kind: "no_terminal" as const }, state.lastTelemetry);
 }
 
 /**
@@ -235,13 +253,11 @@ export async function consumeAIStream(
   }
 
   const decoder = new TextDecoder();
-  const state: {
-    doneData: Record<string, unknown> | null;
-    lastError: Exclude<
-      AiMoveStreamTerminal,
-      { kind: "done" } | { kind: "no_terminal" }
-    > | null;
-  } = { doneData: null, lastError: null };
+  const state: StreamParseState = {
+    doneData: null,
+    lastError: null,
+    lastTelemetry: null,
+  };
   let buffer = "";
 
   try {
@@ -262,10 +278,13 @@ export async function consumeAIStream(
   } catch (error) {
     if (state.doneData) return { kind: "done", data: state.doneData };
     if (state.lastError) return state.lastError;
-    return {
-      kind: "generic_error",
-      message: error instanceof Error ? error.message : "AI stream failed",
-    };
+    return attachTelemetry(
+      {
+        kind: "generic_error" as const,
+        message: error instanceof Error ? error.message : "AI stream failed",
+      },
+      state.lastTelemetry,
+    );
   }
 
   return finishTerminal(state);

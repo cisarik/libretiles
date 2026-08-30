@@ -631,6 +631,370 @@ export async function POST(req: NextRequest) {
           : { retry_after_seconds: retryAfterSeconds };
       }
 
+      let sessionModelId: string | null = null;
+      let promptContext: {
+        ai_prompt_id?: unknown;
+        ai_prompt_name?: unknown;
+      } | null = null;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let aiResult: any = null;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let repairResult: any = null;
+      let userPrompt = "";
+      let languageModel: Awaited<ReturnType<typeof getLanguageRuntime>>["model"] | null =
+        null;
+      let forceValidateMoveConfig: {
+        activeTools: Array<"validateMove" | "finishMove">;
+        toolChoice: { type: "tool"; toolName: "validateMove" };
+      } | null = null;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let runGenerationImpl: ((model: any, args: any) => Promise<any>) | null = null;
+      let terminalSent = false;
+      const BOUNDED_INTERNAL_ERROR = "The AI turn could not be completed.";
+
+      function runtimeFields() {
+        const used = attemptProviderRequests();
+        return {
+          provider_path: providerPath,
+          runtime_model: runtimeModelId,
+          provider_requests_used: used,
+          turn_provider_requests_used: used,
+          ...retryAfterFields(),
+        };
+      }
+
+      function boundedAiMetadata(source: CompletionSource) {
+        const used = attemptProviderRequests();
+        const meta: Record<string, unknown> = {
+          prompt_version: MOVE_PROMPT_VERSION,
+          requested_model_id: requestedModelId,
+          runtime_provider: providerPath,
+          runtime_model_id: runtimeModelId,
+          completion_source: source,
+          repair_attempted: repairAttempted,
+          terminal_cause: terminalCause,
+          provider_requests_used: used,
+          turn_provider_requests: used,
+          valid_candidate_count: candidates.filter((c) => c.valid).length,
+        };
+        Object.assign(meta, retryAfterFields());
+        if (typeof promptContext?.ai_prompt_id === "number") {
+          meta.prompt_id = promptContext.ai_prompt_id;
+        }
+        if (typeof promptContext?.ai_prompt_name === "string") {
+          meta.prompt_name = promptContext.ai_prompt_name;
+        }
+        if (probeStatus) meta.probe_status = probeStatus;
+        const usage = usageForMetadata(
+          normalizeUsage(
+            (aiResult?.totalUsage as UsageLike | undefined) ??
+              (aiResult?.usage as UsageLike | undefined) ??
+              null,
+          ) ?? accumulatedUsage,
+        );
+        if (usage) meta.usage = usage;
+        return meta;
+      }
+
+      function emitDone(
+        action: "place" | "pass" | "exchange",
+        payload: Record<string, unknown>,
+        extra: Record<string, unknown> = {},
+      ) {
+        terminalSent = true;
+        emit({
+          type: "done",
+          action,
+          ...payload,
+          requested_model: requestedModelId,
+          session_model: sessionModelId,
+          response_model: aiResult?.response?.modelId ?? lastResponseModelId,
+          elapsed_ms: Date.now() - startTime,
+          candidates_found: candidates.length,
+          timed_out: abortReason === "timeout",
+          auto_finalized: autoFinalized,
+          completion_source: completionSource,
+          probe_status: probeStatus,
+          repair_attempted: repairAttempted,
+          terminal_cause: terminalCause,
+          ...runtimeFields(),
+          ...extra,
+        });
+      }
+
+      function emitTerminalError(
+        message: string,
+        extra: Record<string, unknown> = {},
+      ) {
+        terminalSent = true;
+        emit({
+          type: "error",
+          error: message,
+          completion_source: completionSource,
+          probe_status: probeStatus,
+          repair_attempted: repairAttempted,
+          terminal_cause: terminalCause || "error",
+          ...runtimeFields(),
+          ...extra,
+        });
+      }
+
+      function conflictCode(result: unknown): string | undefined {
+        if (!isRecord(result)) return undefined;
+        return typeof result.code === "string" ? result.code : undefined;
+      }
+
+      async function postAiMove(
+        placements: PlacementData[],
+        source: CompletionSource,
+      ): Promise<Record<string, unknown> | null> {
+        completionSource = source;
+        const moveResult = await backendPost(
+          `/api/game/${game_id}/ai-move/`,
+          { placements, ai_metadata: boundedAiMetadata(source) },
+          token,
+        );
+        if (!isLegalBackendTerminal(moveResult)) return null;
+        return moveResult as Record<string, unknown>;
+      }
+
+      async function commitBestAvailable(
+        opts?: { terminalCause?: string },
+      ): Promise<boolean> {
+        const choices = await rankedAndProviderChoices();
+        if (choices.length === 0) return false;
+        for (const candidate of choices) {
+          terminalCause = opts?.terminalCause ?? candidate.source;
+          const moveResult = await postAiMove(
+            candidate.placements,
+            candidate.source,
+          );
+          if (!moveResult) continue;
+          const appliedWords = Array.isArray(moveResult.words)
+            ? (moveResult.words as Array<{ word?: string; score?: number }>)
+            : [];
+          emitDone("place", moveResult, {
+            best_word: appliedWords[0]?.word ?? candidate.word,
+            best_score:
+              moveResult.points ?? appliedWords[0]?.score ?? candidate.score,
+          });
+          return true;
+        }
+        return false;
+      }
+
+      async function runRepair(witnessPlacements: PlacementData[]): Promise<void> {
+        if (
+          !runGenerationImpl ||
+          !languageModel ||
+          !forceValidateMoveConfig ||
+          remainingSeconds() < REPAIR_MIN_REMAINING_SECONDS
+        ) {
+          return;
+        }
+        const remainingSteps = maxSteps - attemptProviderRequests();
+        if (remainingSteps < REPAIR_RESERVE_STEPS) return;
+
+        const repairModel = languageModel;
+        const repairValidate = forceValidateMoveConfig;
+        const repairGenerate = runGenerationImpl;
+        repairAttempted = true;
+        const repairAbort = new AbortController();
+        const repairMs = Math.max(remainingSeconds() * 1000, 0);
+        const repairTimer = setTimeout(() => repairAbort.abort(), repairMs);
+        const repairPrompt =
+          `${userPrompt}\n\nREPAIR WITNESS (authoritative placements; call validateMove ` +
+          `exactly on these tiles):\n${JSON.stringify({ placements: witnessPlacements })}`;
+        try {
+          repairResult = await repairGenerate(repairModel, {
+            temperature: REPAIR_TEMPERATURE,
+            stepCap: REPAIR_RESERVE_STEPS,
+            prompt: repairPrompt,
+            abortSignal: repairAbort.signal,
+            prepareStep: () => repairValidate,
+          });
+        } catch (err) {
+          if (!(err instanceof DOMException && err.name === "AbortError")) {
+            throw err;
+          }
+        } finally {
+          clearTimeout(repairTimer);
+          noteGenerationResult(repairResult);
+        }
+      }
+
+      async function probeAndResolve(
+        cause: string,
+        opts?: { allowProviderRepair?: boolean },
+      ): Promise<void> {
+        const allowProviderRepair = opts?.allowProviderRepair !== false;
+        terminalCause = cause;
+        let playability: PlayabilityPayload;
+        try {
+          playability = (await backendGet(
+            `/api/game/${game_id}/ai-playability/`,
+            token,
+          )) as PlayabilityPayload;
+        } catch {
+          probeStatus = "failed";
+          emitTerminalError("Playability could not be determined.", {
+            code: "playability_unknown",
+          });
+          return;
+        }
+
+        if (playability.ok === false || typeof playability.status !== "string") {
+          probeStatus =
+            typeof playability.code === "string" ? playability.code : "failed";
+          emitTerminalError(
+            typeof playability.error === "string"
+              ? playability.error
+              : "Playability could not be determined.",
+            {
+              code:
+                typeof playability.code === "string"
+                  ? playability.code
+                  : "playability_unknown",
+            },
+          );
+          return;
+        }
+
+        probeStatus = playability.status;
+
+        if (playability.status === "found") {
+          const witnessPlacements = normalizePlacementArray(
+            isRecord(playability.witness) ? playability.witness.placements : null,
+          );
+          if (witnessPlacements.length === 0) {
+            emitTerminalError("Playability witness was missing.", {
+              code: "playability_unknown",
+            });
+            return;
+          }
+
+          const knownKeys = new Set(
+            candidates.filter((c) => c.valid).map((c) => placementKey(c.placements)),
+          );
+          const remainingSteps = maxSteps - attemptProviderRequests();
+          if (
+            allowProviderRepair &&
+            remainingSteps >= REPAIR_RESERVE_STEPS &&
+            remainingSeconds() >= REPAIR_MIN_REMAINING_SECONDS
+          ) {
+            emit({
+              type: "thinking",
+              status: "probe_found",
+              message: "backend found a legal rescue; repairing",
+              probe_status: "found",
+            });
+            await runRepair(witnessPlacements);
+            const repairCandidates = candidates
+              .filter((c) => c.valid)
+              .filter((c) => !knownKeys.has(placementKey(c.placements)))
+              .sort((a, b) => b.score - a.score);
+            for (const candidate of repairCandidates) {
+              terminalCause = "repair_candidate";
+              const moveResult = await postAiMove(
+                candidate.placements,
+                "repair_candidate",
+              );
+              if (!moveResult) continue;
+              const appliedWords = Array.isArray(moveResult.words)
+                ? (moveResult.words as Array<{ word?: string; score?: number }>)
+                : [];
+              emitDone("place", moveResult, {
+                best_word: appliedWords[0]?.word ?? candidate.word,
+                best_score:
+                  moveResult.points ?? appliedWords[0]?.score ?? candidate.score,
+              });
+              return;
+            }
+          }
+
+          terminalCause = "backend_witness_rescue";
+          const rescue = await postAiMove(
+            witnessPlacements,
+            "backend_witness_rescue",
+          );
+          if (!rescue) {
+            emitTerminalError("The AI action was not accepted.", {
+              code: "stale_witness",
+            });
+            return;
+          }
+          const appliedWords = Array.isArray(rescue.words)
+            ? (rescue.words as Array<{ word?: string; score?: number }>)
+            : [];
+          emitDone("place", rescue, {
+            best_word: appliedWords[0]?.word,
+            best_score: rescue.points ?? appliedWords[0]?.score,
+          });
+          return;
+        }
+
+        if (playability.status === "none") {
+          if (playability.exchange_allowed === true) {
+            const letters = Array.isArray(playability.exchange_letters)
+              ? playability.exchange_letters.filter(
+                  (letter: unknown): letter is string =>
+                    typeof letter === "string" && letter.length === 1,
+                )
+              : [];
+            terminalCause = "genuine_no_move_exchange";
+            completionSource = "genuine_no_move_exchange";
+            emit({
+              type: "thinking",
+              status: "genuine_exchange",
+              message: "genuine dead rack — exchanging",
+              probe_status: "none",
+            });
+            const exchangeResult = await backendPost(
+              `/api/game/${game_id}/ai-exchange/`,
+              {
+                letters,
+                ai_metadata: boundedAiMetadata("genuine_no_move_exchange"),
+              },
+              token,
+            );
+            if (!isLegalBackendTerminal(exchangeResult)) {
+              emitTerminalError("The AI action was not accepted.", {
+                code: conflictCode(exchangeResult),
+              });
+              return;
+            }
+            emitDone("exchange", exchangeResult as Record<string, unknown>);
+            return;
+          }
+
+          terminalCause = "genuine_no_move_pass";
+          completionSource = "genuine_no_move_pass";
+          emit({
+            type: "thinking",
+            status: "genuine_pass",
+            message: "genuine dead rack — passing",
+            probe_status: "none",
+          });
+          const passResult = await backendPost(
+            `/api/game/${game_id}/ai-pass/`,
+            { ai_metadata: boundedAiMetadata("genuine_no_move_pass") },
+            token,
+          );
+          if (!isLegalBackendTerminal(passResult)) {
+            emitTerminalError("The AI action was not accepted.", {
+              code: conflictCode(passResult),
+            });
+            return;
+          }
+          emitDone("pass", passResult as Record<string, unknown>);
+          return;
+        }
+
+        emitTerminalError("Playability could not be determined.", {
+          code: "playability_unknown",
+        });
+      }
+
       try {
         const catalogRows = await fetchCatalogModelRows();
         if (catalogRows === null) {
@@ -650,6 +1014,7 @@ export async function POST(req: NextRequest) {
           `/api/game/${game_id}/ai-context/`,
           token,
         );
+        promptContext = context;
 
         if (!context.compact_state) {
           emit({ type: "error", error: "Could not fetch game context" });
@@ -657,7 +1022,7 @@ export async function POST(req: NextRequest) {
           return;
         }
 
-        const sessionModelId =
+        sessionModelId =
           typeof context.ai_model_id === "string" ? context.ai_model_id : null;
 
         const resolvedPair =
@@ -751,7 +1116,7 @@ export async function POST(req: NextRequest) {
           typeof context.ai_prompt_text === "string" ? context.ai_prompt_text : null,
           moveSpec,
         );
-        const userPrompt = buildMoveUserPrompt(context);
+        userPrompt = buildMoveUserPrompt(context);
         let model: Awaited<ReturnType<typeof getLanguageRuntime>>["model"];
         try {
           const runtime = await getLanguageRuntime(
@@ -759,6 +1124,7 @@ export async function POST(req: NextRequest) {
             runtimePair.model_id,
           );
           model = runtime.model;
+          languageModel = model;
           runtimeTracker = runtime.tracker;
         } catch (err) {
           const normalizedError = normalizeProviderError(err) ?? {
@@ -860,6 +1226,7 @@ export async function POST(req: NextRequest) {
           activeTools: ["validateMove"] as Array<keyof typeof tools>,
           toolChoice: { type: "tool" as const, toolName: "validateMove" as const },
         };
+        forceValidateMoveConfig = forceValidateMove;
 
         function prepareSearchStep({ stepNumber }: { stepNumber: number }) {
           if (stepNumber === 0 || getBestCandidate() === null) {
@@ -916,14 +1283,11 @@ export async function POST(req: NextRequest) {
             }),
           ]);
 
+        runGenerationImpl = runGeneration;
+
         const timeoutId = setTimeout(() => {
           abortGeneration("timeout");
         }, timeoutS * 1000);
-
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        let aiResult: any = null;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        let repairResult: any = null;
 
         try {
           try {
@@ -945,333 +1309,7 @@ export async function POST(req: NextRequest) {
             noteGenerationResult(aiResult);
           }
 
-          const elapsedMs = Date.now() - startTime;
           const timedOut = abortReason === "timeout";
-          const normalizedUsage =
-            normalizeUsage(
-              (aiResult?.totalUsage as UsageLike | undefined) ??
-                (aiResult?.usage as UsageLike | undefined) ??
-                null,
-            ) ?? accumulatedUsage;
-
-          function runtimeFields() {
-            const used = attemptProviderRequests();
-            return {
-              provider_path: providerPath,
-              runtime_model: runtimeModelId,
-              provider_requests_used: used,
-              turn_provider_requests_used: used,
-              ...retryAfterFields(),
-            };
-          }
-
-          function boundedAiMetadata(source: CompletionSource) {
-            const used = attemptProviderRequests();
-            const meta: Record<string, unknown> = {
-              prompt_version: MOVE_PROMPT_VERSION,
-              requested_model_id: requestedModelId,
-              runtime_provider: providerPath,
-              runtime_model_id: runtimeModelId,
-              completion_source: source,
-              repair_attempted: repairAttempted,
-              terminal_cause: terminalCause,
-              provider_requests_used: used,
-              turn_provider_requests: used,
-              valid_candidate_count: candidates.filter((c) => c.valid).length,
-            };
-            Object.assign(meta, retryAfterFields());
-            if (typeof context.ai_prompt_id === "number") {
-              meta.prompt_id = context.ai_prompt_id;
-            }
-            if (typeof context.ai_prompt_name === "string") {
-              meta.prompt_name = context.ai_prompt_name;
-            }
-            if (probeStatus) meta.probe_status = probeStatus;
-            const usage = usageForMetadata(normalizedUsage);
-            if (usage) meta.usage = usage;
-            return meta;
-          }
-
-          function emitDone(
-            action: "place" | "pass" | "exchange",
-            payload: Record<string, unknown>,
-            extra: Record<string, unknown> = {},
-          ) {
-            emit({
-              type: "done",
-              action,
-              ...payload,
-              requested_model: requestedModelId,
-              session_model: sessionModelId,
-              response_model: aiResult?.response?.modelId ?? lastResponseModelId,
-              elapsed_ms: elapsedMs,
-              candidates_found: candidates.length,
-              timed_out: timedOut,
-              auto_finalized: autoFinalized,
-              completion_source: completionSource,
-              probe_status: probeStatus,
-              repair_attempted: repairAttempted,
-              terminal_cause: terminalCause,
-              ...runtimeFields(),
-              ...extra,
-            });
-          }
-
-          function emitTerminalError(
-            message: string,
-            extra: Record<string, unknown> = {},
-          ) {
-            emit({
-              type: "error",
-              error: message,
-              completion_source: completionSource,
-              probe_status: probeStatus,
-              repair_attempted: repairAttempted,
-              terminal_cause: terminalCause || "error",
-              ...runtimeFields(),
-              ...extra,
-            });
-          }
-
-          function conflictCode(result: unknown): string | undefined {
-            if (!isRecord(result)) return undefined;
-            return typeof result.code === "string" ? result.code : undefined;
-          }
-
-          async function postAiMove(
-            placements: PlacementData[],
-            source: CompletionSource,
-          ): Promise<Record<string, unknown> | null> {
-            completionSource = source;
-            const moveResult = await backendPost(
-              `/api/game/${game_id}/ai-move/`,
-              { placements, ai_metadata: boundedAiMetadata(source) },
-              token,
-            );
-            if (!isLegalBackendTerminal(moveResult)) return null;
-            return moveResult as Record<string, unknown>;
-          }
-
-          async function commitBestAvailable(): Promise<boolean> {
-            const choices = await rankedAndProviderChoices();
-            if (choices.length === 0) return false;
-            for (const candidate of choices) {
-              terminalCause = candidate.source;
-              const moveResult = await postAiMove(
-                candidate.placements,
-                candidate.source,
-              );
-              if (!moveResult) continue;
-              const appliedWords = Array.isArray(moveResult.words)
-                ? (moveResult.words as Array<{ word?: string; score?: number }>)
-                : [];
-              emitDone("place", moveResult, {
-                best_word: appliedWords[0]?.word ?? candidate.word,
-                best_score:
-                  moveResult.points ?? appliedWords[0]?.score ?? candidate.score,
-              });
-              return true;
-            }
-            return false;
-          }
-
-          async function runRepair(witnessPlacements: PlacementData[]): Promise<void> {
-            if (remainingSeconds() < REPAIR_MIN_REMAINING_SECONDS) return;
-            const remainingSteps = maxSteps - attemptProviderRequests();
-            if (remainingSteps < REPAIR_RESERVE_STEPS) return;
-
-            repairAttempted = true;
-            const repairAbort = new AbortController();
-            const repairMs = Math.max(remainingSeconds() * 1000, 0);
-            const repairTimer = setTimeout(() => repairAbort.abort(), repairMs);
-            const repairPrompt =
-              `${userPrompt}\n\nREPAIR WITNESS (authoritative placements; call validateMove ` +
-              `exactly on these tiles):\n${JSON.stringify({ placements: witnessPlacements })}`;
-            try {
-              repairResult = await runGeneration(model, {
-                temperature: REPAIR_TEMPERATURE,
-                stepCap: REPAIR_RESERVE_STEPS,
-                prompt: repairPrompt,
-                abortSignal: repairAbort.signal,
-                prepareStep: () => forceValidateMove,
-              });
-            } catch (err) {
-              if (!(err instanceof DOMException && err.name === "AbortError")) {
-                throw err;
-              }
-            } finally {
-              clearTimeout(repairTimer);
-              noteGenerationResult(repairResult);
-            }
-          }
-
-          async function probeAndResolve(cause: string): Promise<void> {
-            terminalCause = cause;
-            let playability: PlayabilityPayload;
-            try {
-              playability = (await backendGet(
-                `/api/game/${game_id}/ai-playability/`,
-                token,
-              )) as PlayabilityPayload;
-            } catch {
-              probeStatus = "failed";
-              emitTerminalError("Playability could not be determined.", {
-                code: "playability_unknown",
-              });
-              return;
-            }
-
-            if (playability.ok === false || typeof playability.status !== "string") {
-              probeStatus =
-                typeof playability.code === "string" ? playability.code : "failed";
-              emitTerminalError(
-                typeof playability.error === "string"
-                  ? playability.error
-                  : "Playability could not be determined.",
-                {
-                  code:
-                    typeof playability.code === "string"
-                      ? playability.code
-                      : "playability_unknown",
-                },
-              );
-              return;
-            }
-
-            probeStatus = playability.status;
-
-            if (playability.status === "found") {
-              const witnessPlacements = normalizePlacementArray(
-                isRecord(playability.witness) ? playability.witness.placements : null,
-              );
-              if (witnessPlacements.length === 0) {
-                emitTerminalError("Playability witness was missing.", {
-                  code: "playability_unknown",
-                });
-                return;
-              }
-
-              const knownKeys = new Set(
-                candidates.filter((c) => c.valid).map((c) => placementKey(c.placements)),
-              );
-              const remainingSteps = maxSteps - attemptProviderRequests();
-              if (
-                remainingSteps >= REPAIR_RESERVE_STEPS &&
-                remainingSeconds() >= REPAIR_MIN_REMAINING_SECONDS
-              ) {
-                emit({
-                  type: "thinking",
-                  status: "probe_found",
-                  message: "backend found a legal rescue; repairing",
-                  probe_status: "found",
-                });
-                await runRepair(witnessPlacements);
-                const repairCandidates = candidates
-                  .filter((c) => c.valid)
-                  .filter((c) => !knownKeys.has(placementKey(c.placements)))
-                  .sort((a, b) => b.score - a.score);
-                for (const candidate of repairCandidates) {
-                  terminalCause = "repair_candidate";
-                  const moveResult = await postAiMove(
-                    candidate.placements,
-                    "repair_candidate",
-                  );
-                  if (!moveResult) continue;
-                  const appliedWords = Array.isArray(moveResult.words)
-                    ? (moveResult.words as Array<{ word?: string; score?: number }>)
-                    : [];
-                  emitDone("place", moveResult, {
-                    best_word: appliedWords[0]?.word ?? candidate.word,
-                    best_score:
-                      moveResult.points ?? appliedWords[0]?.score ?? candidate.score,
-                  });
-                  return;
-                }
-              }
-
-              terminalCause = "backend_witness_rescue";
-              const rescue = await postAiMove(
-                witnessPlacements,
-                "backend_witness_rescue",
-              );
-              if (!rescue) {
-                emitTerminalError("The AI action was not accepted.", {
-                  code: "stale_witness",
-                });
-                return;
-              }
-              const appliedWords = Array.isArray(rescue.words)
-                ? (rescue.words as Array<{ word?: string; score?: number }>)
-                : [];
-              emitDone("place", rescue, {
-                best_word: appliedWords[0]?.word,
-                best_score: rescue.points ?? appliedWords[0]?.score,
-              });
-              return;
-            }
-
-            if (playability.status === "none") {
-              if (playability.exchange_allowed === true) {
-                const letters = Array.isArray(playability.exchange_letters)
-                  ? playability.exchange_letters.filter(
-                      (letter: unknown): letter is string =>
-                        typeof letter === "string" && letter.length === 1,
-                    )
-                  : [];
-                terminalCause = "genuine_no_move_exchange";
-                completionSource = "genuine_no_move_exchange";
-                emit({
-                  type: "thinking",
-                  status: "genuine_exchange",
-                  message: "genuine dead rack — exchanging",
-                  probe_status: "none",
-                });
-                const exchangeResult = await backendPost(
-                  `/api/game/${game_id}/ai-exchange/`,
-                  {
-                    letters,
-                    ai_metadata: boundedAiMetadata("genuine_no_move_exchange"),
-                  },
-                  token,
-                );
-                if (!isLegalBackendTerminal(exchangeResult)) {
-                  emitTerminalError("The AI action was not accepted.", {
-                    code: conflictCode(exchangeResult),
-                  });
-                  return;
-                }
-                emitDone("exchange", exchangeResult as Record<string, unknown>);
-                return;
-              }
-
-              terminalCause = "genuine_no_move_pass";
-              completionSource = "genuine_no_move_pass";
-              emit({
-                type: "thinking",
-                status: "genuine_pass",
-                message: "genuine dead rack — passing",
-                probe_status: "none",
-              });
-              const passResult = await backendPost(
-                `/api/game/${game_id}/ai-pass/`,
-                { ai_metadata: boundedAiMetadata("genuine_no_move_pass") },
-                token,
-              );
-              if (!isLegalBackendTerminal(passResult)) {
-                emitTerminalError("The AI action was not accepted.", {
-                  code: conflictCode(passResult),
-                });
-                return;
-              }
-              emitDone("pass", passResult as Record<string, unknown>);
-              return;
-            }
-
-            emitTerminalError("Playability could not be determined.", {
-              code: "playability_unknown",
-            });
-          }
-
           const best = getBestCandidate();
           if (best) {
             if (timedOut) {
@@ -1324,95 +1362,35 @@ export async function POST(req: NextRequest) {
           return;
         }
 
-        const bestTracked = candidates
-          .filter((candidate) => candidate.valid)
-          .sort((left, right) => right.score - left.score)[0];
-        if (bestTracked) {
-          try {
-            // A generic SDK/runtime exception may still use ranked candidates,
-            // but only after the provider produced a backend-validated move.
-            // Classified provider/endpoint failures above must remain eligible
-            // for the outer five-lane fallback instead of becoming backend-only.
-            const choices = await rankedAndProviderChoices();
-            let committed = false;
-            for (const candidate of choices) {
-              completionSource = candidate.source;
-              terminalCause = "generic_error_fallback";
-              const moveResult = await backendPost(
-                `/api/game/${game_id}/ai-move/`,
-                {
-                  placements: candidate.placements,
-                  ai_metadata: {
-                    completion_source: candidate.source,
-                    repair_attempted: repairAttempted,
-                    provider_requests_used: attemptProviderRequests(),
-                    ...retryAfterFields(),
-                  },
-                },
-                token,
-              );
-              if (!isLegalBackendTerminal(moveResult)) continue;
-              const appliedWords = Array.isArray(moveResult.words)
-                ? (moveResult.words as Array<{ word?: string; score?: number }>)
-                : [];
-              emit({
-                type: "done",
-                action: "place",
-                ...moveResult,
-                best_word: appliedWords[0]?.word ?? candidate.word,
-                best_score:
-                  moveResult.points ?? appliedWords[0]?.score ?? candidate.score,
-                fallback: true,
-                completion_source: candidate.source,
-                repair_attempted: repairAttempted,
-                terminal_cause: "generic_error_fallback",
-                provider_path: providerPath,
-                runtime_model: runtimeModelId,
-                provider_requests_used: attemptProviderRequests(),
-                turn_provider_requests_used: attemptProviderRequests(),
-                ...retryAfterFields(),
-              });
-              committed = true;
-              break;
-            }
-            if (!committed) {
-              emit({
-                type: "error",
-                error: "The AI action was not accepted.",
-                provider_path: providerPath,
-                runtime_model: runtimeModelId,
-                provider_requests_used: attemptProviderRequests(),
-                turn_provider_requests_used: attemptProviderRequests(),
-                ...retryAfterFields(),
-                repair_attempted: repairAttempted,
-                terminal_cause: "commit_rejected",
-              });
-            }
-          } catch {
-            emit({
-              type: "error",
-              error: "AI move failed",
-              provider_path: providerPath,
-              runtime_model: runtimeModelId,
-              provider_requests_used: attemptProviderRequests(),
-              turn_provider_requests_used: attemptProviderRequests(),
-              ...retryAfterFields(),
-              repair_attempted: repairAttempted,
-              terminal_cause: "error",
+        // A generic SDK/runtime exception may still use ranked candidates
+        // even with no tracked provider move. Classified provider/endpoint
+        // failures above must remain eligible for the outer three-lane
+        // fallback instead of becoming backend-only.
+        try {
+          const committed = await commitBestAvailable({
+            terminalCause: "generic_error_fallback",
+          });
+          if (committed) {
+            return;
+          }
+          if (!terminalSent) {
+            await probeAndResolve("generic_runtime", {
+              allowProviderRepair: false,
             });
           }
-        } else {
-          emit({
-            type: "error",
-            error: "AI move failed",
-            provider_path: providerPath,
-            runtime_model: runtimeModelId,
-            provider_requests_used: attemptProviderRequests(),
-            turn_provider_requests_used: attemptProviderRequests(),
-            ...retryAfterFields(),
-            repair_attempted: repairAttempted,
-            terminal_cause: "error",
-          });
+          if (!terminalSent) {
+            terminalCause = "backend_rescue_error";
+            emitTerminalError(BOUNDED_INTERNAL_ERROR, {
+              code: "ai_move_internal_error",
+            });
+          }
+        } catch {
+          if (!terminalSent) {
+            terminalCause = "backend_rescue_error";
+            emitTerminalError(BOUNDED_INTERNAL_ERROR, {
+              code: "ai_move_internal_error",
+            });
+          }
         }
       } finally {
         closeStream();

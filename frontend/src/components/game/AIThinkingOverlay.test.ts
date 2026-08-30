@@ -217,4 +217,18 @@ describe("AIThinkingOverlay fallback attempt pills", () => {
     expect(markup).not.toContain('data-pingpong="active"');
     expect(markup).toContain('data-attempt-status="active"');
   });
+
+  it("renders backend rescue failure telemetry inside attempt progress", () => {
+    primeStore([pending(GEMMA)], 0, {
+      aiTurnTelemetry: {
+        terminalCause: "backend_rescue_error",
+        humanState: "backend rescue failed",
+      },
+    });
+    const markup = renderOverlay();
+    expect(markup).toContain("ai-turn-telemetry");
+    expect(markup).toContain("backend rescue failed");
+    expect(markup).toContain("ai-fallback-progress");
+    expect(markup.match(/data-pingpong="active"/g)?.length).toBe(1);
+  });
 });

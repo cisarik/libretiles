@@ -308,5 +308,76 @@ export function describeAiTurnTelemetry(input: {
   ) {
     return "genuine dead rack — passing";
   }
+  if (
+    input.terminalCause === "backend_rescue_error" ||
+    input.terminalCause === "commit_rejected"
+  ) {
+    return "backend rescue failed";
+  }
   return null;
+}
+
+export function describeAiMoveFailure(input: {
+  message?: string | null;
+  code?: string | null;
+  terminalCause?: string | null;
+  probeStatus?: string | null;
+  repairAttempted?: boolean | null;
+  completionSource?: string | null;
+}): string {
+  const described = describeAiTurnTelemetry({
+    completionSource: input.completionSource,
+    probeStatus: input.probeStatus,
+    repairAttempted: input.repairAttempted,
+    terminalCause: input.terminalCause,
+    message: input.message,
+  });
+  if (described) return described;
+  if (input.probeStatus) {
+    return `playability ${input.probeStatus}`;
+  }
+  if (input.code === "ai_move_internal_error") {
+    return "backend rescue failed";
+  }
+  if (typeof input.code === "string" && input.code.length > 0) {
+    return `The AI turn could not be completed (${input.code}).`;
+  }
+  if (typeof input.terminalCause === "string" && input.terminalCause.length > 0) {
+    return input.terminalCause.replace(/_/g, " ");
+  }
+  const message = input.message?.trim() ?? "";
+  if (message.length > 0 && message !== "AI move failed") return message;
+  return "The AI turn could not be completed.";
+}
+
+export type LostAiTurnAnchor = {
+  moveCount: number;
+  aiSlot: number;
+};
+
+export type LostAiTurnLatest = {
+  game_over?: boolean;
+  move_count?: number;
+  current_turn_slot?: number | null;
+} | null;
+
+export function shouldHideLostAiTerminal(
+  latest: LostAiTurnLatest,
+  anchor: LostAiTurnAnchor,
+): boolean {
+  if (latest == null) return false;
+  if (latest.game_over === true) return true;
+  if (
+    typeof latest.move_count === "number" &&
+    latest.move_count > anchor.moveCount
+  ) {
+    return true;
+  }
+  if (
+    latest.current_turn_slot !== undefined &&
+    latest.current_turn_slot !== anchor.aiSlot
+  ) {
+    return true;
+  }
+  return false;
 }

@@ -540,19 +540,112 @@ describe("POST /api/ai/move", () => {
     expect(done?.completion_source).toBe("backend_ranked_candidate");
     expect(done?.terminal_cause).toBe("generic_error_fallback");
     expect(fetchUrls(fetchMock).filter((url) => url.endsWith("/ai-candidates/"))).toHaveLength(1);
+    expect(generateTextMock).toHaveBeenCalledTimes(1);
   });
 
-  it("does not use a ranked backend move after a generic error with no tracked provider move", async () => {
+  it("rescues a generic runtime error with a backend-ranked candidate without a tracked provider candidate", async () => {
     generateTextMock.mockRejectedValue(new Error("generic SDK failure"));
     const fetchMock = mockBackend({
       "/ai-candidates/": { body: rankedPayload(46) },
+      "/ai-move/": {
+        body: { ok: true, action: "place", points: 46, words: [{ word: "AT", score: 46 }] },
+      },
+    });
+
+    const { done } = await runRoute();
+
+    expect(done?.completion_source).toBe("backend_ranked_candidate");
+    expect(done?.terminal_cause).toBe("generic_error_fallback");
+    expect(fetchUrls(fetchMock).filter((url) => url.endsWith("/ai-candidates/"))).toHaveLength(1);
+    expect(fetchUrls(fetchMock).filter((url) => url.endsWith("/ai-move/"))).toHaveLength(1);
+    expect(generateTextMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("rescues a generic runtime error with a Slovak Unicode witness when ranked candidates are empty", async () => {
+    generateTextMock.mockRejectedValue(new Error("generic SDK failure"));
+    const fetchMock = mockBackend({
+      "/ai-candidates/": {
+        body: {
+          status: "none",
+          candidates: [],
+          search: {
+            complete: true,
+            nodes: 1,
+            elapsed_ms: 1,
+            unique_placements: 0,
+            candidate_count: 0,
+          },
+        },
+      },
+      "/ai-playability/": {
+        body: {
+          status: "found",
+          witness: { placements: SK_WITNESS, words: ["OSĽAŤA"], total_score: 12 },
+          exchange_allowed: false,
+          exchange_letters: [],
+          search: { complete: true, nodes: 4, elapsed_ms: 2 },
+        },
+      },
+      "/ai-move/": {
+        body: {
+          ok: true,
+          action: "place",
+          points: 12,
+          words: [{ word: "OSĽAŤA", score: 12 }],
+        },
+      },
     });
 
     const { done, error } = await collectEvents();
 
+    expect(error).toBeUndefined();
+    expect(done?.completion_source).toBe("backend_witness_rescue");
+    expect(done?.terminal_cause).toBe("backend_witness_rescue");
+    expect(error?.code).not.toBe("stale_witness");
+    expect(generateTextMock).toHaveBeenCalledTimes(1);
+    const moveCall = fetchMock.mock.calls.find(([url]) =>
+      String(url).endsWith("/ai-move/"),
+    );
+    const moveBody = JSON.parse(String(moveCall?.[1]?.body)) as {
+      placements: Array<{ letter?: string; blank_as?: string }>;
+    };
+    expect(moveBody.placements).toEqual(SK_WITNESS);
+    expect(JSON.stringify(moveBody.placements)).toContain("Ľ");
+  });
+
+  it("emits a bounded terminal when backend rescue itself fails", async () => {
+    generateTextMock.mockRejectedValue(new Error("generic SDK failure"));
+    const fetchMock = mockBackend({
+      "/ai-candidates/": {
+        body: {
+          status: "none",
+          candidates: [],
+          search: {
+            complete: true,
+            nodes: 1,
+            elapsed_ms: 1,
+            unique_placements: 0,
+            candidate_count: 0,
+          },
+        },
+      },
+      "/ai-playability/": {
+        body: () => {
+          throw new Error("secret-rack-and-token");
+        },
+      },
+    });
+
+    const { done, error, events } = await collectEvents();
+
     expect(done).toBeUndefined();
-    expect(error?.error).toBe("AI move failed");
-    expect(fetchUrls(fetchMock).some((url) => url.endsWith("/ai-candidates/"))).toBe(false);
+    expect(["ai_move_internal_error", "playability_unknown"]).toContain(error?.code);
+    expect(typeof error?.terminal_cause).toBe("string");
+    expect(error?.terminal_cause).not.toBe("error");
+    expect(error?.error).not.toBe("AI move failed");
+    expect(JSON.stringify(events)).not.toContain("secret-rack-and-token");
+    expect(JSON.stringify(error)).not.toContain("secret-rack-and-token");
+    expect(generateTextMock).toHaveBeenCalledTimes(1);
     expect(fetchUrls(fetchMock).some((url) => url.endsWith("/ai-move/"))).toBe(false);
   });
 
