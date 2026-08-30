@@ -38,6 +38,28 @@
       "variant_slug": "english",
       "rack": "AUTOLIN",
       "board": []
+    },
+    {
+      "id": "slovak-turn-diacritic-blank",
+      "kind": "turn",
+      "variant_slug": "slovak",
+      "rack": "?OSTAČL",
+      "board": [],
+      "fake_script": "noop_rescue"
+    },
+    {
+      "id": "english-turn-dead-qqq",
+      "kind": "turn",
+      "variant_slug": "english",
+      "rack": "QQQQQQQ",
+      "board": [],
+      "fake_script": "noop_rescue"
     }
-  ]
+  ],
+  "turn_scripts": {
+    "noop_rescue": { "generate": "noop" },
+    "drop_done": { "generate": "noop", "drop_done": true },
+    "generic_unchanged": { "generate": "skip_route" },
+    "validate_scripted": { "generate": "validate_scripted" }
+  }
 }
