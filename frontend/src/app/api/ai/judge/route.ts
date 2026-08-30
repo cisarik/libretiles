@@ -13,8 +13,8 @@
  *
  * Fallback contract:
  *   - Same shared queue builder as /api/ai/move (preference first, then
- *     untouched catalog order), capped at five distinct pairs.
- *   - At most five sequential provider lanes, 10s per attempt, 50s overall.
+ *     untouched catalog order), capped at three distinct pairs.
+ *   - At most three sequential provider lanes, 10s per attempt, 30s overall.
  *   - AI SDK retries disabled; malformed output advances to the next model.
  *   - Exhaustion is an explicit HTTP 503 — malformed output is never
  *     synthesized into false "invalid" results.
@@ -32,7 +32,7 @@ import { judgePromptSpecFromBody, judgeSystemPromptFor } from "@/lib/prompts";
 
 const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8000";
 const ATTEMPT_TIMEOUT_MS = 10_000;
-const OVERALL_BUDGET_MS = 50_000;
+const OVERALL_BUDGET_MS = 30_000;
 const MAX_TRACKED_REQUESTS = 50_000;
 const MAX_TRACKED_TOKENS = 1_000_000_000;
 const MAX_RETRY_AFTER_SECONDS = 86_400;

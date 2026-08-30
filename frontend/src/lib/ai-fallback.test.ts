@@ -9,6 +9,7 @@ import {
   decideNextFallbackAttempt,
   fallbackQueueForCatalogFailure,
   gameStateAllowsRetry,
+  MAX_FALLBACK_ATTEMPTS,
   orchestrateFallbackTurn,
   providerBadgeLabel,
   providerRequestsUsedFromTerminal,
@@ -87,8 +88,6 @@ describe("buildFallbackQueue", () => {
       { provider: "openrouter", model_id: OPENROUTER_NEMOTRON },
       { provider: "openrouter", model_id: OPENROUTER_GLM },
       { provider: "openrouter", model_id: OPENROUTER_GEMMA_SMALL },
-      { provider: "nvidia-nim", model_id: NVIDIA_NIM_NEMOTRON },
-      { provider: "openrouter", model_id: OPENROUTER_GEMMA },
     ]);
   });
 
@@ -97,22 +96,16 @@ describe("buildFallbackQueue", () => {
       { provider: "openrouter", model_id: OPENROUTER_GLM },
       { provider: "openrouter", model_id: OPENROUTER_NEMOTRON },
       { provider: "openrouter", model_id: OPENROUTER_GEMMA_SMALL },
-      { provider: "nvidia-nim", model_id: NVIDIA_NIM_NEMOTRON },
-      { provider: "openrouter", model_id: OPENROUTER_GEMMA },
     ]);
     expect(buildFallbackQueue(null, NEWEST_FIRST_CATALOG)).toEqual([
       { provider: "openrouter", model_id: OPENROUTER_GLM },
       { provider: "openrouter", model_id: OPENROUTER_NEMOTRON },
       { provider: "openrouter", model_id: OPENROUTER_GEMMA_SMALL },
-      { provider: "nvidia-nim", model_id: NVIDIA_NIM_NEMOTRON },
-      { provider: "openrouter", model_id: OPENROUTER_GEMMA },
     ]);
     expect(buildFallbackQueue(NVIDIA_NIM_NEMOTRON, NEWEST_FIRST_CATALOG)).toEqual([
       { provider: "nvidia-nim", model_id: NVIDIA_NIM_NEMOTRON },
       { provider: "openrouter", model_id: OPENROUTER_GLM },
       { provider: "openrouter", model_id: OPENROUTER_NEMOTRON },
-      { provider: "openrouter", model_id: OPENROUTER_GEMMA_SMALL },
-      { provider: "openrouter", model_id: OPENROUTER_GEMMA },
     ]);
   });
 
@@ -120,18 +113,19 @@ describe("buildFallbackQueue", () => {
     const playQueue = buildFallbackQueue(OPENROUTER_GEMMA, NEWEST_FIRST_CATALOG);
     const judgeQueue = buildFallbackQueue(OPENROUTER_GEMMA, NEWEST_FIRST_CATALOG);
     expect(playQueue).toEqual(judgeQueue);
-    expect(playQueue).toHaveLength(5);
+    expect(MAX_FALLBACK_ATTEMPTS).toBe(3);
+    expect(playQueue).toHaveLength(3);
   });
 
-  it("de-duplicates exact pairs and never exceeds five attempts", () => {
+  it("de-duplicates exact pairs and never exceeds three attempts", () => {
     const duplicated: CatalogPair[] = [
       ...NEWEST_FIRST_CATALOG,
       { provider: "openrouter", model_id: OPENROUTER_GLM },
     ];
     const queue = buildFallbackQueue(OPENROUTER_GLM, duplicated);
-    expect(queue).toHaveLength(5);
+    expect(queue).toHaveLength(3);
     const keys = queue.map((pair) => `${pair.provider}:${pair.model_id}`);
-    expect(new Set(keys).size).toBe(5);
+    expect(new Set(keys).size).toBe(3);
   });
 
   it("returns an empty queue for an empty catalog", () => {
@@ -170,7 +164,7 @@ describe("catalog failure and timeout helpers", () => {
     expect(remainingTimeoutSeconds(0, 30, 16_000)).toBe(14);
     expect(canStartAttempt(14)).toBe(true);
     expect(canStartAttempt(15)).toBe(true);
-    expect(attemptTimeoutSeconds(120, 5)).toBe(24);
+    expect(attemptTimeoutSeconds(120, 3)).toBe(40);
     expect(attemptTimeoutSeconds(119, 4)).toBe(29);
     expect(attemptTimeoutSeconds(73, 4)).toBe(18);
     expect(attemptTimeoutSeconds(14, 1)).toBe(14);
@@ -179,7 +173,7 @@ describe("catalog failure and timeout helpers", () => {
     expect(
       decideNextFallbackAttempt({
         attemptIndex: 1,
-        queueLength: 5,
+        queueLength: 3,
         previous: CODED_429,
         remainingSeconds: 14,
         reconciliationAllowsRetry: true,
@@ -188,6 +182,7 @@ describe("catalog failure and timeout helpers", () => {
   });
 
   it("reserves exact five-step grants for later lanes", () => {
+    expect(attemptStepGrant(30, 3)).toBe(20);
     expect(attemptStepGrant(50, 5)).toBe(30);
     expect(attemptStepGrant(45, 4)).toBe(30);
     expect(attemptStepGrant(20, 4)).toBe(5);
@@ -348,7 +343,7 @@ describe("orchestrateFallbackTurn", () => {
     });
     expect(runStream).toHaveBeenCalledTimes(2);
     expect(result.posts[0]?.pair.model_id).toBe(NVIDIA_NIM_NEMOTRON);
-    expect(result.posts[0]?.maxStepsRemaining).toBe(30);
+    expect(result.posts[0]?.maxStepsRemaining).toBe(40);
     expect(result.stopReason).toBe("done");
   });
 
@@ -374,7 +369,7 @@ describe("orchestrateFallbackTurn", () => {
     // Each lane is capped at the five-step tail reserve. The provider reports
     // ten actual requests anyway, so accounting charges actual usage safely.
     expect(calls).toBe(2);
-    expect(grantedSteps).toEqual([5, 5]);
+    expect(grantedSteps).toEqual([10, 5]);
     expect(result.stopReason).toBe("budget_exhausted");
     expect(result.providerRequestsUsed).toBe(20);
   });
@@ -407,17 +402,17 @@ describe("orchestrateFallbackTurn", () => {
       fetchGameState: async () => activeState(),
       runStream,
     });
-    expect(runStream).toHaveBeenCalledTimes(5);
+    expect(runStream).toHaveBeenCalledTimes(3);
     // Reported usage is 2 per failure but each failed attempt conservatively
     // charges the minimum viable attempt floor of 5 steps.
     expect(result.posts.map((post) => post.maxStepsRemaining)).toEqual([
-      10, 10, 10, 10, 10,
+      20, 20, 20,
     ]);
     expect(result.stopReason).toBe("queue_exhausted");
-    expect(result.providerRequestsUsed).toBe(10);
+    expect(result.providerRequestsUsed).toBe(6);
   });
 
-  it("defensively caps a raw caller queue at five lanes", async () => {
+  it("defensively caps a raw caller queue at three lanes", async () => {
     const rawQueue = [
       ...NEWEST_FIRST_CATALOG,
       { provider: "openrouter", model_id: "extra/sixth:free" },
@@ -429,10 +424,10 @@ describe("orchestrateFallbackTurn", () => {
       fetchGameState: async () => activeState(),
       runStream,
     });
-    expect(runStream).toHaveBeenCalledTimes(5);
-    expect(result.posts).toHaveLength(5);
+    expect(runStream).toHaveBeenCalledTimes(3);
+    expect(result.posts).toHaveLength(3);
     expect(result.posts.map((post) => post.pair)).toEqual(
-      NEWEST_FIRST_CATALOG,
+      NEWEST_FIRST_CATALOG.slice(0, 3),
     );
     expect(result.stopReason).toBe("queue_exhausted");
   });
@@ -561,7 +556,7 @@ describe("orchestrateFallbackTurn", () => {
     expect(runStream).toHaveBeenCalledTimes(3);
     expect(result.providerRequestsUsed).toBe(13);
     expect(result.posts.map((post) => post.maxStepsRemaining)).toEqual([
-      30, 29, 29,
+      40, 39, 39,
     ]);
     if (result.lastTerminal?.kind === "done") {
       expect(result.lastTerminal.data.turn_provider_requests_used).toBe(13);
@@ -607,14 +602,14 @@ describe("orchestrateFallbackTurn", () => {
     expect(result.stopReason).toBe("done");
   });
 
-  it("can succeed only on lane five with four reconciliations and one terminal", async () => {
+  it("can succeed only on lane three with two reconciliations and one terminal", async () => {
     const persisted: number[] = [];
     const fetchGameState = vi.fn(async () => activeState());
     const runStream = vi.fn(
       async (request: {
         attemptIndex: number;
       }): Promise<AiMoveStreamTerminal> => {
-        if (request.attemptIndex < 4) {
+        if (request.attemptIndex < 2) {
           return {
             kind: "coded_provider_error",
             code: "provider_unavailable",
@@ -634,23 +629,23 @@ describe("orchestrateFallbackTurn", () => {
       runStream,
     });
 
-    expect(runStream).toHaveBeenCalledTimes(5);
-    expect(fetchGameState).toHaveBeenCalledTimes(4);
-    expect(persisted).toEqual([4]);
+    expect(runStream).toHaveBeenCalledTimes(3);
+    expect(fetchGameState).toHaveBeenCalledTimes(2);
+    expect(persisted).toEqual([2]);
     expect(result.stopReason).toBe("done");
     expect(result.posts.map((post) => post.timeoutSeconds)).toEqual([
-      24, 30, 40, 60, 120,
+      40, 60, 120,
     ]);
     expect(result.posts.map((post) => post.maxStepsRemaining)).toEqual([
-      30, 30, 30, 30, 30,
+      40, 40, 40,
     ]);
-    expect(result.providerRequestsUsed).toBe(15);
+    expect(result.providerRequestsUsed).toBe(8);
     expect(result.retryAfterSeconds).toBe(12);
     expect(result.lastTerminal).toEqual({
       kind: "done",
       data: expect.objectContaining({
         provider_requests_used: 5,
-        turn_provider_requests_used: 15,
+        turn_provider_requests_used: 8,
         turn_retry_after_seconds: 12,
       }),
     });

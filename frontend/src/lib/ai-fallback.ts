@@ -10,7 +10,7 @@ import {
 import { providerLabel } from "./provider-registry";
 
 export const MIN_ATTEMPT_TIMEOUT_SECONDS = 15;
-export const MAX_FALLBACK_ATTEMPTS = 5;
+export const MAX_FALLBACK_ATTEMPTS = 3;
 /** An attempt shorter than this cannot complete a meaningful tool loop. */
 export const MIN_ATTEMPT_STEPS = 5;
 

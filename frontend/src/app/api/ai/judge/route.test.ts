@@ -313,12 +313,12 @@ describe("POST /api/ai/judge", () => {
     const payload = await response.json();
     expect(payload.error).toBeDefined();
     expect(payload.results).toBeUndefined();
-    expect(generateTextMock).toHaveBeenCalledTimes(5);
-    expect(getLanguageRuntimeMock).toHaveBeenCalledTimes(5);
+    expect(generateTextMock).toHaveBeenCalledTimes(3);
+    expect(getLanguageRuntimeMock).toHaveBeenCalledTimes(3);
     vi.unstubAllGlobals();
   });
 
-  it("caps malformed-output retries at five models", async () => {
+  it("caps malformed-output retries at three models", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => new Response(JSON.stringify(NEWEST_CATALOG), { status: 200 })),
@@ -327,7 +327,7 @@ describe("POST /api/ai/judge", () => {
 
     const response = await POST(judgeRequest());
     expect(response.status).toBe(503);
-    expect(generateTextMock).toHaveBeenCalledTimes(5);
+    expect(generateTextMock).toHaveBeenCalledTimes(3);
     vi.unstubAllGlobals();
   });
 
@@ -361,7 +361,7 @@ describe("POST /api/ai/judge", () => {
     expect(generateTextMock).not.toHaveBeenCalled();
   });
 
-  it("starts a fifth lane with a sub-10s tail and sums bounded accounting", async () => {
+  it("starts a third lane with a sub-10s tail and sums bounded accounting", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => new Response(JSON.stringify(NEWEST_CATALOG), { status: 200 })),
@@ -370,9 +370,7 @@ describe("POST /api/ai/judge", () => {
       0,
       0, 0,
       10_000, 10_000,
-      20_000, 20_000,
-      30_000, 30_000,
-      49_995, 49_995,
+      29_995, 29_995,
     ];
     let nowIndex = 0;
     vi.spyOn(Date, "now").mockImplementation(
@@ -400,7 +398,7 @@ describe("POST /api/ai/judge", () => {
       };
     });
     generateTextMock.mockImplementation(() => {
-      if (generateTextMock.mock.calls.length < 5) {
+      if (generateTextMock.mock.calls.length < 3) {
         throw new Error("provider unavailable");
       }
       return Promise.resolve(
@@ -417,13 +415,13 @@ describe("POST /api/ai/judge", () => {
 
     const response = await POST(judgeRequest());
     expect(response.status).toBe(200);
-    expect(timeoutValues).toEqual([10_000, 10_000, 10_000, 10_000, 5]);
-    expect(generateTextMock).toHaveBeenCalledTimes(5);
+    expect(timeoutValues).toEqual([10_000, 10_000, 5]);
+    expect(generateTextMock).toHaveBeenCalledTimes(3);
     expect(generateTextMock).toHaveBeenLastCalledWith(
       expect.objectContaining({ maxRetries: 0 }),
     );
     expect(await response.json()).toMatchObject({
-      provider_requests_used: 15,
+      provider_requests_used: 6,
       retry_after_seconds: 17,
       results: [
         { word: "QI", valid: true },
@@ -434,7 +432,7 @@ describe("POST /api/ai/judge", () => {
     vi.unstubAllGlobals();
   });
 
-  it("returns five-lane 503 accounting without synthesizing invalid verdicts", async () => {
+  it("returns three-lane 503 accounting without synthesizing invalid verdicts", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => new Response(JSON.stringify(NEWEST_CATALOG), { status: 200 })),
@@ -450,7 +448,7 @@ describe("POST /api/ai/judge", () => {
           recordRetryAfter: vi.fn(),
           snapshot: vi.fn(() => ({
             provider_requests: 2,
-            ...(index === 4 ? { retry_after_seconds: 86_400 } : {}),
+            ...(index === 2 ? { retry_after_seconds: 86_400 } : {}),
           })),
         },
       };
@@ -462,11 +460,11 @@ describe("POST /api/ai/judge", () => {
     expect(await response.json()).toEqual(
       expect.objectContaining({
         error: "AI judge failed",
-        provider_requests_used: 10,
+        provider_requests_used: 6,
         retry_after_seconds: 86_400,
       }),
     );
-    expect(generateTextMock).toHaveBeenCalledTimes(5);
+    expect(generateTextMock).toHaveBeenCalledTimes(3);
     vi.unstubAllGlobals();
   });
 
@@ -511,7 +509,7 @@ describe("POST /api/ai/judge", () => {
     const payload = await response.json();
     expect(payload.error).toBeDefined();
     expect(payload.results).toBeUndefined();
-    expect(generateTextMock).toHaveBeenCalledTimes(5);
+    expect(generateTextMock).toHaveBeenCalledTimes(3);
     vi.unstubAllGlobals();
   });
 });
