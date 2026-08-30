@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "fixtures": [
+    {
+      "id": "slovak-empty-autolin",
+      "variant_slug": "slovak",
+      "rack": "AUTOLIN",
+      "board": []
+    },
+    {
+      "id": "slovak-empty-blank-autoli",
+      "variant_slug": "slovak",
+      "rack": "?AUTOLI",
+      "board": []
+    },
+    {
+      "id": "slovak-midgame-auto-ltaseni",
+      "variant_slug": "slovak",
+      "rack": "ĽŤÁSENI",
+      "board": [
+        {"row": 7, "col": 5, "letter": "A"},
+        {"row": 7, "col": 6, "letter": "U"},
+        {"row": 7, "col": 7, "letter": "T"},
+        {"row": 7, "col": 8, "letter": "O"}
+      ]
+    },
+    {
+      "id": "slovak-hooks-umenasi",
+      "variant_slug": "slovak",
+      "rack": "UMENASI",
+      "board": [
+        {"row": 6, "col": 7, "letter": "O"},
+        {"row": 6, "col": 8, "letter": "A"}
+      ]
+    },
+    {
+      "id": "english-empty-autolin",
+      "variant_slug": "english",
+      "rack": "AUTOLIN",
+      "board": []
+    }
+  ]
+}

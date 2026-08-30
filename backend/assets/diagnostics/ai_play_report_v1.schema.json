@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "libretiles.ai-play-diagnostic/v1",
+  "title": "Libre Tiles AI play diagnostic report v1",
+  "description": "Machine-readable diagnostic artifact. Engine-branch reports omit or null turn-layer fields. Search timings and node counts are observational and never a verdict input.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "artifact",
+    "report_kind",
+    "generated_at",
+    "source_revision",
+    "requested",
+    "variant",
+    "samples",
+    "summary"
+  ],
+  "properties": {
+    "artifact": {
+      "const": "libretiles.ai-play-diagnostic/v1"
+    },
+    "report_kind": {
+      "enum": ["engine", "turn"]
+    },
+    "generated_at": {
+      "type": "string",
+      "description": "UTC ISO-8601 timestamp"
+    },
+    "source_revision": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "requested": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["variant_slug", "probe_count"],
+      "properties": {
+        "variant_slug": { "type": "string" },
+        "fixture_id": { "type": "string" },
+        "seed": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+        "probe_count": { "type": "integer", "minimum": 1, "maximum": 300 }
+      }
+    },
+    "variant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["slug", "lexicon_id", "two_letter_lexicon_size"],
+      "properties": {
+        "slug": { "type": "string" },
+        "lexicon_id": { "type": "string" },
+        "two_letter_lexicon_size": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        }
+      }
+    },
+    "samples": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/engineSample" }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["sample_count", "pass_count", "fail_count"],
+      "properties": {
+        "sample_count": { "type": "integer", "minimum": 0 },
+        "pass_count": { "type": "integer", "minimum": 0 },
+        "fail_count": { "type": "integer", "minimum": 0 }
+      }
+    }
+  },
+  "$defs": {
+    "engineSample": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "search_status",
+        "complete",
+        "nodes",
+        "elapsed_ms",
+        "rack",
+        "formed_words",
+        "score",
+        "two_letter_policy",
+        "verdict",
+        "reason_code"
+      ],
+      "properties": {
+        "search_status": { "enum": ["found", "none", "indeterminate"] },
+        "complete": { "type": "boolean" },
+        "nodes": { "type": "integer", "minimum": 0 },
+        "elapsed_ms": { "type": "integer", "minimum": 0 },
+        "rack": { "type": "string" },
+        "top_candidate": {
+          "type": ["object", "null"],
+          "additionalProperties": true,
+          "properties": {
+            "placements": { "type": "array" },
+            "words": { "type": "array", "items": { "type": "string" } },
+            "score": { "type": "integer" }
+          }
+        },
+        "formed_words": { "type": "array", "items": { "type": "string" } },
+        "score": { "type": "integer" },
+        "two_letter_policy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["complete_formed_words", "rejected"],
+          "properties": {
+            "complete_formed_words": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "rejected": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "verdict": { "enum": ["pass", "fail"] },
+        "reason_code": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "completion_source": {
+          "type": ["string", "null"],
+          "enum": [
+            null,
+            "provider_candidate",
+            "backend_ranked_candidate",
+            "repair_candidate",
+            "backend_witness_rescue",
+            "genuine_no_move_exchange",
+            "genuine_no_move_pass"
+          ]
+        },
+        "probe_status": { "type": ["string", "null"] },
+        "provider_requests_used": { "type": ["integer", "null"] },
+        "persisted": { "type": ["boolean", "null"] }
+      }
+    }
+  }
+}
