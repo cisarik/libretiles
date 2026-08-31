@@ -1,11 +1,15 @@
 from typing import Any
 
+from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
+from rest_framework_simplejwt.serializers import TokenRefreshSerializer
+from rest_framework_simplejwt.settings import api_settings
 
 from catalog.selection import is_selectable_model
 
+from .authentication import reject_if_issued_before_password_change
 from .models import User
 
 
@@ -71,5 +75,21 @@ class ChangePasswordSerializer(serializers.Serializer[User]):
     def save(self, **kwargs: Any) -> User:
         user: User = self.context["request"].user
         user.set_password(self.validated_data["new_password"])
-        user.save(update_fields=["password"])
+        user.save(update_fields=["password", "password_changed_at"])
+        user.blacklist_outstanding_refresh_tokens()
         return user
+
+
+class PasswordAwareTokenRefreshSerializer(TokenRefreshSerializer):
+    def validate(self, attrs: dict[str, Any]) -> dict[str, str]:
+        refresh = self.token_class(attrs["refresh"])
+        user_id = refresh.payload.get(api_settings.USER_ID_CLAIM)
+        if user_id is not None:
+            user = (
+                get_user_model()
+                .objects.filter(**{api_settings.USER_ID_FIELD: user_id})
+                .first()
+            )
+            if user is not None:
+                reject_if_issued_before_password_change(refresh, user)
+        return super().validate(attrs)

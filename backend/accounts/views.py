@@ -1,15 +1,21 @@
-from rest_framework import generics, permissions
+from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework_simplejwt.exceptions import TokenError
+from rest_framework_simplejwt.settings import api_settings
+from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from .models import User
 from .serializers import ChangePasswordSerializer, RegisterSerializer, UserSerializer
 
-# urls.py binds SimpleJWT's views directly; attach scopes here so login/refresh
-# are covered without changing the URLconf (not on this slice's allowlist).
-setattr(TokenObtainPairView, "throttle_scope", "auth_login")
-setattr(TokenRefreshView, "throttle_scope", "auth_refresh")
+
+class ScopedTokenObtainPairView(TokenObtainPairView):
+    throttle_scope = "auth_login"
+
+
+class ScopedTokenRefreshView(TokenRefreshView):
+    throttle_scope = "auth_refresh"
 
 
 class RegisterView(generics.CreateAPIView[User]):
@@ -55,3 +61,36 @@ class ChangePasswordView(APIView):
 
         serializer.save()
         return Response({"ok": True})
+
+
+class LogoutView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):  # type: ignore[no-untyped-def]
+        raw = request.data.get("refresh")
+        if not isinstance(raw, str) or not raw.strip():
+            return Response(
+                {"detail": "Refresh token is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            refresh = RefreshToken(raw)  # type: ignore[arg-type]
+        except TokenError:
+            return Response(
+                {"detail": "Token is invalid or expired."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+        token_user_id = refresh.get(api_settings.USER_ID_CLAIM)
+        if str(token_user_id) != str(request.user.pk):
+            return Response(
+                {"detail": "Token is invalid or expired."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+        try:
+            refresh.blacklist()
+        except TokenError:
+            return Response(
+                {"detail": "Token is invalid or expired."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+        return Response({"ok": True}, status=status.HTTP_200_OK)
