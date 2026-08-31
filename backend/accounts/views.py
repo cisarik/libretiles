@@ -1,19 +1,27 @@
 from rest_framework import generics, permissions
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from .models import User
 from .serializers import ChangePasswordSerializer, RegisterSerializer, UserSerializer
+
+# urls.py binds SimpleJWT's views directly; attach scopes here so login/refresh
+# are covered without changing the URLconf (not on this slice's allowlist).
+setattr(TokenObtainPairView, "throttle_scope", "auth_login")
+setattr(TokenRefreshView, "throttle_scope", "auth_refresh")
 
 
 class RegisterView(generics.CreateAPIView[User]):
     queryset = User.objects.all()
     serializer_class = RegisterSerializer
     permission_classes = [permissions.AllowAny]
+    throttle_scope = "auth_register"
 
 
 class MeView(APIView):
     permission_classes = [permissions.IsAuthenticated]
+    throttle_scope = "auth_me"
 
     def get(self, request):  # type: ignore[no-untyped-def]
         user = User.objects.get(pk=request.user.pk)
@@ -30,6 +38,7 @@ class MeView(APIView):
 
 class ChangePasswordView(APIView):
     permission_classes = [permissions.IsAuthenticated]
+    throttle_scope = "auth_change_password"
 
     def post(self, request):  # type: ignore[no-untyped-def]
         serializer = ChangePasswordSerializer(data=request.data, context={"request": request})

@@ -153,7 +153,10 @@ else:
 AUTH_USER_MODEL = "accounts.User"
 
 AUTH_PASSWORD_VALIDATORS = [
+    {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
     {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
+    {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
+    {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
 
 LANGUAGE_CODE = "en-us"
@@ -180,6 +183,15 @@ CSRF_COOKIE_SECURE = not DEBUG
 SECURE_SSL_REDIRECT = not DEBUG
 SECURE_HSTS_SECONDS = _HSTS_SECONDS if not DEBUG else 0
 
+# DRF throttle counters. LocMemCache is per-process: each worker has its own
+# budget, so a multi-worker deployment is not a single shared global brake.
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "libretiles-default",
+    }
+}
+
 # DRF
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
@@ -192,6 +204,17 @@ REST_FRAMEWORK = {
     "DEFAULT_RENDERER_CLASSES": [
         "rest_framework.renderers.JSONRenderer",
     ],
+    "DEFAULT_THROTTLE_CLASSES": [
+        "rest_framework.throttling.ScopedRateThrottle",
+    ],
+    "DEFAULT_THROTTLE_RATES": {
+        "auth_register": "10/hour",
+        "auth_login": "10/hour",
+        "auth_refresh": "60/hour",
+        "auth_change_password": "5/hour",
+        "auth_me": "200/hour",
+        "ai_context": "200/hour",
+    },
 }
 
 # JWT

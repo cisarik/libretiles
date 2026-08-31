@@ -291,6 +291,16 @@ def test_drf_default_permission_classes_are_fail_closed() -> None:
     ]
 
 
+def test_auth_password_validators_include_django_defaults() -> None:
+    names = {item["NAME"] for item in settings.AUTH_PASSWORD_VALIDATORS}
+    assert names >= {
+        "django.contrib.auth.password_validation.UserAttributeSimilarityValidator",
+        "django.contrib.auth.password_validation.MinimumLengthValidator",
+        "django.contrib.auth.password_validation.CommonPasswordValidator",
+        "django.contrib.auth.password_validation.NumericPasswordValidator",
+    }
+
+
 @pytest.mark.django_db
 def test_catalog_models_unauthenticated_get_returns_200() -> None:
     response = APIClient().get("/api/catalog/models/")

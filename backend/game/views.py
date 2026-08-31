@@ -198,6 +198,7 @@ class GiveUpView(APIView):
 
 class AIContextView(APIView):
     permission_classes = [permissions.IsAuthenticated]
+    throttle_scope = "ai_context"
 
     def get(self, request, game_id):  # type: ignore[no-untyped-def]
         try:
