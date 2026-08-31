@@ -10,14 +10,73 @@ import os
 from datetime import timedelta
 from pathlib import Path
 
+from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 
-SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "insecure-dev-key-change-in-production")
-DEBUG = os.getenv("DJANGO_DEBUG", "true").lower() in ("true", "1", "yes")
-ALLOWED_HOSTS: list[str] = os.getenv("DJANGO_ALLOWED_HOSTS", "*").split(",")
+_PUBLIC_INSECURE_SECRET_KEY = "insecure-dev-key-change-in-production"
+_SECRET_KEY_MIN_LENGTH = 50
+_SECRET_KEY_MIN_UNIQUE_CHARACTERS = 5
+_SECRET_KEY_INSECURE_PREFIX = "django-insecure-"
+_HSTS_SECONDS = 31536000
+
+
+def _require_secret_key() -> str:
+    raw = os.getenv("DJANGO_SECRET_KEY")
+    if raw is None:
+        raise ImproperlyConfigured(
+            "DJANGO_SECRET_KEY is not set. Refusing to start without an explicit secret."
+        )
+    key = raw.strip()
+    if not key:
+        raise ImproperlyConfigured(
+            "DJANGO_SECRET_KEY is empty or whitespace-only. Refusing to start."
+        )
+    if key == _PUBLIC_INSECURE_SECRET_KEY:
+        raise ImproperlyConfigured(
+            "DJANGO_SECRET_KEY matches the public insecure fallback. Refusing to start."
+        )
+    if (
+        len(key) < _SECRET_KEY_MIN_LENGTH
+        or len(set(key)) < _SECRET_KEY_MIN_UNIQUE_CHARACTERS
+        or key.startswith(_SECRET_KEY_INSECURE_PREFIX)
+    ):
+        raise ImproperlyConfigured(
+            "DJANGO_SECRET_KEY is too weak. Use at least 50 characters with "
+            "5 unique characters, and do not use the django-insecure- prefix."
+        )
+    return key
+
+
+def _env_flag(name: str, *, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("true", "1", "yes")
+
+
+def _allowed_hosts(*, debug: bool) -> list[str]:
+    raw = os.getenv("DJANGO_ALLOWED_HOSTS")
+    if raw is None or not raw.strip():
+        if debug:
+            return ["localhost", "127.0.0.1"]
+        raise ImproperlyConfigured(
+            "DJANGO_ALLOWED_HOSTS must be set explicitly when DEBUG is false."
+        )
+    hosts = [part.strip() for part in raw.split(",") if part.strip()]
+    if not debug and (not hosts or "*" in hosts):
+        raise ImproperlyConfigured(
+            "DJANGO_ALLOWED_HOSTS must be an explicit host list without wildcards "
+            "when DEBUG is false."
+        )
+    return hosts
+
+
+SECRET_KEY = _require_secret_key()
+DEBUG = _env_flag("DJANGO_DEBUG", default=False)
+ALLOWED_HOSTS: list[str] = _allowed_hosts(debug=DEBUG)
 
 INSTALLED_APPS = [
     "daphne",
@@ -113,8 +172,13 @@ CORS_ALLOWED_ORIGINS: list[str] = [
     if origin.strip()
 ]
 CORS_ALLOW_CREDENTIALS = True
-if DEBUG:
-    CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOW_ALL_ORIGINS = DEBUG
+
+# HTTPS flags follow DEBUG so plain local HTTP still works.
+SESSION_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SECURE = not DEBUG
+SECURE_SSL_REDIRECT = not DEBUG
+SECURE_HSTS_SECONDS = _HSTS_SECONDS if not DEBUG else 0
 
 # DRF
 REST_FRAMEWORK = {
@@ -123,7 +187,7 @@ REST_FRAMEWORK = {
         "rest_framework.authentication.SessionAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": [
-        "rest_framework.permissions.IsAuthenticatedOrReadOnly",
+        "rest_framework.permissions.IsAuthenticated",
     ],
     "DEFAULT_RENDERER_CLASSES": [
         "rest_framework.renderers.JSONRenderer",
