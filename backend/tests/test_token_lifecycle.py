@@ -196,10 +196,22 @@ def test_django_admin_session_login_still_works() -> None:
         password=_PASSWORD,
     )
     browser = Client()
-    logged_in = browser.login(username="jwt_lc_admin", password=_PASSWORD)
-    assert logged_in is True
-    response = browser.get("/admin/")
-    assert response.status_code == 200
+    login_page = browser.get("/admin/login/")
+    assert login_page.status_code == 200
+    response = browser.post(
+        "/admin/login/",
+        {
+            "username": "jwt_lc_admin",
+            "password": _PASSWORD,
+            "next": "/admin/",
+        },
+    )
+    assert response.status_code == 302
+    location = response.headers.get("Location", "")
+    assert location.endswith("/admin/") or location.endswith("/admin")
+    admin_home = browser.get("/admin/")
+    assert admin_home.status_code == 200
+    assert b"jwt_lc_admin" in admin_home.content
 
 
 @pytest.mark.django_db

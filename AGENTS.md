@@ -4,7 +4,7 @@ This document is for **automated coding agents** and humans who continue develop
 
 ## What Libre Tiles is
 
-- **Frontend**: Next.js (React), Tailwind, Framer Motion, Zustand, DnD Kit; AI via provider-diverse free rivals (OpenRouter + NVIDIA NIM on Next.js API routes).
+- **Frontend**: Next.js (React), Tailwind, Framer Motion, Zustand, DnD Kit; AI via provider-diverse free rivals on Next.js API routes. Nine providers are shipped: `openrouter`, `nvidia-nim`, `groq`, `google-gemini`, `cloudflare-workers-ai`, `mistral`, `ibm-watsonx`, `aion`, `huggingface`. Dispatch is `frontend/src/lib/openai-compatible.ts` plus `frontend/src/lib/ibm-watsonx.ts`.
 - **Backend**: Django + DRF; pure game logic in `gamecore/` (board, rules, scoring, Collins 2019 dictionary).
 - **Realtime**: Django Channels + Redis for human-vs-human matchmaking, websocket sync, and chat.
 - **Separation**: No imports outside `libretiles/`. All assets (dictionary, premiums, variants) live under `backend/assets/`.
@@ -21,6 +21,11 @@ AI-only local play needs two terminals (Django + Next.js). Redis is required onl
    source .venv/bin/activate   # Windows: .venv\Scripts\activate
    pip install poetry
    poetry install
+   # Prefer ./scripts/libretiles.sh from the repo root: it copies .env.example
+   # only when backend/.env is absent and generates DJANGO_SECRET_KEY into that
+   # new file. A pre-existing .env is never overwritten. Do not copy a literal
+   # example key. If you create .env by hand, set DJANGO_SECRET_KEY yourself
+   # (≥50 characters, ≥5 unique, no django-insecure- prefix).
    [ -f .env ] || cp .env.example .env
    poetry run python manage.py migrate
    poetry run python manage.py seed_models
@@ -43,7 +48,7 @@ AI-only local play needs two terminals (Django + Next.js). Redis is required onl
 
    Both keys live on the Next.js server. The UI still boots if either is missing or a placeholder; AI turns fail only when neither credential is usable. There is no `NEXT_PUBLIC_DEFAULT_MODEL`; pages resolve an empty Zustand `selectedModelId` against catalog row 1.
 
-3. Or from the repo root: `./scripts/libretiles.sh` (see [README.md](README.md)). Scripts copy env examples only when the target file is absent.
+3. Or from the repo root: `./scripts/libretiles.sh` (see [README.md](README.md)). Scripts copy env examples only when the target file is absent, and generate `DJANGO_SECRET_KEY` into a freshly created `backend/.env`. A pre-existing `.env` overrides new code defaults, is read once at process start, and must be reviewed after any settings change.
 
 ## Code quality
 
@@ -75,6 +80,9 @@ npm run build
 | AI stream (SSE) | `frontend/src/app/api/ai/move/route.ts` |
 | OpenRouter client | `frontend/src/lib/openrouter.ts` |
 | NVIDIA NIM client | `frontend/src/lib/nvidia-nim.ts` |
+| Provider registry (nine provider constants) | `frontend/src/lib/provider-registry.ts` |
+| OpenAI-compatible runtime constructor | `frontend/src/lib/openai-compatible.ts` |
+| IBM watsonx runtime | `frontend/src/lib/ibm-watsonx.ts` |
 | Runtime dispatch | `frontend/src/lib/ai-runtimes.ts` |
 | Catalog pair resolution | `frontend/src/lib/model-catalog.ts` |
 | Shared Play/Judge fallback queue | `frontend/src/lib/ai-fallback.ts` |
@@ -170,6 +178,7 @@ Rollback:
 
 - Never commit `.env`, `backend/.env`, or `frontend/.env.local`.
 - Template files `.env.example` / `.env.local.example` are fine to commit.
+- A pre-existing `.env` overrides new code defaults, is read once at process start, and must be reviewed after any settings change. New variables such as `DJANGO_THROTTLE_CACHE_URL` inherit that hazard.
 
 ## Not done yet (typical next steps)
 

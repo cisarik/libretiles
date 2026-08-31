@@ -23,6 +23,8 @@ _PUBLIC_INSECURE_SECRET_KEY = "insecure-dev-key-change-in-production"
 _SYNTHETIC_TEST_SECRET_KEY = (
     "TEST-ONLY-synthetic-django-secret-key-not-for-production-00000"
 )
+_SYNTHETIC_REDIS_URL = "redis://127.0.0.1:6379/15"
+_LOCMEM_BACKEND = "django.core.cache.backends.locmem.LocMemCache"
 _WEAK_TEST_SECRET_KEY = "tooshort"
 _FORBIDDEN_DEPLOY_CHECK_IDS = frozenset(
     {
@@ -63,9 +65,13 @@ from django.core.exceptions import ImproperlyConfigured
 
 try:
     from config import settings as settings_mod
-except ImproperlyConfigured:
+except ImproperlyConfigured as exc:
     json.dump(
-        {"status": "improperly_configured", "error_type": "ImproperlyConfigured"},
+        {
+            "status": "improperly_configured",
+            "error_type": "ImproperlyConfigured",
+            "message": str(exc),
+        },
         sys.stdout,
     )
     raise SystemExit(0)
@@ -89,6 +95,7 @@ payload = {
     "default_permission_classes": list(
         settings_mod.REST_FRAMEWORK["DEFAULT_PERMISSION_CLASSES"]
     ),
+    "cache_backend": str(settings_mod.CACHES["default"]["BACKEND"]),
 }
 
 if os.environ.get("LIBRETILES_SECURITY_PROBE_CHECKS") == "1":
@@ -116,6 +123,8 @@ def _run_settings_probe(
     debug: str | None = None,
     allowed_hosts: str | None = None,
     run_checks: bool = False,
+    throttle_cache_url: str | None = None,
+    redis_url: str | None = None,
 ) -> dict[str, Any]:
     env = _base_env()
     if secret is None:
@@ -130,6 +139,14 @@ def _run_settings_probe(
         env.pop("DJANGO_ALLOWED_HOSTS", None)
     else:
         env["DJANGO_ALLOWED_HOSTS"] = allowed_hosts
+    if throttle_cache_url is None:
+        env.pop("DJANGO_THROTTLE_CACHE_URL", None)
+    else:
+        env["DJANGO_THROTTLE_CACHE_URL"] = throttle_cache_url
+    if redis_url is None:
+        env.pop("REDIS_URL", None)
+    else:
+        env["REDIS_URL"] = redis_url
     if run_checks:
         env["LIBRETILES_SECURITY_PROBE_CHECKS"] = "1"
 
@@ -185,6 +202,7 @@ def test_secret_key_sufficiently_strong_loads() -> None:
         secret=_SYNTHETIC_TEST_SECRET_KEY,
         debug="false",
         allowed_hosts="example.test",
+        throttle_cache_url=_SYNTHETIC_REDIS_URL,
     )
     assert payload["status"] == "ok"
 
@@ -194,6 +212,7 @@ def test_debug_absent_defaults_false() -> None:
         secret=_SYNTHETIC_TEST_SECRET_KEY,
         debug=None,
         allowed_hosts="example.test",
+        throttle_cache_url=_SYNTHETIC_REDIS_URL,
     )
     assert payload["status"] == "ok"
     assert payload["debug"] is False
@@ -210,6 +229,7 @@ def test_debug_false_rejects_absent_allowed_hosts() -> None:
         assert payload["allowed_hosts"] != ["*"]
         pytest.fail("DEBUG=false silently accepted a missing ALLOWED_HOSTS value")
     assert payload["status"] == "improperly_configured"
+    assert "ALLOWED_HOSTS" in payload.get("message", "")
 
 
 def test_debug_false_rejects_wildcard_allowed_hosts() -> None:
@@ -222,6 +242,7 @@ def test_debug_false_rejects_wildcard_allowed_hosts() -> None:
         assert "*" not in payload["allowed_hosts"]
         pytest.fail("DEBUG=false silently accepted a wildcard ALLOWED_HOSTS value")
     assert payload["status"] == "improperly_configured"
+    assert "ALLOWED_HOSTS" in payload.get("message", "")
 
 
 def test_cors_allow_all_origins_unreachable_when_debug_absent() -> None:
@@ -229,6 +250,7 @@ def test_cors_allow_all_origins_unreachable_when_debug_absent() -> None:
         secret=_SYNTHETIC_TEST_SECRET_KEY,
         debug=None,
         allowed_hosts="example.test",
+        throttle_cache_url=_SYNTHETIC_REDIS_URL,
     )
     assert payload["status"] == "ok"
     assert payload["debug"] is False
@@ -240,6 +262,7 @@ def test_cors_allow_all_origins_false_when_debug_false() -> None:
         secret=_SYNTHETIC_TEST_SECRET_KEY,
         debug="false",
         allowed_hosts="example.test",
+        throttle_cache_url=_SYNTHETIC_REDIS_URL,
     )
     assert payload["status"] == "ok"
     assert payload["cors_allow_all_origins"] is False
@@ -250,6 +273,7 @@ def test_production_like_environment_enables_https_security_flags() -> None:
         secret=_SYNTHETIC_TEST_SECRET_KEY,
         debug="false",
         allowed_hosts="example.test",
+        throttle_cache_url=_SYNTHETIC_REDIS_URL,
     )
     assert payload["status"] == "ok"
     assert payload["session_cookie_secure"] is True
@@ -264,6 +288,7 @@ def test_production_like_deploy_check_omits_named_warnings() -> None:
         debug="false",
         allowed_hosts="example.test",
         run_checks=True,
+        throttle_cache_url=_SYNTHETIC_REDIS_URL,
     )
     assert payload["status"] == "ok"
     check_ids = set(payload["check_ids"])
@@ -337,3 +362,48 @@ def test_x_frame_options_is_explicitly_deny() -> None:
 def test_secure_cross_origin_opener_policy_is_explicit() -> None:
     assert "SECURE_CROSS_ORIGIN_OPENER_POLICY" in _settings_source()
     assert settings.SECURE_CROSS_ORIGIN_OPENER_POLICY == "same-origin"
+
+
+def test_production_debug_false_without_shared_cache_raises() -> None:
+    payload = _run_settings_probe(
+        secret=_SYNTHETIC_TEST_SECRET_KEY,
+        debug="false",
+        allowed_hosts="example.test",
+    )
+    assert payload["status"] == "improperly_configured"
+    message = payload.get("message", "")
+    assert "DJANGO_THROTTLE_CACHE_URL" in message
+
+
+def test_production_throttle_cache_url_resolves_shared_backend() -> None:
+    payload = _run_settings_probe(
+        secret=_SYNTHETIC_TEST_SECRET_KEY,
+        debug="false",
+        allowed_hosts="example.test",
+        throttle_cache_url=_SYNTHETIC_REDIS_URL,
+    )
+    assert payload["status"] == "ok"
+    assert payload["cache_backend"] != _LOCMEM_BACKEND
+    assert "locmem" not in payload["cache_backend"].lower()
+
+
+def test_production_redis_url_fallback_resolves_shared_backend() -> None:
+    payload = _run_settings_probe(
+        secret=_SYNTHETIC_TEST_SECRET_KEY,
+        debug="false",
+        allowed_hosts="example.test",
+        redis_url=_SYNTHETIC_REDIS_URL,
+    )
+    assert payload["status"] == "ok"
+    assert payload["cache_backend"] != _LOCMEM_BACKEND
+    assert "locmem" not in payload["cache_backend"].lower()
+
+
+def test_debug_true_keeps_locmem_cache_without_redis() -> None:
+    payload = _run_settings_probe(
+        secret=_SYNTHETIC_TEST_SECRET_KEY,
+        debug="true",
+        allowed_hosts="localhost",
+    )
+    assert payload["status"] == "ok"
+    assert payload["cache_backend"] == _LOCMEM_BACKEND

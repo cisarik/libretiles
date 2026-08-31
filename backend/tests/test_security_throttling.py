@@ -17,8 +17,8 @@ from catalog.models import AIModel
 from catalog.selection import DEFAULT_FREE_MODEL_ID, OPENROUTER_PROVIDER
 
 # Must match backend/config/settings.py REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"].
-REGISTER_LIMIT = 10
-LOGIN_LIMIT = 10
+REGISTER_LIMIT = 20
+LOGIN_LIMIT = 60
 REFRESH_LIMIT = 60
 CHANGE_PASSWORD_LIMIT = 5
 ME_LIMIT = 200
@@ -27,6 +27,16 @@ AI_CONTEXT_LIMIT = 200
 # fallback lane (MAX_FALLBACK_ATTEMPTS = 3). Conservatively treat every ply
 # as an AI turn: 29 * 3 = 87 reads in one pathological full game.
 NORMAL_PLAY_AI_CONTEXT_READS = 87
+# Item B realistic same-IP session:
+#   2 browser profiles × (1 success + 2 typos) = 6
+#   interviewer 2 accounts × (1 success + 2 typos) = 6
+#   4 extra logout/login cycles = 4
+#   Total login attempts = 16, below LOGIN_LIMIT=60 and above axes 8/account
+#   so a presenter spread across accounts trips neither control.
+DEMO_LOGIN_ATTEMPTS = 16
+# 2 local accounts + interviewer 2, each with a rejected first password then a
+# retry, plus a couple of extra validation retries: 12 < REGISTER_LIMIT=20.
+DEMO_REGISTER_ATTEMPTS = 12
 STRONG_PASSWORD = "testpass123"
 
 
@@ -111,10 +121,15 @@ def test_login_throttled_after_limit() -> None:
 
     cache.clear()
     statuses: list[int] = []
-    for _ in range(LOGIN_LIMIT + 1):
+    for index in range(LOGIN_LIMIT + 1):
+        # Distinct usernames: ScopedRateThrottle keys unauthenticated
+        # auth_login on IP (get_ident), so the IP budget still accumulates
+        # while the axes per-(username, IP) counter stays at 1.
+        username = f"login_burst_{index}"
+        User.objects.create_user(username=username, password=STRONG_PASSWORD)
         response = client.post(
             "/api/auth/login/",
-            {"username": "login_under", "password": "wrong-password"},
+            {"username": username, "password": "wrong-password"},
         )
         statuses.append(response.status_code)
     assert statuses[0] == 401
@@ -207,6 +222,41 @@ def test_ai_context_normal_play_headroom_is_not_throttled() -> None:
         for _ in range(NORMAL_PLAY_AI_CONTEXT_READS)
     ]
     assert statuses == [200] * NORMAL_PLAY_AI_CONTEXT_READS
+    assert 429 not in statuses
+
+
+@pytest.mark.django_db
+def test_login_demo_session_headroom_is_not_throttled() -> None:
+    client = APIClient()
+    statuses: list[int] = []
+    for index in range(DEMO_LOGIN_ATTEMPTS):
+        username = f"login_demo_{index}"
+        User.objects.create_user(username=username, password=STRONG_PASSWORD)
+        statuses.append(
+            client.post(
+                "/api/auth/login/",
+                {"username": username, "password": "wrong-password"},
+            ).status_code
+        )
+    assert statuses == [401] * DEMO_LOGIN_ATTEMPTS
+    assert 429 not in statuses
+
+
+@pytest.mark.django_db
+def test_register_demo_session_headroom_is_not_throttled() -> None:
+    client = APIClient()
+    statuses = [
+        client.post(
+            "/api/auth/register/",
+            {
+                "username": f"reg_demo_{index}",
+                "email": f"reg_demo_{index}@example.com",
+                "password": STRONG_PASSWORD,
+            },
+        ).status_code
+        for index in range(DEMO_REGISTER_ATTEMPTS)
+    ]
+    assert statuses == [201] * DEMO_REGISTER_ATTEMPTS
     assert 429 not in statuses
 
 

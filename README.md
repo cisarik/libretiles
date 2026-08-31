@@ -12,7 +12,7 @@ Open-source web Libre Tiles game with AI opponents, live human-vs-human multipla
 - AI opponents via provider-diverse free rivals with tool calling. The canonical direct priority is Groq → Google Gemini → Cloudflare Workers AI → Mistral → IBM watsonx.ai; NVIDIA NIM and OpenRouter remain the compatibility tail
 - Live human-vs-human multiplayer with waiting-room matchmaking, realtime board sync, and in-game chat
 - AI plays as a tool-calling agent: validates moves, checks words, calculates scores
-- Play and Judge share one preference-first fallback queue (at most five distinct pairs, one whole-turn provider-call budget)
+- Play and Judge share one preference-first fallback queue (at most three distinct pairs, one whole-turn provider-call budget)
 - Advanced drag-and-drop with touch/mobile support (@dnd-kit)
 - Animated tile drawing, scoring, and game-end effects (Framer Motion, confetti)
 - Django Admin for configuration (AI model catalog, games)
@@ -43,6 +43,11 @@ Alternatively, `poetry install` alone will create a venv according to your Poetr
 
 ```bash
 cd backend
+# Prefer ./scripts/libretiles.sh from the repo root: it copies .env.example
+# only when backend/.env is missing and generates DJANGO_SECRET_KEY into that
+# new file. It never overwrites an existing .env. Do not paste a literal
+# example key. If you copy by hand, set DJANGO_SECRET_KEY yourself
+# (≥50 characters, ≥5 unique, no django-insecure- prefix).
 [ -f .env ] || cp .env.example .env               # copy only if missing
 poetry install                                    # install Python dependencies
 poetry run python manage.py migrate               # create database tables
@@ -72,13 +77,17 @@ Open http://localhost:3000, register, choose a mode, and play. Credentials live 
 ### Environment Variables
 
 **Backend** (`backend/.env`):
+
+A pre-existing `.env` overrides new code defaults, is read once at process start, and must be reviewed after any settings change. This is how an old `GAME_WS_TICKET_MAX_AGE_SECONDS` value can silently keep a retired TTL.
+
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `DJANGO_SECRET_KEY` | - | Django secret key (required) |
+| `DJANGO_SECRET_KEY` | - | Django secret key (required). `./scripts/libretiles.sh` generates one into a freshly created `backend/.env` and never overwrites an existing file. |
 | `DEBUG` | `True` | Debug mode |
 | `DB_ENGINE` | `sqlite` | `sqlite` or `postgresql` |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:3000` | Frontend origin(s) |
-| `REDIS_URL` | `redis://127.0.0.1:6379/0` | Redis connection used by Django Channels |
+| `REDIS_URL` | `redis://127.0.0.1:6379/0` | Redis connection used by Django Channels; also the production fallback for the shared throttle cache |
+| `DJANGO_THROTTLE_CACHE_URL` | unset | Required only when `DJANGO_DEBUG` is false: `redis://` or `rediss://` URL for the shared DRF throttle cache. If unset, `REDIS_URL` is used; if both are empty, Django refuses to start. Unused for local `DEBUG=true` boot. |
 | `GAME_WS_TICKET_MAX_AGE_SECONDS` | `10` | Max age for signed websocket tickets |
 | `DYNAMIC_FREE_MODEL_CATALOG_ENABLED` | `false` | Controls only the NIM/OpenRouter compatibility tail: curated bootstrap when false, newest-four OpenRouter plus NIM when true. Active direct rows always remain first. |
 
@@ -123,7 +132,7 @@ Native IDs only (never `openrouter/google/...`). No provider secret or base URL 
 
 **Flag-on compatibility tail**: the four newest eligible OpenRouter `:free` models plus the seeded NIM tuple last. The flag changes only this tail; it never removes or reorders active direct rows. A valid user preference remains attempt 1 and the remaining attempts preserve canonical order without duplicates.
 
-Django Admin remains catalog authority. Play and Judge share one preference-first queue capped at five distinct pairs. New accounts default to 120 seconds and 50 provider steps. Play reserves at least five steps for each later lane, segments the remaining time, reports actual provider/IAM request counts, and carries only a bounded `retry_after_seconds`. Judge tries up to five sequential lanes (`maxRetries: 0`, 10 seconds per lane, 50 seconds overall) and returns HTTP 503 on exhaustion without inventing an invalid verdict. Collins 2019 on Django remains the persisted-move validator.
+Django Admin remains catalog authority. Play and Judge share one preference-first queue capped at three distinct pairs. New accounts default to 120 seconds and 50 provider steps. Play reserves at least five steps for each later lane, segments the remaining time, reports actual provider/IAM request counts, and carries only a bounded `retry_after_seconds`. Judge tries up to three sequential lanes (`maxRetries: 0`, 10 seconds per lane, 30 seconds overall) and returns HTTP 503 on exhaustion without inventing an invalid verdict. Collins 2019 on Django remains the persisted-move validator.
 
 ### Docker (optional PostgreSQL + Redis)
 
@@ -162,6 +171,8 @@ The scripts handle `.env` creation, dependency installation, migrations, and mod
 
 ```bash
 # Terminal 1 (backend):
+# Prefer ./scripts/libretiles.sh, which generates DJANGO_SECRET_KEY into a
+# fresh backend/.env. A hand copy of .env.example still needs a generated key.
 cd backend && [ -f .env ] || cp .env.example .env && poetry install && \
   poetry run python manage.py migrate && \
   poetry run python manage.py seed_models && \
@@ -275,7 +286,7 @@ libretiles/
 
 ### Frontend API Routes (Next.js)
 - `POST /api/ai/move` -- AI move generation (tool-calling agent; sequential fallback)
-- `POST /api/ai/judge` -- AI word judge (Tier 3; same queue, up to five attempts, HTTP 503 on exhaustion)
+- `POST /api/ai/judge` -- AI word judge (Tier 3; same queue, up to three attempts, HTTP 503 on exhaustion)
 - `GET /api/models` -- Proxy for Django catalog
 
 ## Explicit provider capability probe

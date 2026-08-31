@@ -245,10 +245,40 @@ print_service_conflict() {
 }
 
 ensure_backend_env() {
-    if [ ! -f "$BACKEND_DIR/.env" ]; then
-        cp "$BACKEND_DIR/.env.example" "$BACKEND_DIR/.env"
-        echo "[backend] Created backend/.env from .env.example"
+    if [ -f "$BACKEND_DIR/.env" ]; then
+        return 0
     fi
+    cp "$BACKEND_DIR/.env.example" "$BACKEND_DIR/.env"
+    # Generate DJANGO_SECRET_KEY without printing it. python3 stdlib secrets
+    # uses os.urandom; 32 hex bytes → 64 characters, which satisfies the
+    # fail-closed guard (length ≥ 50, ≥ 5 unique, no django-insecure- prefix).
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo "[backend] python3 is required to generate DJANGO_SECRET_KEY" >&2
+        return 1
+    fi
+    python3 - "$BACKEND_DIR/.env" <<'PY'
+from pathlib import Path
+import secrets
+import sys
+
+path = Path(sys.argv[1])
+key = secrets.token_hex(32)
+lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+out = []
+replaced = False
+for line in lines:
+    stripped = line.lstrip()
+    if not replaced and stripped.startswith("DJANGO_SECRET_KEY="):
+        ending = "\r\n" if line.endswith("\r\n") else ("\n" if line.endswith("\n") else "")
+        out.append(f"DJANGO_SECRET_KEY={key}{ending}")
+        replaced = True
+    else:
+        out.append(line)
+if not replaced:
+    sys.exit("DJANGO_SECRET_KEY assignment not found in newly copied .env")
+path.write_text("".join(out), encoding="utf-8")
+PY
+    echo "[backend] Created backend/.env from .env.example and generated DJANGO_SECRET_KEY"
 }
 
 # Classify a named env assignment as usable or not. Never print the value.
