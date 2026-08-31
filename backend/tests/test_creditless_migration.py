@@ -22,6 +22,7 @@ from catalog.selection import (
     is_selectable_model,
 )
 from game.models import GameSession, Move, PlayerSlot
+from tests._migration_restore import restore_apps_to_leaf
 
 _game_money = importlib.import_module("game.migrations.0005_remove_money_state")
 
@@ -123,8 +124,7 @@ class FreshCreditlessSchemaTests(TransactionTestCase):
                     verbosity=0,
                 )
         finally:
-            call_command("migrate", "catalog", "0012_multi_provider_free_rivals", verbosity=0)
-            call_command("migrate", "game", "0006_rename_consecutive_scoreless_turns", verbosity=0)
+            restore_apps_to_leaf("catalog", "game")
 
         assert "consecutive_scoreless_turns" in _column_names("game_session")
 

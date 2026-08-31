@@ -12,6 +12,7 @@ from catalog.selection import (
     OPENROUTER_PROVIDER,
 )
 from game.models import GameSession
+from tests._migration_restore import restore_apps_to_leaf
 
 _migration = importlib.import_module("catalog.migrations.0009_dynamic_free_catalog")
 reenable = _migration.reenable_code_disabled_non_curated
@@ -111,17 +112,20 @@ class DynamicFreeCatalogMigrateCommandTests(TransactionTestCase):
         extra_id = extra.id
         killed_id = killed.id
 
-        call_command("migrate", "catalog", "0008_remove_aimodel_money_fields", verbosity=0)
-        extra = AIModel.objects.get(pk=extra_id)
-        killed = AIModel.objects.get(pk=killed_id)
-        assert extra.is_active is False
-        assert killed.is_active is False
+        try:
+            call_command("migrate", "catalog", "0008_remove_aimodel_money_fields", verbosity=0)
+            extra = AIModel.objects.get(pk=extra_id)
+            killed = AIModel.objects.get(pk=killed_id)
+            assert extra.is_active is False
+            assert killed.is_active is False
 
-        call_command("migrate", "catalog", "0009_dynamic_free_catalog", verbosity=0)
-        extra.refresh_from_db()
-        killed.refresh_from_db()
-        assert extra.is_active is True
-        assert extra.openrouter_managed is True
-        assert killed.is_active is False
-        assert AIModel.objects.filter(pk=extra_id).exists()
-        assert AIModel.objects.filter(pk=killed_id).exists()
+            call_command("migrate", "catalog", "0009_dynamic_free_catalog", verbosity=0)
+            extra.refresh_from_db()
+            killed.refresh_from_db()
+            assert extra.is_active is True
+            assert extra.openrouter_managed is True
+            assert killed.is_active is False
+            assert AIModel.objects.filter(pk=extra_id).exists()
+            assert AIModel.objects.filter(pk=killed_id).exists()
+        finally:
+            restore_apps_to_leaf("catalog")

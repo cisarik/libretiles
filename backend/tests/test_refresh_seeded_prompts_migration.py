@@ -7,6 +7,7 @@ from django.test import TestCase, TransactionTestCase
 
 from catalog.models import AIModel, AIPrompt
 from game.models import GameSession
+from tests._migration_restore import restore_apps_to_leaf
 
 _migration = importlib.import_module("catalog.migrations.0010_refresh_seeded_prompts")
 refresh = _migration.refresh_seeded_prompts
@@ -148,20 +149,23 @@ class RefreshSeededPromptsMigrateCommandTests(TransactionTestCase):
             self.assertEqual(AIPrompt.objects.get(name=name).prompt, text)
         AIPrompt.objects.filter(name="Short Hooks").update(prompt=_ADMIN_EDIT)
 
-        call_command("migrate", "catalog", "0009_dynamic_free_catalog", verbosity=0)
-        for name in NEW_PROMPTS:
-            row = AIPrompt.objects.get(name=name)
-            if name == "Short Hooks":
-                self.assertEqual(row.prompt, _ADMIN_EDIT)
-            else:
-                self.assertEqual(row.prompt, PRIOR_PROMPTS[name])
+        try:
+            call_command("migrate", "catalog", "0009_dynamic_free_catalog", verbosity=0)
+            for name in NEW_PROMPTS:
+                row = AIPrompt.objects.get(name=name)
+                if name == "Short Hooks":
+                    self.assertEqual(row.prompt, _ADMIN_EDIT)
+                else:
+                    self.assertEqual(row.prompt, PRIOR_PROMPTS[name])
 
-        call_command("migrate", "catalog", "0010_refresh_seeded_prompts", verbosity=0)
-        for name, text in NEW_PROMPTS.items():
-            row = AIPrompt.objects.get(name=name)
-            if name == "Short Hooks":
-                self.assertEqual(row.prompt, _ADMIN_EDIT)
-            else:
-                self.assertEqual(row.prompt, text)
+            call_command("migrate", "catalog", "0010_refresh_seeded_prompts", verbosity=0)
+            for name, text in NEW_PROMPTS.items():
+                row = AIPrompt.objects.get(name=name)
+                if name == "Short Hooks":
+                    self.assertEqual(row.prompt, _ADMIN_EDIT)
+                else:
+                    self.assertEqual(row.prompt, text)
 
-        self.assertTrue(AIPrompt.objects.filter(name="Grandmaster").exists())
+            self.assertTrue(AIPrompt.objects.filter(name="Grandmaster").exists())
+        finally:
+            restore_apps_to_leaf("catalog")

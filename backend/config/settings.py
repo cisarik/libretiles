@@ -234,7 +234,7 @@ CHANNEL_LAYERS = {
         "CONFIG": {"hosts": [REDIS_URL]},
     }
 }
-GAME_WS_TICKET_MAX_AGE_SECONDS = int(os.getenv("GAME_WS_TICKET_MAX_AGE_SECONDS", "60"))
+GAME_WS_TICKET_MAX_AGE_SECONDS = int(os.getenv("GAME_WS_TICKET_MAX_AGE_SECONDS", "10"))
 
 # Game assets
 ASSETS_DIR = BASE_DIR / "assets"

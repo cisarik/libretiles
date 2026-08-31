@@ -6,16 +6,19 @@ game state directly.
 
 from __future__ import annotations
 
+import hashlib
 import random
 import unicodedata
+import uuid
 from collections.abc import Callable
+from datetime import timedelta
 from pathlib import Path
 from typing import Any, Literal
 
 from django.conf import settings
 from django.core import signing
 from django.core.paginator import Paginator
-from django.db import connection, transaction
+from django.db import IntegrityError, connection, transaction
 from django.db.models import Count
 from django.utils import timezone
 
@@ -51,12 +54,16 @@ from gamecore.variant_store import (
     normalise_letter,
 )
 
-from .models import ChatMessage, GameSession, Move, PlayerSlot
+from .models import ChatMessage, ConsumedWsTicket, GameSession, Move, PlayerSlot
 from . import realtime
 
 CHAT_HISTORY_LIMIT = 50
 WS_TICKET_SALT = "game.websocket.ticket"
-WS_TICKET_MAX_AGE_SECONDS = int(getattr(settings, "GAME_WS_TICKET_MAX_AGE_SECONDS", 60))
+_CONSUMED_WS_TICKET_CLEANUP_LIMIT = 100
+
+
+def _ws_ticket_max_age_seconds() -> int:
+    return int(getattr(settings, "GAME_WS_TICKET_MAX_AGE_SECONDS", 10))
 
 
 class GameNotFoundError(Exception):
@@ -1221,31 +1228,66 @@ def set_game_ai_prompt(
     }
 
 
+def _ws_ticket_hash(ticket: str) -> str:
+    return hashlib.sha256(ticket.encode("utf-8")).hexdigest()
+
+
+def cleanup_consumed_ws_tickets(*, limit: int = _CONSUMED_WS_TICKET_CLEANUP_LIMIT) -> int:
+    """Delete expired consumed-ticket rows. Safe from verify or a management command."""
+    batch_limit = min(max(limit, 0), _CONSUMED_WS_TICKET_CLEANUP_LIMIT)
+    if batch_limit == 0:
+        return 0
+    expired_ids = list(
+        ConsumedWsTicket.objects.filter(expires_at__lt=timezone.now()).values_list("pk", flat=True)[
+            :batch_limit
+        ]
+    )
+    if not expired_ids:
+        return 0
+    deleted, _ = ConsumedWsTicket.objects.filter(pk__in=expired_ids).delete()
+    return int(deleted)
+
+
+def _consume_ws_ticket(ticket: str) -> None:
+    expires_at = timezone.now() + timedelta(seconds=_ws_ticket_max_age_seconds())
+    try:
+        with transaction.atomic():
+            ConsumedWsTicket.objects.create(
+                ticket_hash=_ws_ticket_hash(ticket),
+                expires_at=expires_at,
+            )
+    except IntegrityError as exc:
+        raise GameNotFoundError("Game not found") from exc
+
+
 def build_ws_ticket(*, game_id: str, user_id: int) -> dict[str, Any]:
     _load_session_for_user(game_id=game_id, user_id=user_id)
+    cleanup_consumed_ws_tickets()
     ticket = signing.dumps(
-        {"game_id": game_id, "user_id": user_id},
+        {"game_id": game_id, "user_id": user_id, "nonce": uuid.uuid4().hex},
         salt=WS_TICKET_SALT,
         compress=True,
     )
     return {
         "ok": True,
         "ticket": ticket,
-        "expires_in": WS_TICKET_MAX_AGE_SECONDS,
+        "expires_in": _ws_ticket_max_age_seconds(),
     }
 
 
 def verify_ws_ticket(*, game_id: str, ticket: str) -> int:
+    cleanup_consumed_ws_tickets()
     payload = signing.loads(
         ticket,
         salt=WS_TICKET_SALT,
-        max_age=WS_TICKET_MAX_AGE_SECONDS,
+        max_age=_ws_ticket_max_age_seconds(),
     )
     payload_game_id = str(payload.get("game_id", ""))
     payload_user_id = int(payload.get("user_id"))
     if payload_game_id != game_id:
         raise GameNotFoundError("Game not found")
     _load_session_for_user(game_id=game_id, user_id=payload_user_id)
+    _consume_ws_ticket(ticket)
     return payload_user_id
 
 

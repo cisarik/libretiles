@@ -79,7 +79,7 @@ Open http://localhost:3000, register, choose a mode, and play. Credentials live 
 | `DB_ENGINE` | `sqlite` | `sqlite` or `postgresql` |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:3000` | Frontend origin(s) |
 | `REDIS_URL` | `redis://127.0.0.1:6379/0` | Redis connection used by Django Channels |
-| `GAME_WS_TICKET_MAX_AGE_SECONDS` | `60` | Max age for signed websocket tickets |
+| `GAME_WS_TICKET_MAX_AGE_SECONDS` | `10` | Max age for signed websocket tickets |
 | `DYNAMIC_FREE_MODEL_CATALOG_ENABLED` | `false` | Controls only the NIM/OpenRouter compatibility tail: curated bootstrap when false, newest-four OpenRouter plus NIM when true. Active direct rows always remain first. |
 
 **Frontend** (`frontend/.env.local`):

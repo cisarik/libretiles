@@ -8,6 +8,7 @@ from django.test import TestCase, TransactionTestCase
 from catalog.models import AIModel
 from catalog.selection import is_selectable_model
 from game.models import GameSession
+from tests._migration_restore import restore_apps_to_leaf
 
 _migration = importlib.import_module("catalog.migrations.0006_openrouter_catalog")
 SHORTLIST_IDS = _migration.SHORTLIST_IDS
@@ -125,34 +126,37 @@ class ProviderNeutralHelpTextMigrationTests(TransactionTestCase):
         from django.core.management.base import CommandError
         from django.db.migrations.exceptions import IrreversibleError
 
-        with self.assertRaises((CommandError, IrreversibleError)):
-            call_command("migrate", "catalog", "0007_provider_neutral_model_help", verbosity=0)
-        with self.assertRaises((CommandError, IrreversibleError)):
-            call_command("migrate", "game", "0004_gamesession_ai_prompt_alter_move_kind", verbosity=0)
+        try:
+            with self.assertRaises((CommandError, IrreversibleError)):
+                call_command("migrate", "catalog", "0007_provider_neutral_model_help", verbosity=0)
+            with self.assertRaises((CommandError, IrreversibleError)):
+                call_command("migrate", "game", "0004_gamesession_ai_prompt_alter_move_kind", verbosity=0)
 
-        call_command("migrate", "accounts", "0002_openrouter_catalog", verbosity=0)
-        call_command("migrate", "catalog", verbosity=0)
-        call_command("migrate", "accounts", verbosity=0)
+            call_command("migrate", "accounts", "0002_openrouter_catalog", verbosity=0)
+            call_command("migrate", "catalog", verbosity=0)
+            call_command("migrate", "accounts", verbosity=0)
 
-        from accounts.models import User
-        from catalog.models import AIModel as LiveAIModel
+            from accounts.models import User
+            from catalog.models import AIModel as LiveAIModel
 
-        catalog_help = LiveAIModel._meta.get_field("model_id").help_text
-        accounts_help = User._meta.get_field("preferred_ai_model_id").help_text
-        assert "google/gemma-4-31b-it:free" in catalog_help
-        assert "nvidia/nemotron-3-super-120b-a12b" in catalog_help
-        assert "OpenRouter" not in catalog_help
-        assert "google/gemma-4-31b-it:free" in accounts_help
-        assert "nvidia/nemotron-3-super-120b-a12b" in accounts_help
-        assert "OpenRouter" not in accounts_help
+            catalog_help = LiveAIModel._meta.get_field("model_id").help_text
+            accounts_help = User._meta.get_field("preferred_ai_model_id").help_text
+            assert "google/gemma-4-31b-it:free" in catalog_help
+            assert "nvidia/nemotron-3-super-120b-a12b" in catalog_help
+            assert "OpenRouter" not in catalog_help
+            assert "google/gemma-4-31b-it:free" in accounts_help
+            assert "nvidia/nemotron-3-super-120b-a12b" in accounts_help
+            assert "OpenRouter" not in accounts_help
 
-        survivor = AIModel.objects.create(
-            provider="openrouter",
-            model_id="google/gemma-4-31b-it:free",
-            display_name="Survivor",
-        )
-        survivor_id = survivor.id
-        call_command("migrate", "accounts", "0002_openrouter_catalog", verbosity=0)
-        assert AIModel.objects.filter(pk=survivor_id).exists()
-        call_command("migrate", verbosity=0)
-        assert AIModel.objects.filter(pk=survivor_id).exists()
+            survivor = AIModel.objects.create(
+                provider="openrouter",
+                model_id="google/gemma-4-31b-it:free",
+                display_name="Survivor",
+            )
+            survivor_id = survivor.id
+            call_command("migrate", "accounts", "0002_openrouter_catalog", verbosity=0)
+            assert AIModel.objects.filter(pk=survivor_id).exists()
+            call_command("migrate", verbosity=0)
+            assert AIModel.objects.filter(pk=survivor_id).exists()
+        finally:
+            restore_apps_to_leaf("catalog", "game", "accounts")

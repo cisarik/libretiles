@@ -118,8 +118,15 @@ class MultiProviderCatalogMigrationTests(TestCase):
 
 class MultiProviderCatalogMigrateCommandTests(TransactionTestCase):
     def test_backward_and_forward_preserve_rows_and_do_not_reactivate(self) -> None:
-        # Other migration tests deliberately exercise older catalog targets.
-        # Establish this test's declared migration baseline explicitly.
+        # TransactionTestCase flushes migration-inserted data. Migrating "to 0012"
+        # while already at 0012 is a no-op, so go backward first so the 0012 data
+        # step actually re-runs regardless of the incoming schema state.
+        call_command(
+            "migrate",
+            "catalog",
+            "0011_playable_seeded_prompts",
+            verbosity=0,
+        )
         call_command(
             "migrate",
             "catalog",

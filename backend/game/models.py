@@ -158,3 +158,21 @@ class ChatMessage(models.Model):
     def __str__(self) -> str:
         username = self.user.username if self.user else "Unknown"
         return f"{username}: {self.body[:40]}"
+
+
+class ConsumedWsTicket(models.Model):
+    """Single-use record for a consumed websocket ticket.
+
+    Stores only a stable hash of the ticket string, never the ticket itself.
+    The unique constraint is the replay barrier across processes.
+    """
+
+    ticket_hash = models.CharField(max_length=64, unique=True)
+    expires_at = models.DateTimeField(db_index=True)
+    consumed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "game_consumed_ws_ticket"
+
+    def __str__(self) -> str:
+        return f"ConsumedWsTicket {self.ticket_hash[:8]}"

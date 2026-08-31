@@ -2,6 +2,8 @@ from django.db import connection
 from django.db.migrations.executor import MigrationExecutor
 from django.test import TransactionTestCase
 
+from tests._migration_restore import restore_apps_to_leaf
+
 
 class ScorelessTurnsRenameMigrationTest(TransactionTestCase):
     migrate_from = [("game", "0005_remove_money_state")]
@@ -29,5 +31,4 @@ class ScorelessTurnsRenameMigrationTest(TransactionTestCase):
             restored = ReversedSession.objects.get(pk=old_session.pk)
             assert restored.consecutive_passes == 5
         finally:
-            executor = MigrationExecutor(connection)
-            executor.migrate(self.migrate_to)
+            restore_apps_to_leaf("game")
