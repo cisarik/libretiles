@@ -24,6 +24,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { generateText } from "ai";
 import { buildFallbackQueue, MAX_FALLBACK_ATTEMPTS } from "@/lib/ai-fallback";
 import {
+  bearerTokenFromAuthorizationHeader,
+  verifyUserBearerToken,
+  type TokenVerificationResult,
+} from "@/lib/api-auth";
+import {
   getLanguageRuntime,
   parseCatalogModelRows,
   type ProviderRequestTracker,
@@ -36,6 +41,13 @@ const OVERALL_BUDGET_MS = 30_000;
 const MAX_TRACKED_REQUESTS = 50_000;
 const MAX_TRACKED_TOKENS = 1_000_000_000;
 const MAX_RETRY_AFTER_SECONDS = 86_400;
+/**
+ * Prompt-stuffing caps. A 15×15 Scrabble placement forms at most eight words,
+ * each at most 15 letters. 12 words leaves modest headroom without allowing
+ * a bulk prompt-injection payload.
+ */
+const MAX_JUDGE_WORDS = 12;
+const MAX_JUDGE_WORD_LENGTH = 15;
 
 type JudgeResult = {
   results: Array<{ word: string; valid: boolean; reason?: string }>;
@@ -185,7 +197,39 @@ function parseJudgeResults(
   return { results };
 }
 
+function verificationFailureResponse(
+  result: Extract<TokenVerificationResult, { ok: false }>,
+) {
+  if (result.status === 401) {
+    return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+  }
+  if (result.status === 429) {
+    return NextResponse.json(
+      { error: "Too many requests" },
+      {
+        status: 429,
+        ...(result.retryAfter
+          ? { headers: { "Retry-After": result.retryAfter } }
+          : {}),
+      },
+    );
+  }
+  return NextResponse.json({ error: "AI judge failed" }, { status: 503 });
+}
+
 export async function POST(req: NextRequest) {
+  const token = bearerTokenFromAuthorizationHeader(
+    req.headers.get("authorization"),
+  );
+  if (!token) {
+    return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+  }
+
+  const verification = await verifyUserBearerToken(token);
+  if (!verification.ok) {
+    return verificationFailureResponse(verification);
+  }
+
   let body: {
     words?: unknown;
     model_id?: unknown;
@@ -212,6 +256,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "No words provided" }, { status: 400 });
   }
   const words = rawWords.map((word) => word.trim().toUpperCase());
+  if (words.length > MAX_JUDGE_WORDS) {
+    return NextResponse.json({ error: "Too many words" }, { status: 400 });
+  }
+  if (words.some((word) => word.length > MAX_JUDGE_WORD_LENGTH)) {
+    return NextResponse.json({ error: "Word too long" }, { status: 400 });
+  }
   const judgeSpec = judgePromptSpecFromBody(body);
 
   const catalogRows = await fetchCatalogModelRows();

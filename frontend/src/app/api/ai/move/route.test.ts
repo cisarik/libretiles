@@ -1514,4 +1514,18 @@ describe("POST /api/ai/move", () => {
     const opts = generateTextMock.mock.calls[0][0] as { system: string };
     expect(opts.system).toMatch(/Collins Scrabble Words 2019/);
   });
+
+  it("does not call generateText when Django ai-context returns HTTP 429", async () => {
+    mockBackend({
+      context: {
+        status: 429,
+        body: { detail: "Request was throttled." },
+      },
+    });
+
+    const collected = await collectEvents();
+    expect(generateTextMock).not.toHaveBeenCalled();
+    expect(getLanguageRuntimeMock).not.toHaveBeenCalled();
+    expect(collected.error).toBeDefined();
+  });
 });
