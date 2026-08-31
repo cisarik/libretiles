@@ -311,3 +311,29 @@ def test_catalog_models_unauthenticated_get_returns_200() -> None:
 def test_catalog_prompts_unauthenticated_get_returns_200() -> None:
     response = APIClient().get("/api/catalog/prompts/")
     assert response.status_code == 200
+
+
+def _settings_source() -> str:
+    return (_BACKEND_DIR / "config" / "settings.py").read_text(encoding="utf-8")
+
+
+def test_secure_content_type_nosniff_is_explicitly_true() -> None:
+    assert "SECURE_CONTENT_TYPE_NOSNIFF" in _settings_source()
+    assert settings.SECURE_CONTENT_TYPE_NOSNIFF is True
+
+
+def test_secure_referrer_policy_is_explicit() -> None:
+    assert "SECURE_REFERRER_POLICY" in _settings_source()
+    policy = settings.SECURE_REFERRER_POLICY
+    assert isinstance(policy, str)
+    assert policy in {"same-origin", "strict-origin", "strict-origin-when-cross-origin", "no-referrer"}
+
+
+def test_x_frame_options_is_explicitly_deny() -> None:
+    assert "X_FRAME_OPTIONS" in _settings_source()
+    assert settings.X_FRAME_OPTIONS == "DENY"
+
+
+def test_secure_cross_origin_opener_policy_is_explicit() -> None:
+    assert "SECURE_CROSS_ORIGIN_OPENER_POLICY" in _settings_source()
+    assert settings.SECURE_CROSS_ORIGIN_OPENER_POLICY == "same-origin"

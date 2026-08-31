@@ -184,6 +184,12 @@ CSRF_COOKIE_SECURE = not DEBUG
 SECURE_SSL_REDIRECT = not DEBUG
 SECURE_HSTS_SECONDS = _HSTS_SECONDS if not DEBUG else 0
 
+# Framework defaults made explicit so a later edit cannot drop them silently.
+SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_REFERRER_POLICY = "same-origin"
+X_FRAME_OPTIONS = "DENY"
+SECURE_CROSS_ORIGIN_OPENER_POLICY = "same-origin"
+
 # DRF throttle counters. LocMemCache is per-process: each worker has its own
 # budget, so a multi-worker deployment is not a single shared global brake.
 CACHES = {
