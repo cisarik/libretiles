@@ -138,6 +138,56 @@ def test_login_throttled_after_limit() -> None:
 
 
 @pytest.mark.django_db
+def test_register_throttle_ignores_client_supplied_forwarded_for() -> None:
+    # NUM_PROXIES=0 (DJANGO_NUM_PROXIES, default) makes get_ident return
+    # REMOTE_ADDR. A distinct X-Forwarded-For per request must not mint a
+    # fresh unauthenticated bucket.
+    client = APIClient()
+    remote_addr = "203.0.113.10"
+    statuses: list[int] = []
+    for index in range(REGISTER_LIMIT + 1):
+        response = client.post(
+            "/api/auth/register/",
+            {
+                "username": f"reg_xff_{index}",
+                "email": f"reg_xff_{index}@example.com",
+                "password": STRONG_PASSWORD,
+            },
+            REMOTE_ADDR=remote_addr,
+            HTTP_X_FORWARDED_FOR=f"198.51.100.{index}",
+        )
+        statuses.append(response.status_code)
+    assert statuses[0] == 201
+    assert statuses[REGISTER_LIMIT - 1] == 201
+    assert statuses[REGISTER_LIMIT] == 429
+
+
+@pytest.mark.django_db
+def test_login_throttle_ignores_client_supplied_forwarded_for() -> None:
+    # Spray case: AXES_LOCKOUT_PARAMETERS is [["username", "ip_address"]]
+    # with a limit of 8. A different username per attempt keeps each axes
+    # pair at one failure, so axes never fires. The DRF auth_login 60/hour
+    # IP bucket is then the only brake. Distinct X-Forwarded-For values
+    # must not split that bucket (NUM_PROXIES=0 → REMOTE_ADDR).
+    client = APIClient()
+    remote_addr = "203.0.113.10"
+    statuses: list[int] = []
+    for index in range(LOGIN_LIMIT + 1):
+        username = f"login_xff_{index}"
+        User.objects.create_user(username=username, password=STRONG_PASSWORD)
+        response = client.post(
+            "/api/auth/login/",
+            {"username": username, "password": "wrong-password"},
+            REMOTE_ADDR=remote_addr,
+            HTTP_X_FORWARDED_FOR=f"198.51.100.{index}",
+        )
+        statuses.append(response.status_code)
+    assert statuses[0] == 401
+    assert statuses[LOGIN_LIMIT - 1] == 401
+    assert statuses[LOGIN_LIMIT] == 429
+
+
+@pytest.mark.django_db
 def test_refresh_throttled_after_limit() -> None:
     User.objects.create_user(username="refresh_under", password=STRONG_PASSWORD)
     client = APIClient()

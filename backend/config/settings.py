@@ -57,6 +57,46 @@ def _env_flag(name: str, *, default: bool) -> bool:
     return raw.strip().lower() in ("true", "1", "yes")
 
 
+def _num_proxies() -> int:
+    # DRF BaseThrottle.get_ident: NUM_PROXIES=0 returns REMOTE_ADDR even when
+    # X-Forwarded-For is present. That is the safe default. A positive value
+    # is the count of trusted reverse proxies; DRF then takes that many
+    # addresses from the right of X-Forwarded-For. The correct non-zero value
+    # is a deployment fact this repository does not contain.
+    #
+    # django-axes independently keys on REMOTE_ADDR because ipware is not
+    # installed. The two brakes must agree: if DRF trusted a client-supplied
+    # header while axes used the socket address, a username spray would
+    # bypass the unauthenticated throttle.
+    #
+    # Trade-off: with NUM_PROXIES=0 behind a real reverse proxy, every client
+    # shares the proxy's socket address and IP-keyed throttles become
+    # effectively global. That over-throttles (fails safe) rather than
+    # under-throttles. Configuring the proxy itself is host territory.
+    #
+    # Invalid DJANGO_NUM_PROXIES values refuse to start. Silently falling
+    # through to DRF's default NUM_PROXIES=None would key buckets on the raw
+    # client-supplied header.
+    raw = os.getenv("DJANGO_NUM_PROXIES")
+    if raw is None or not raw.strip():
+        return 0
+    try:
+        value = int(raw.strip())
+    except ValueError:
+        raise ImproperlyConfigured(
+            "DJANGO_NUM_PROXIES must be a non-negative integer. "
+            "0 keys unauthenticated throttles on REMOTE_ADDR; a positive "
+            "value is the trusted reverse-proxy count."
+        ) from None
+    if value < 0:
+        raise ImproperlyConfigured(
+            "DJANGO_NUM_PROXIES must be a non-negative integer. "
+            "0 keys unauthenticated throttles on REMOTE_ADDR; a positive "
+            "value is the trusted reverse-proxy count."
+        )
+    return value
+
+
 def _allowed_hosts(*, debug: bool) -> list[str]:
     raw = os.getenv("DJANGO_ALLOWED_HOSTS")
     if raw is None or not raw.strip():
@@ -273,6 +313,9 @@ REST_FRAMEWORK = {
         "auth_me": "200/hour",
         "ai_context": "200/hour",
     },
+    # See _num_proxies: 0 binds get_ident to REMOTE_ADDR; override via
+    # DJANGO_NUM_PROXIES when a trusted proxy count is known.
+    "NUM_PROXIES": _num_proxies(),
 }
 
 # JWT

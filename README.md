@@ -88,6 +88,7 @@ A pre-existing `.env` overrides new code defaults, is read once at process start
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:3000` | Frontend origin(s) |
 | `REDIS_URL` | `redis://127.0.0.1:6379/0` | Redis connection used by Django Channels; also the production fallback for the shared throttle cache |
 | `DJANGO_THROTTLE_CACHE_URL` | unset | Required only when `DJANGO_DEBUG` is false: `redis://` or `rediss://` URL for the shared DRF throttle cache. If unset, `REDIS_URL` is used; if both are empty, Django refuses to start. Unused for local `DEBUG=true` boot. |
+| `DJANGO_NUM_PROXIES` | `0` | Trusted reverse-proxy count for DRF unauthenticated throttle identity. `0` keys buckets on `REMOTE_ADDR`. Set to the real proxy count in a deployment; a mismatch either over-throttles or trusts `X-Forwarded-For`. |
 | `GAME_WS_TICKET_MAX_AGE_SECONDS` | `10` | Max age for signed websocket tickets |
 | `DYNAMIC_FREE_MODEL_CATALOG_ENABLED` | `false` | Controls only the NIM/OpenRouter compatibility tail: curated bootstrap when false, newest-four OpenRouter plus NIM when true. Active direct rows always remain first. |
 
