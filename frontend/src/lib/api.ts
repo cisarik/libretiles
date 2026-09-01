@@ -56,6 +56,117 @@ interface RequestOptions {
   token?: string | null;
 }
 
+export class ApiError extends Error {
+  readonly status: number;
+  readonly fields: Record<string, string[]> | null;
+
+  constructor(
+    status: number,
+    message: string,
+    fields: Record<string, string[]> | null = null,
+  ) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.fields = fields;
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+function extractFieldEntries(parsed: unknown): Record<string, string[]> | null {
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const fields: Record<string, string[]> = {};
+  for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+    if (key === "ok" || key === "detail" || key === "error" || key === "code") continue;
+    if (Array.isArray(value) && value.every((item) => typeof item === "string")) {
+      fields[key] = value;
+    } else if (typeof value === "string" && value.trim()) {
+      fields[key] = [value];
+    }
+  }
+  return Object.keys(fields).length > 0 ? fields : null;
+}
+
+function firstFieldMessage(parsed: unknown): string | null {
+  if (!parsed || typeof parsed !== "object") return null;
+  const rec = parsed as Record<string, unknown>;
+  if (typeof rec.detail === "string" && rec.detail.trim() && !rec.detail.startsWith("{")) {
+    return rec.detail;
+  }
+  if (Array.isArray(rec.detail) && typeof rec.detail[0] === "string") {
+    return rec.detail[0];
+  }
+  if (typeof rec.error === "string" && rec.error.trim()) {
+    return rec.error;
+  }
+  if (Array.isArray(rec.non_field_errors) && typeof rec.non_field_errors[0] === "string") {
+    return rec.non_field_errors[0];
+  }
+  const preferred = ["password", "username", "email", "current_password", "new_password"];
+  for (const key of preferred) {
+    const value = rec[key];
+    if (Array.isArray(value) && typeof value[0] === "string" && value[0].trim()) {
+      return value[0];
+    }
+    if (typeof value === "string" && value.trim()) return value;
+  }
+  for (const [key, value] of Object.entries(rec)) {
+    if (key === "ok" || key === "code") continue;
+    if (Array.isArray(value) && typeof value[0] === "string" && value[0].trim()) {
+      return value[0];
+    }
+  }
+  return null;
+}
+
+function parseRetryAfterSeconds(text: string, parsed: unknown): number | null {
+  if (parsed && typeof parsed === "object" && parsed !== null) {
+    const detail = (parsed as { detail?: unknown }).detail;
+    if (typeof detail === "string") {
+      const match = detail.match(/(\d+)\s+seconds/i);
+      if (match) return Number(match[1]);
+    }
+  }
+  const match = text.match(/(\d+)\s+seconds/i);
+  return match ? Number(match[1]) : null;
+}
+
+function formatThrottleWait(seconds: number | null): string {
+  if (seconds == null || !Number.isFinite(seconds) || seconds < 0) {
+    return "Too many requests. Please wait and try again.";
+  }
+  const minutes = Math.max(1, Math.round(seconds / 60));
+  if (minutes === 1) {
+    return "Too many requests. Try again in about a minute.";
+  }
+  return `Too many requests. Try again in about ${minutes} minutes.`;
+}
+
+function humanMessageForStatus(
+  status: number,
+  fieldMessage: string | null,
+  retryAfterSeconds: number | null,
+): string {
+  switch (status) {
+    case 400:
+      return fieldMessage ?? "Please check the submitted fields.";
+    case 401:
+      return "Invalid username or password";
+    case 403:
+      return "You do not have permission to do that.";
+    case 404:
+      return "Not found.";
+    case 409:
+      return fieldMessage ?? "This action conflicts with the current game state.";
+    case 429:
+      return formatThrottleWait(retryAfterSeconds);
+    case 503:
+      return "The service is temporarily unavailable. Please try again.";
+    default:
+      return "Something went wrong. Please try again.";
+  }
+}
+
 // Shared in-flight refresh so concurrent 401s trigger only one refresh call.
 let refreshPromise: Promise<string | null> | null = null;
 
@@ -131,12 +242,29 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   }
 
   if (!res.ok) {
+    const status = res.status;
     const text = await res.text();
+    let parsed: unknown = null;
     try {
-      const json = JSON.parse(text);
-      if (json.ok === false) return json as T;
-    } catch { /* not JSON */ }
-    throw new Error(`API error ${res.status}: ${text}`);
+      parsed = JSON.parse(text);
+    } catch {
+      parsed = null;
+    }
+    if (
+      parsed !== null &&
+      typeof parsed === "object" &&
+      (parsed as { ok?: unknown }).ok === false
+    ) {
+      return parsed as T;
+    }
+    const fields = extractFieldEntries(parsed);
+    const fieldMessage = firstFieldMessage(parsed);
+    const retryAfter = status === 429 ? parseRetryAfterSeconds(text, parsed) : null;
+    throw new ApiError(
+      status,
+      humanMessageForStatus(status, fieldMessage, retryAfter),
+      fields,
+    );
   }
   return res.json();
 }
@@ -150,6 +278,13 @@ export const api = {
     request<{ access: string; refresh: string }>("/api/auth/login/", {
       method: "POST",
       body: data,
+    }),
+
+  logout: (access: string, refresh: string) =>
+    request<{ ok: boolean }>("/api/auth/logout/", {
+      method: "POST",
+      body: { refresh },
+      token: access,
     }),
 
   me: (token: string) => request<UserProfile>("/api/auth/me/", { token }),

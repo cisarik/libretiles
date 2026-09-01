@@ -16,6 +16,7 @@ import {
   MISTRAL_MODEL_ID,
   MISTRAL_PROVIDER,
 } from "./provider-registry";
+import { recordProviderFailure } from "./provider-logging";
 
 const AUTH_MESSAGE =
   "This free rival could not authenticate. Switch to another free rival or retry later.";
@@ -259,18 +260,61 @@ function rewriteCloudflareNamedToolChoice(
   };
 }
 
+function inferProviderFromInput(input: RequestInfo | URL): string {
+  try {
+    const raw =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.href
+          : input.url;
+    const host = new URL(raw).hostname;
+    if (host.includes("openrouter.ai")) return "openrouter";
+    if (host.includes("nvidia.com")) return "nvidia-nim";
+    if (host.includes("groq.com")) return "groq";
+    if (host.includes("googleapis.com")) return "google-gemini";
+    if (host.includes("cloudflare.com")) return "cloudflare-workers-ai";
+    if (host.includes("mistral.ai")) return "mistral";
+    if (host.includes("aionlabs.ai")) return "aion";
+    if (host.includes("huggingface.co")) return "huggingface";
+    if (host.includes("ibm.com")) return "ibm-watsonx";
+    return "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
 export function createTrackedProviderFetch(
   tracker: ProviderRequestTracker,
-  options: { cloudflareNamedToolChoice?: boolean } = {},
+  options: { cloudflareNamedToolChoice?: boolean; provider?: string } = {},
 ): typeof globalThis.fetch {
   return async (input, init) => {
     const outgoingInit = options.cloudflareNamedToolChoice
       ? rewriteCloudflareNamedToolChoice(init)
       : init;
+    const provider = options.provider ?? inferProviderFromInput(input);
     tracker.noteProviderRequest();
-    const response = await globalThis.fetch(input, outgoingInit);
-    tracker.recordRetryAfter(response.headers.get("retry-after"));
-    return response;
+    try {
+      const response = await globalThis.fetch(input, outgoingInit);
+      tracker.recordRetryAfter(response.headers.get("retry-after"));
+      if (!response.ok) {
+        recordProviderFailure({
+          provider,
+          phase: "provider_http",
+          status: response.status,
+          error: new Error(`HTTP ${response.status}`),
+        });
+      }
+      return response;
+    } catch (error) {
+      recordProviderFailure({
+        provider,
+        phase: "provider_transport",
+        status: null,
+        error,
+      });
+      throw error;
+    }
   };
 }
 
@@ -288,6 +332,7 @@ function createTrackedOpenAIChatModel(input: {
     name: input.provider,
     fetch: createTrackedProviderFetch(input.tracker, {
       cloudflareNamedToolChoice: input.cloudflareNamedToolChoice,
+      provider: input.provider,
     }),
   });
   return compatible.chat(input.modelId);

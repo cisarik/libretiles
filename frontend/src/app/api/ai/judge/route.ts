@@ -34,6 +34,7 @@ import {
   type ProviderRequestTracker,
 } from "@/lib/ai-runtimes";
 import { judgePromptSpecFromBody, judgeSystemPromptFor } from "@/lib/prompts";
+import { recordProviderFailure } from "@/lib/provider-logging";
 
 const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8000";
 const ATTEMPT_TIMEOUT_MS = 10_000;
@@ -290,7 +291,12 @@ export async function POST(req: NextRequest) {
     let runtime;
     try {
       runtime = await getLanguageRuntime(pair.provider, pair.model_id);
-    } catch {
+    } catch (error) {
+      recordProviderFailure({
+        provider: pair.provider,
+        phase: "runtime_construction",
+        error,
+      });
       continue;
     }
 
@@ -318,7 +324,12 @@ export async function POST(req: NextRequest) {
 
       runtime.tracker.recordUsage(result.usage);
       parsed = parseJudgeResults(result.text, words);
-    } catch {
+    } catch (error) {
+      recordProviderFailure({
+        provider: pair.provider,
+        phase: "generate_text",
+        error,
+      });
       // Timeout, provider failure, or SDK error — advance to the next model.
     }
     addTrackerSnapshot(accounting, runtime.tracker);

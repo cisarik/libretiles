@@ -35,6 +35,7 @@ import {
   buildMoveUserPrompt,
   movePromptSpecFromContext,
 } from "@/lib/prompts";
+import { recordProviderFailure } from "@/lib/provider-logging";
 
 const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8000";
 const DEFAULT_TIMEOUT_S = 120;
@@ -1416,6 +1417,11 @@ export async function POST(req: NextRequest) {
           clearNoProgressDeadlineTimer();
         }
       } catch (error) {
+        recordProviderFailure({
+          provider: providerPath || "unknown",
+          phase: "generate_text",
+          error,
+        });
         const normalizedError = normalizeProviderError(error);
         if (normalizedError) {
           emit({

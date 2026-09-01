@@ -1,15 +1,24 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 import pytest
+from channels.layers import InMemoryChannelLayer
 from channels.testing import WebsocketCommunicator
 from django.test import override_settings
 
 from accounts.models import User
 from config.asgi import application
 from game import services
-from game.models import GameSession
+from game.models import ConsumedWsTicket, GameSession
+
+
+class FailingGroupAddChannelLayer(InMemoryChannelLayer):
+    """Test-local layer: group_add always raises. Does not require Redis."""
+
+    async def group_add(self, group: str, channel: str) -> None:
+        raise RuntimeError("synthetic channel-layer outage")
 
 
 async def _receive_until_type(
@@ -137,5 +146,134 @@ async def test_invalid_ticket_is_rejected() -> None:
     game_id = waiting["state"]["game_id"]
 
     communicator = WebsocketCommunicator(application, f"/ws/game/{game_id}/?ticket=invalid-ticket")
-    connected, _subprotocol = await communicator.connect()
+    connected, close_code = await communicator.connect()
     assert connected is False
+    assert close_code == 4403
+
+
+@override_settings(
+    CHANNEL_LAYERS={"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}},
+)
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+async def test_missing_ticket_closes_with_4401() -> None:
+    user = await asyncio.to_thread(_create_user, username="ws_missing_ticket")
+    waiting = await asyncio.to_thread(services.join_human_queue, user_id=user.id, variant_slug="english")
+    game_id = waiting["state"]["game_id"]
+
+    communicator = WebsocketCommunicator(application, f"/ws/game/{game_id}/")
+    connected, close_code = await communicator.connect()
+    assert connected is False
+    assert close_code == 4401
+
+
+@override_settings(
+    CHANNEL_LAYERS={"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}},
+)
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+async def test_replayed_ticket_closes_with_4403() -> None:
+    user = await asyncio.to_thread(_create_user, username="ws_replay_close")
+    waiting = await asyncio.to_thread(services.join_human_queue, user_id=user.id, variant_slug="english")
+    game_id = waiting["state"]["game_id"]
+    issued = await asyncio.to_thread(services.build_ws_ticket, game_id=game_id, user_id=user.id)
+    ticket = issued["ticket"]
+
+    first = WebsocketCommunicator(application, f"/ws/game/{game_id}/?ticket={ticket}")
+    connected1, _subprotocol = await first.connect()
+    assert connected1 is True
+    await first.disconnect()
+
+    second = WebsocketCommunicator(application, f"/ws/game/{game_id}/?ticket={ticket}")
+    connected2, close_code = await second.connect()
+    assert connected2 is False
+    assert close_code == 4403
+
+
+@override_settings(
+    CHANNEL_LAYERS={
+        "default": {"BACKEND": "tests.test_multiplayer_ws.FailingGroupAddChannelLayer"},
+    },
+)
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+async def test_channel_layer_failure_closes_with_4503_not_4403() -> None:
+    user = await asyncio.to_thread(_create_user, username="ws_layer_fail")
+    waiting = await asyncio.to_thread(services.join_human_queue, user_id=user.id, variant_slug="english")
+    game_id = waiting["state"]["game_id"]
+    issued = await asyncio.to_thread(services.build_ws_ticket, game_id=game_id, user_id=user.id)
+
+    communicator = WebsocketCommunicator(
+        application, f"/ws/game/{game_id}/?ticket={issued['ticket']}"
+    )
+    connected, close_code = await communicator.connect()
+    assert connected is False
+    assert close_code == 4503
+    assert close_code != 4403
+    assert close_code != 4401
+
+
+@override_settings(
+    CHANNEL_LAYERS={
+        "default": {"BACKEND": "tests.test_multiplayer_ws.FailingGroupAddChannelLayer"},
+    },
+)
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+async def test_channel_layer_failure_logs_error_without_ticket(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    user = await asyncio.to_thread(_create_user, username="ws_layer_log")
+    waiting = await asyncio.to_thread(services.join_human_queue, user_id=user.id, variant_slug="english")
+    game_id = waiting["state"]["game_id"]
+    issued = await asyncio.to_thread(services.build_ws_ticket, game_id=game_id, user_id=user.id)
+    ticket = issued["ticket"]
+
+    consumers_log = logging.getLogger("game.consumers")
+    with caplog.at_level(logging.ERROR, logger="game.consumers"):
+        consumers_log.addHandler(caplog.handler)
+        try:
+            communicator = WebsocketCommunicator(
+                application, f"/ws/game/{game_id}/?ticket={ticket}"
+            )
+            connected, close_code = await communicator.connect()
+        finally:
+            consumers_log.removeHandler(caplog.handler)
+
+    assert connected is False
+    assert close_code == 4503
+    error_records = [record for record in caplog.records if record.levelno >= logging.ERROR]
+    assert error_records
+    joined = " ".join(record.getMessage() for record in error_records)
+    names_error_type = any("RuntimeError" in record.getMessage() for record in error_records)
+    contains_ticket = any(ticket in record.getMessage() for record in error_records)
+    contains_query = any("ticket=" in record.getMessage() for record in error_records)
+    assert names_error_type is True
+    assert contains_ticket is False
+    assert contains_query is False
+    assert joined  # cause text present
+
+
+@override_settings(
+    CHANNEL_LAYERS={
+        "default": {"BACKEND": "tests.test_multiplayer_ws.FailingGroupAddChannelLayer"},
+    },
+)
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+async def test_channel_layer_failure_still_consumes_one_ticket() -> None:
+    user = await asyncio.to_thread(_create_user, username="ws_layer_consume")
+    waiting = await asyncio.to_thread(services.join_human_queue, user_id=user.id, variant_slug="english")
+    game_id = waiting["state"]["game_id"]
+    issued = await asyncio.to_thread(services.build_ws_ticket, game_id=game_id, user_id=user.id)
+    before = await asyncio.to_thread(ConsumedWsTicket.objects.count)
+
+    communicator = WebsocketCommunicator(
+        application, f"/ws/game/{game_id}/?ticket={issued['ticket']}"
+    )
+    connected, close_code = await communicator.connect()
+    after = await asyncio.to_thread(ConsumedWsTicket.objects.count)
+
+    assert connected is False
+    assert close_code == 4503
+    assert after == before + 1

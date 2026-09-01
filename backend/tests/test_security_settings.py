@@ -11,11 +11,13 @@ import json
 import os
 import subprocess
 import sys
+from io import StringIO
 from pathlib import Path
 from typing import Any
 
 import pytest
 from django.conf import settings
+from django.core.management import call_command
 from rest_framework.test import APIClient
 
 _BACKEND_DIR = Path(__file__).resolve().parents[1]
@@ -407,3 +409,33 @@ def test_debug_true_keeps_locmem_cache_without_redis() -> None:
     )
     assert payload["status"] == "ok"
     assert payload["cache_backend"] == _LOCMEM_BACKEND
+
+
+def test_logging_configures_project_loggers_without_disabling_existing() -> None:
+    logging_config = settings.LOGGING
+    assert logging_config["disable_existing_loggers"] is False
+    handlers = logging_config["handlers"]
+    assert "console" in handlers
+    formatter_name = handlers["console"]["formatter"]
+    fmt = logging_config["formatters"][formatter_name]["format"]
+    assert "levelname" in fmt
+    assert "name" in fmt
+    assert "message" in fmt
+    source = _settings_source()
+    assert '"INFO" if DEBUG else "WARNING"' in source
+    configured_level = logging_config["loggers"]["game"]["level"]
+    assert configured_level in {"INFO", "WARNING"}
+    for logger_name in ("game", "accounts", "catalog", "config"):
+        logger_cfg = logging_config["loggers"][logger_name]
+        assert "console" in logger_cfg["handlers"]
+        assert logger_cfg["level"] == configured_level
+
+
+def test_axes_middleware_remains_last_and_check_omits_w002() -> None:
+    assert settings.MIDDLEWARE[-2] == "config.middleware.AxesDrfLockoutFlagMiddleware"
+    assert settings.MIDDLEWARE[-1] == "axes.middleware.AxesMiddleware"
+    stdout = StringIO()
+    stderr = StringIO()
+    call_command("check", stdout=stdout, stderr=stderr)
+    combined = stdout.getvalue() + stderr.getvalue()
+    assert "axes.W002" not in combined

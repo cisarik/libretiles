@@ -40,7 +40,7 @@ import {
   providerBadgeLabel,
 } from "@/lib/ai-fallback";
 import { consumeAIStream } from "@/lib/ai-move-stream";
-import { api, readAiTurnTelemetry } from "@/lib/api";
+import { api, ApiError, readAiTurnTelemetry } from "@/lib/api";
 import { PREMIUM_FOOTER_STYLE, handlePremiumSurfacePointer } from "@/lib/premiumSurface";
 import { isPlausibleRack } from "@/lib/rack";
 import { buildGameWebSocketUrl } from "@/lib/ws";
@@ -478,6 +478,7 @@ export default function GamePage() {
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const aiInFlightRef = useRef(false);
   const multiplayerSocketRef = useRef<WebSocket | null>(null);
+  const websocketClosedLocallyRef = useRef(false);
 
   const [aiApproved, setAiApproved] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
@@ -519,13 +520,13 @@ export default function GamePage() {
         router.replace(`/waiting/${gameId}`);
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (message.includes("API error 401")) {
+      if (err instanceof ApiError && err.status === 401) {
         resetGameUi();
         setUserProfile(null);
         clearAuth();
         return;
       }
+      const message = err instanceof Error ? err.message : String(err);
       setToast({
         id: `state-${Date.now()}`,
         type: "error",
@@ -773,6 +774,14 @@ export default function GamePage() {
     setGamesModalOpen(false);
     setPromptsModalOpen(false);
     setPromptPreview(null);
+    const access = useGameStore.getState().token;
+    const refresh = useGameStore.getState().refreshToken;
+    if (access && refresh) {
+      void api.logout(access, refresh).catch(() => {
+        // Best-effort blacklist; local logout always continues.
+      });
+    }
+    websocketClosedLocallyRef.current = true;
     multiplayerSocketRef.current?.close();
     resetGameUi();
     setUserProfile(null);
@@ -1148,6 +1157,7 @@ export default function GamePage() {
         if (!active) return;
 
         const socket = new WebSocket(buildGameWebSocketUrl(gameId, ticketResult.ticket));
+        websocketClosedLocallyRef.current = false;
         multiplayerSocketRef.current = socket;
 
         socket.onmessage = (event) => {
@@ -1194,10 +1204,25 @@ export default function GamePage() {
         };
 
         socket.onerror = () => {
+          // Close codes are the diagnostic path; onclose maps 4401/4403/4503
+          // and suppresses ordinary local closures.
+        };
+
+        socket.onclose = (event) => {
+          if (websocketClosedLocallyRef.current) return;
+          if (event.code === 1000 || event.code === 1005) return;
+          const message =
+            event.code === 4401
+              ? "Realtime authentication expired. Refresh the page to reconnect."
+              : event.code === 4403
+                ? "This realtime session is not valid. Refresh the page to reconnect."
+                : event.code === 4503
+                  ? "The realtime service is unavailable. Please try again."
+                  : "Realtime connection failed";
           showToast({
-            id: `ws-${Date.now()}`,
+            id: `ws-close-${Date.now()}`,
             type: "error",
-            message: "Realtime connection failed",
+            message,
           });
         };
       } catch (err) {
@@ -1213,6 +1238,7 @@ export default function GamePage() {
 
     return () => {
       active = false;
+      websocketClosedLocallyRef.current = true;
       multiplayerSocketRef.current?.close();
       multiplayerSocketRef.current = null;
     };

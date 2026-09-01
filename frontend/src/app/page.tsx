@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { resolveEligibleModelId } from "@/lib/model-catalog";
 import { useGameStore } from "@/hooks/useGameStore";
 import type { AIModel } from "@/lib/types";
@@ -35,11 +35,7 @@ export default function Home() {
     setLoading(true);
     try {
       if (mode === "register") {
-        try {
-          await api.register({ username, email: `${username}@libretiles.app`, password });
-        } catch {
-          // User may already exist — fall through to login
-        }
+        await api.register({ username, email: `${username}@libretiles.app`, password });
       }
       const { access, refresh } = await api.login({ username, password });
       setToken(access);
@@ -72,11 +68,11 @@ export default function Home() {
       router.push("/play");
     } catch (err) {
       setError(
-        err instanceof Error
-          ? err.message.includes("401")
-            ? "Invalid username or password"
-            : err.message
-          : "Something went wrong",
+        err instanceof ApiError && err.status === 401
+          ? "Invalid username or password"
+          : err instanceof Error
+            ? err.message
+            : "Something went wrong",
       );
     } finally {
       setLoading(false);

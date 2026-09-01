@@ -7,6 +7,7 @@ import {
   requireServerCredential,
   type ProviderRequestTracker,
 } from "./openai-compatible";
+import { recordProviderFailure } from "./provider-logging";
 import {
   IBM_WATSONX_MODEL_ID,
   IBM_WATSONX_PROVIDER,
@@ -119,9 +120,22 @@ async function trackedFetch(
     response = await fetchForRuntime(input, init);
   } catch (error) {
     if (isAbortError(error)) throw error;
+    recordProviderFailure({
+      provider: IBM_WATSONX_PROVIDER,
+      phase: "provider_transport",
+      error,
+    });
     throw unavailable();
   }
   tracker.recordRetryAfter(response.headers.get("retry-after"));
+  if (!response.ok) {
+    recordProviderFailure({
+      provider: IBM_WATSONX_PROVIDER,
+      phase: "provider_http",
+      status: response.status,
+      error: new Error(`HTTP ${response.status}`),
+    });
+  }
   return response;
 }
 

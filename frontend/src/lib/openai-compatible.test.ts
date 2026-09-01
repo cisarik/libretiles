@@ -141,6 +141,43 @@ describe("Cloudflare named tool translation", () => {
   });
 });
 
+describe("createTrackedProviderFetch logging", () => {
+  it("logs a non-2xx response once without changing return, tracker, or Retry-After", async () => {
+    const writeSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const tracker = createProviderRequestTracker();
+    vi.stubGlobal("fetch", vi.fn(async () => response(429, "12")));
+    const trackedFetch = createTrackedProviderFetch(tracker, { provider: "openrouter" });
+    const result = await trackedFetch("https://provider.invalid/v1/chat", {
+      method: "POST",
+      headers: { Authorization: "Bearer test-secret" },
+      body: "secret prompt",
+    });
+    expect(result.status).toBe(429);
+    expect(tracker.snapshot()).toEqual({
+      provider_requests: 1,
+      retry_after_seconds: 12,
+    });
+    expect(writeSpy).toHaveBeenCalledTimes(1);
+    writeSpy.mockRestore();
+  });
+
+  it("logs a thrown transport error once and still propagates it", async () => {
+    const writeSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const tracker = createProviderRequestTracker();
+    const transport = new TypeError("synthetic transport failure");
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw transport;
+    }));
+    const trackedFetch = createTrackedProviderFetch(tracker, { provider: "groq" });
+    await expect(
+      trackedFetch("https://provider.invalid/v1/chat"),
+    ).rejects.toBe(transport);
+    expect(tracker.snapshot().provider_requests).toBe(1);
+    expect(writeSpy).toHaveBeenCalledTimes(1);
+    writeSpy.mockRestore();
+  });
+});
+
 describe("credential validation", () => {
   it("rejects blank and documented placeholders with a sanitized error", () => {
     for (const value of [undefined, "", "   ", "your-api-key", "replace-me"]) {

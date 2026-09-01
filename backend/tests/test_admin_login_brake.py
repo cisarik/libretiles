@@ -169,6 +169,7 @@ def test_successful_login_resets_failure_counter_for_that_pair() -> None:
 
 def test_axes_is_wired_in_required_order() -> None:
     assert "axes" in settings.INSTALLED_APPS
+    assert settings.MIDDLEWARE[-2] == "config.middleware.AxesDrfLockoutFlagMiddleware"
     assert settings.MIDDLEWARE[-1] == "axes.middleware.AxesMiddleware"
     backends = list(settings.AUTHENTICATION_BACKENDS)
     assert backends[0] == "axes.backends.AxesStandaloneBackend"

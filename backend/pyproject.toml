@@ -50,7 +50,7 @@ module = [
 ignore_missing_imports = true
 
 # django-axes 8.3.1 ships no type stubs. Import is confined to the DRF lockout
-# flag middleware in config.settings; do not weaken global strictness.
+# flag middleware in config.middleware; do not weaken global strictness.
 [[tool.mypy.overrides]]
 module = [
     "axes.signals",
