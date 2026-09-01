@@ -15,6 +15,7 @@ import type {
   AiFallbackAttempt,
   AiTurnTelemetry,
 } from "@/lib/types";
+import { isSyntacticallyValidSlug } from "@/lib/variants";
 
 interface PendingTile extends Placement {
   rackIndex: number;
@@ -22,7 +23,7 @@ interface PendingTile extends Placement {
 
 export type BoardTheme = "wood" | "black" | "green";
 
-export type SelectedVariantSlug = "english" | "slovak";
+export type SelectedVariantSlug = string;
 
 interface GameStore {
   // Auth
@@ -274,7 +275,7 @@ export const useGameStore = create<GameStore>()(
     }),
     {
       name: "libretiles-store",
-      version: 3,
+      version: 4,
       migrate: (persistedState, version) => {
         const incoming = { ...((persistedState ?? {}) as Record<string, unknown>) };
         if (version < 1) {
@@ -289,6 +290,11 @@ export const useGameStore = create<GameStore>()(
         if (version < 3) {
           if (!isLocale(incoming.uiLocale)) {
             incoming.uiLocale = null;
+          }
+        }
+        if (version < 4) {
+          if (!isSyntacticallyValidSlug(incoming.selectedVariantSlug)) {
+            incoming.selectedVariantSlug = "english";
           }
         }
         return incoming as unknown as GameStore;

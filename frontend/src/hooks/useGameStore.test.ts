@@ -152,7 +152,7 @@ describe("AC-ONCE explicit locale is sticky", () => {
 
 describe("AC-MIGRATE persist version 2 to 3", () => {
   it("yields uiLocale null when a v2 payload has no locale", async () => {
-    expect(useGameStore.persist.getOptions().version).toBe(3);
+    expect(useGameStore.persist.getOptions().version).toBe(4);
     const migrate = useGameStore.persist.getOptions().migrate;
     expect(migrate).toBeTypeOf("function");
     const migrated = (await migrate!(
@@ -164,7 +164,7 @@ describe("AC-MIGRATE persist version 2 to 3", () => {
   });
 
   it("rewrites a garbage uiLocale to null and preserves a valid stored value", async () => {
-    expect(useGameStore.persist.getOptions().version).toBe(3);
+    expect(useGameStore.persist.getOptions().version).toBe(4);
     const migrate = useGameStore.persist.getOptions().migrate;
     expect(migrate).toBeTypeOf("function");
     const garbage = (await migrate!(
@@ -177,5 +177,42 @@ describe("AC-MIGRATE persist version 2 to 3", () => {
       2,
     )) as Record<string, unknown>;
     expect(migrated.uiLocale).toBe("sk");
+  });
+});
+
+describe("persist migrate to version 4", () => {
+  it("accepts an arbitrary slug string on the live store", () => {
+    useGameStore.setState(useGameStore.getInitialState(), true);
+    useGameStore.getState().setSelectedVariantSlug("czech");
+    expect(useGameStore.getState().selectedVariantSlug).toBe("czech");
+    useGameStore.getState().setSelectedVariantSlug("hungarian");
+    expect(useGameStore.getState().selectedVariantSlug).toBe("hungarian");
+  });
+
+  it("keeps a syntactically valid slug including ones not in the old union", async () => {
+    const migrate = useGameStore.persist.getOptions().migrate;
+    expect(migrate).toBeTypeOf("function");
+    const czech = (await migrate!(
+      { selectedVariantSlug: "czech", aiTimeout: 30 },
+      3,
+    )) as Record<string, unknown>;
+    expect(czech.selectedVariantSlug).toBe("czech");
+    const hungarian = (await migrate!(
+      { selectedVariantSlug: "hungarian" },
+      3,
+    )) as Record<string, unknown>;
+    expect(hungarian.selectedVariantSlug).toBe("hungarian");
+  });
+
+  it("resets a malformed slug to english", async () => {
+    const migrate = useGameStore.persist.getOptions().migrate;
+    expect(migrate).toBeTypeOf("function");
+    for (const bad of ["", "Foo Bar", "../etc", "CZECH", 12, null]) {
+      const migrated = (await migrate!(
+        { selectedVariantSlug: bad },
+        3,
+      )) as Record<string, unknown>;
+      expect(migrated.selectedVariantSlug).toBe("english");
+    }
   });
 });

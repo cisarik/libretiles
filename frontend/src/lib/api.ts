@@ -11,6 +11,7 @@ import type {
   MoveValidationResult,
   QueueJoinResponse,
   UserProfile,
+  VariantSummary,
   WSTicketResponse,
 } from "@/lib/types";
 import { telemetryFromSsePayload } from "./ai-move-stream";
@@ -315,6 +316,9 @@ export const api = {
 
   // Catalog
   getModels: () => request<AIModel[]>("/api/catalog/models/"),
+
+  getVariants: (token: string) =>
+    request<VariantSummary[]>("/api/game/variants/", { token }),
 
   // Game
   createGame: (

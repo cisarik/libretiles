@@ -44,6 +44,8 @@ export const enText = {
     "Tiles, bag, and lexicon. Applies to NEW games only and never changes a running game. This is not the interface language.",
   "settings.gameVariant.english": "English",
   "settings.gameVariant.slovak": "Slovak",
+  "settings.gameVariant.czech": "Czech",
+  "settings.gameVariant.polish": "Polish",
   "draw.eyebrow": "Starting draw",
   "draw.title": "Who opens the board",
   "draw.subtitle": "Whoever draws the tile closer to A starts. A blank always wins.",

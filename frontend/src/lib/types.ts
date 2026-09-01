@@ -91,6 +91,15 @@ export interface CreateGameResponse {
   ai_prompt_name?: string | null;
 }
 
+export type VariantReadiness = "playable" | "unavailable";
+
+export interface VariantSummary {
+  slug: string;
+  display_name: string;
+  language_code: string | null;
+  readiness: VariantReadiness;
+}
+
 export interface QueueJoinResponse {
   ok: boolean;
   waiting: boolean;

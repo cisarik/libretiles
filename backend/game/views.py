@@ -1,8 +1,14 @@
-from typing import Any
+import json
+import logging
+from pathlib import Path
+from typing import Any, Literal, TypedDict
 
 from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
+
+from gamecore.assets import get_assets_path
+from gamecore.variant_store import VariantDefinition, _load_variant_from_path, slugify
 
 from . import services
 from .serializers import (
@@ -28,6 +34,117 @@ _PLAYABILITY_CONFLICT_CODES = frozenset(
         "state_conflict",
     }
 )
+_DEFAULT_VARIANT_SLUG = "english"
+_log = logging.getLogger("game")
+
+
+class VariantSummary(TypedDict):
+    slug: str
+    display_name: str
+    language_code: str | None
+    readiness: Literal["playable", "unavailable"]
+
+
+def _variant_json_dir() -> Path:
+    return get_assets_path() / "variants"
+
+
+def _public_language_code(raw: object) -> str | None:
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    return None
+
+
+def _looks_structurally_complete(data: object) -> bool:
+    if not isinstance(data, dict):
+        return False
+    letters = data.get("letters")
+    alphabet = data.get("alphabet_order")
+    dictionary_file = data.get("dictionary_file")
+    if not isinstance(letters, list) or not letters:
+        return False
+    if not isinstance(alphabet, list) or not alphabet:
+        return False
+    if not isinstance(dictionary_file, str) or not dictionary_file.strip():
+        return False
+    return True
+
+
+def _summary_from_payload(data: dict[str, Any], stem: str) -> VariantSummary | None:
+    language = data.get("language") or data.get("name")
+    if not isinstance(language, str) or not language.strip():
+        return None
+    slug_raw = data.get("slug")
+    slug = (
+        slugify(str(slug_raw))
+        if isinstance(slug_raw, str) and slug_raw.strip()
+        else slugify(stem)
+    )
+    return {
+        "slug": slug,
+        "display_name": language.strip(),
+        "language_code": _public_language_code(
+            data.get("language_code") or data.get("code")
+        ),
+        "readiness": "unavailable",
+    }
+
+
+def _variant_resources_ready(variant: VariantDefinition) -> bool:
+    if not variant.dictionary_path.is_file():
+        return False
+    two_path = variant.two_tile_words_path
+    return two_path is None or two_path.is_file()
+
+
+def list_variant_summaries() -> list[VariantSummary]:
+    """Public four-field summaries. Never include paths, filenames, or errors."""
+    summaries: list[VariantSummary] = []
+    try:
+        paths = sorted(_variant_json_dir().glob("*.json"))
+    except OSError:
+        _log.error("variant_list_omitted")
+        return []
+    for path in paths:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError, ValueError, TypeError):
+            _log.error("variant_list_omitted")
+            continue
+        if not _looks_structurally_complete(data):
+            _log.error("variant_list_omitted")
+            continue
+        try:
+            variant = _load_variant_from_path(path)
+        except FileNotFoundError:
+            summary = _summary_from_payload(data, path.stem)
+            if summary is None:
+                _log.error("variant_list_omitted")
+                continue
+            summaries.append(summary)
+            continue
+        except Exception:
+            _log.error("variant_list_omitted")
+            continue
+        readiness: Literal["playable", "unavailable"] = (
+            "playable" if _variant_resources_ready(variant) else "unavailable"
+        )
+        summaries.append(
+            {
+                "slug": variant.slug,
+                "display_name": variant.language,
+                "language_code": variant.language_code,
+                "readiness": readiness,
+            }
+        )
+    summaries.sort(
+        key=lambda item: (
+            0 if item["slug"] == _DEFAULT_VARIANT_SLUG else 1,
+            (item["display_name"] or "").casefold(),
+            item["slug"],
+        )
+    )
+    return summaries
 
 
 def _action_error_status(result: dict[str, Any]) -> int:
@@ -40,6 +157,11 @@ def _service_error_response(error: Exception) -> Response:
     if isinstance(error, services.GameNotFoundError):
         return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
     raise error
+
+
+class VariantListView(APIView):
+    def get(self, request):  # type: ignore[no-untyped-def]
+        return Response(list_variant_summaries())
 
 
 class CreateGameView(APIView):

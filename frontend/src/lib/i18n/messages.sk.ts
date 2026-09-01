@@ -49,6 +49,8 @@ export const skText: Record<TextKey, string> = {
     "Písmená, vrecko a lexikón. Platí pre NOVÉ partie a nemení prebiehajúcu partiu. Toto nie je jazyk rozhrania.",
   "settings.gameVariant.english": "Angličtina",
   "settings.gameVariant.slovak": "Slovenčina",
+  "settings.gameVariant.czech": "Čeština",
+  "settings.gameVariant.polish": "Poľština",
   "draw.eyebrow": "Ťah o poradie",
   "draw.title": "Kto začína partiu",
   "draw.subtitle":

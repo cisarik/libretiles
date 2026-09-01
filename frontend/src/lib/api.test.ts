@@ -269,3 +269,32 @@ describe("AC-PLURAL rendered Slovak throttle", () => {
     }
   });
 });
+
+describe("api.getVariants", () => {
+  it("sends the bearer token to the variants endpoint", async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse(
+        [
+          {
+            slug: "english",
+            display_name: "English",
+            language_code: null,
+            readiness: "playable",
+          },
+        ],
+        200,
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const rows = await api.getVariants("synthetic-access");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.slug).toBe("english");
+    const firstCall = fetchMock.mock.calls[0];
+    expect(firstCall).toBeDefined();
+    const [url, init] = firstCall as unknown as [string, RequestInit];
+    expect(url).toContain("/api/game/variants/");
+    expect((init.headers as Record<string, string>).Authorization).toBe(
+      "Bearer synthetic-access",
+    );
+  });
+});

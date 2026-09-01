@@ -9,7 +9,7 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { useGameStore, type BoardTheme, type SelectedVariantSlug } from "@/hooks/useGameStore";
+import { useGameStore, type BoardTheme } from "@/hooks/useGameStore";
 import { useLocale, useT } from "@/lib/i18n";
 import type { Locale } from "@/lib/i18n/locales";
 import { providerBadgeLabel } from "@/lib/ai-fallback";
@@ -19,7 +19,9 @@ import {
   PREMIUM_PANEL_STYLE,
   handlePremiumSurfacePointer,
 } from "@/lib/premiumSurface";
-import type { AIModel } from "@/lib/types";
+import type { AIModel, VariantSummary } from "@/lib/types";
+import { reconcileSelectedVariantSlug } from "@/lib/variants";
+import { GameLanguagePanel } from "@/components/settings/GameLanguagePanel";
 
 const TIMEOUT_CHOICES = [
   { value: 30, label: "30s", description: "Fast board read" },
@@ -364,66 +366,6 @@ function InterfaceLanguagePanel() {
   );
 }
 
-function GameLanguagePanel({
-  selected,
-  onSelect,
-}: {
-  selected: SelectedVariantSlug;
-  onSelect: (slug: SelectedVariantSlug) => void;
-}) {
-  const { t } = useT();
-  const choices: Array<{
-    value: SelectedVariantSlug;
-    label: string;
-  }> = [
-    {
-      value: "english",
-      label: t("settings.gameVariant.english"),
-    },
-    {
-      value: "slovak",
-      label: t("settings.gameVariant.slovak"),
-    },
-  ];
-
-  return (
-    <SettingsPanel
-      title={t("settings.gameVariant.title")}
-      description={t("settings.gameVariant.description")}
-      className="xl:col-span-2"
-    >
-      <div className="grid grid-cols-2 gap-3">
-        {choices.map((choice) => {
-          const isSelected = selected === choice.value;
-          return (
-            <motion.button
-              key={choice.value}
-              type="button"
-              whileHover={{ y: -1.5, scale: 1.01 }}
-              whileTap={{ scale: 0.985 }}
-              aria-pressed={isSelected}
-              onClick={() => onSelect(choice.value)}
-              className={`min-h-[96px] rounded-[1.15rem] border px-4 py-4 text-left transition-[border-color,box-shadow,background-color,transform] duration-300 ${
-                isSelected
-                  ? "border-amber-300/45 bg-amber-400/10 shadow-[0_12px_30px_rgba(251,191,36,0.10)]"
-                  : "border-white/8 bg-stone-950/72 hover:border-white/14 hover:shadow-[0_12px_28px_rgba(0,0,0,0.2)]"
-              }`}
-            >
-              <div
-                className={`text-[1.45rem] font-black uppercase tracking-[0.08em] ${
-                  isSelected ? "text-amber-100" : "text-stone-100"
-                }`}
-              >
-                {choice.label}
-              </div>
-            </motion.button>
-          );
-        })}
-      </div>
-    </SettingsPanel>
-  );
-}
-
 export default function SettingsPage() {
   const router = useRouter();
   const token = useGameStore((s) => s.token);
@@ -443,6 +385,7 @@ export default function SettingsPage() {
   const setPremiumLookEnabled = useGameStore((s) => s.setPremiumLookEnabled);
 
   const [models, setModels] = useState<AIModel[]>([]);
+  const [variants, setVariants] = useState<VariantSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [savingModelId, setSavingModelId] = useState<string | null>(null);
   const [startingNewGame, setStartingNewGame] = useState(false);
@@ -456,7 +399,7 @@ export default function SettingsPage() {
 
     async function load() {
       try {
-        const [catalogResult, profileResult] = await Promise.all([
+        const [catalogResult, profileResult, variantsResult] = await Promise.all([
           api.getModels().then(
             (catalog) => ({ ok: true as const, catalog }),
             () => ({ ok: false as const, catalog: [] as AIModel[] }),
@@ -467,6 +410,12 @@ export default function SettingsPage() {
                 () => ({ ok: false as const, profile: null }),
               )
             : Promise.resolve({ ok: false as const, profile: null }),
+          token
+            ? api.getVariants(token).then(
+                (rows) => ({ ok: true as const, rows }),
+                () => ({ ok: false as const, rows: [] as VariantSummary[] }),
+              )
+            : Promise.resolve({ ok: false as const, rows: [] as VariantSummary[] }),
         ]);
 
         if (cancelled) return;
@@ -480,6 +429,18 @@ export default function SettingsPage() {
 
         setModels(nextModels);
         setAccountSyncAvailable(profileResult.ok);
+
+        if (variantsResult.ok && Array.isArray(variantsResult.rows)) {
+          setVariants(variantsResult.rows);
+          const storedSlug = useGameStore.getState().selectedVariantSlug;
+          const reconciled = reconcileSelectedVariantSlug(
+            storedSlug,
+            variantsResult.rows,
+          );
+          if (reconciled && reconciled !== storedSlug) {
+            setSelectedVariantSlug(reconciled);
+          }
+        }
 
         if (!profileResult.profile && token) {
           setNotice({
@@ -523,7 +484,7 @@ export default function SettingsPage() {
     return () => {
       cancelled = true;
     };
-  }, [token, setSelectedModelId]);
+  }, [token, setSelectedModelId, setSelectedVariantSlug]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -810,6 +771,7 @@ export default function SettingsPage() {
             <div className="grid w-full gap-4 xl:grid-cols-2">
               <InterfaceLanguagePanel />
               <GameLanguagePanel
+                variants={variants}
                 selected={selectedVariantSlug}
                 onSelect={setSelectedVariantSlug}
               />

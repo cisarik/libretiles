@@ -8,6 +8,7 @@ from .views import (
     AIPlayabilityView,
     ApplyAIMoveView,
     CreateGameView,
+    VariantListView,
     ExchangeView,
     GiveUpView,
     GameAIModelView,
@@ -24,6 +25,7 @@ from .views import (
 )
 
 urlpatterns = [
+    path("variants/", VariantListView.as_view(), name="game-variants"),
     path("create/", CreateGameView.as_view(), name="game-create"),
     path("queue/join/", QueueJoinView.as_view(), name="game-queue-join"),
     path("queue/cancel/", QueueCancelView.as_view(), name="game-queue-cancel"),

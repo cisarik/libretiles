@@ -23,9 +23,12 @@ import type {
   GameHistorySort,
   QueueJoinResponse,
 } from "@/lib/types";
+import { reconcileSelectedVariantSlug } from "@/lib/variants";
 
 const CATALOG_EMPTY_MESSAGE =
   "The rival catalog is empty. Seed the free catalog to play AI matches.";
+const VARIANT_UNAVAILABLE_MESSAGE =
+  "No playable game variant is available. Game creation is blocked until a playable variant can be loaded.";
 
 function humanizeModelId(modelId?: string | null): string {
   if (!modelId) return "Choose AI";
@@ -44,6 +47,7 @@ export default function PlayPage() {
   const setSelectedModelId = useGameStore((state) => state.setSelectedModelId);
   const selectedPromptId = useGameStore((state) => state.selectedPromptId);
   const selectedVariantSlug = useGameStore((state) => state.selectedVariantSlug);
+  const setSelectedVariantSlug = useGameStore((state) => state.setSelectedVariantSlug);
   const premiumLookEnabled = useGameStore((state) => state.premiumLookEnabled);
   const setStartingDraw = useGameStore((state) => state.setStartingDraw);
   const setStartingRack = useGameStore((state) => state.setStartingRack);
@@ -162,11 +166,28 @@ export default function PlayPage() {
         return;
       }
 
+      let variantSlug = selectedVariantSlug || "english";
+      try {
+        const variants = await api.getVariants(token);
+        const reconciled = reconcileSelectedVariantSlug(variantSlug, variants);
+        if (!reconciled) {
+          setError(VARIANT_UNAVAILABLE_MESSAGE);
+          return;
+        }
+        if (reconciled !== variantSlug) {
+          setSelectedVariantSlug(reconciled);
+        }
+        variantSlug = reconciled;
+      } catch {
+        setError(VARIANT_UNAVAILABLE_MESSAGE);
+        return;
+      }
+
       const result = (await api.createGame(token, {
         game_mode: "vs_ai",
         ai_model_model_id: resolved,
         ai_prompt_id: selectedPromptId ?? undefined,
-        variant_slug: selectedVariantSlug || "english",
+        variant_slug: variantSlug,
       })) as CreateGameResponse;
       resetGameUi();
       setStartingDraw(result.starting_draw);
@@ -185,8 +206,25 @@ export default function PlayPage() {
     setJoiningHuman(true);
     setError(null);
     try {
+      let variantSlug = selectedVariantSlug || "english";
+      try {
+        const variants = await api.getVariants(token);
+        const reconciled = reconcileSelectedVariantSlug(variantSlug, variants);
+        if (!reconciled) {
+          setError(VARIANT_UNAVAILABLE_MESSAGE);
+          return;
+        }
+        if (reconciled !== variantSlug) {
+          setSelectedVariantSlug(reconciled);
+        }
+        variantSlug = reconciled;
+      } catch {
+        setError(VARIANT_UNAVAILABLE_MESSAGE);
+        return;
+      }
+
       const result = (await api.joinHumanQueue(token, {
-        variant_slug: selectedVariantSlug || "english",
+        variant_slug: variantSlug,
       })) as QueueJoinResponse;
       resetGameUi();
       setGameState(result.state);
