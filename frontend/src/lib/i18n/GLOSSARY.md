@@ -98,3 +98,16 @@ Login 401 must not distinguish an unknown user from a wrong password.
 | settings.gameVariant.description | Tiles, bag, and lexicon. Applies to NEW games only and never changes a running game. This is not the interface language. | Písmená, vrecko a lexikón. Platí pre NOVÉ partie a nemení prebiehajúcu partiu. Toto nie je jazyk rozhrania. |
 | settings.gameVariant.english | English | Angličtina |
 | settings.gameVariant.slovak | Slovak | Slovenčina |
+| draw.eyebrow | Starting draw | Ťah o poradie |
+| draw.title | Who opens the board | Kto začína partiu |
+| draw.subtitle | Whoever draws the tile closer to A starts. A blank always wins. | Začína ten, kto vytiahne písmeno bližšie k A. Žolík vyhráva vždy. |
+| draw.side.you | You | Ty |
+| draw.side.ai | AI | AI |
+| draw.pending | Drawing tiles from the bag... | Ťahám písmená z vrecka... |
+| draw.blankCaption | blank | žolík |
+| draw.result.youStart | You start | Začínaš ty |
+| draw.result.aiStart | AI starts | Začína AI |
+| draw.reason.blankYou | Your blank wins the draw. | Tvoj žolík vyhráva ťah o poradie. |
+| draw.reason.blankAi | The AI drew the blank. | Žolíka vytiahlo AI. |
+| draw.reason.bothBlank | Both tiles are blanks, so you start. | Obidve písmená sú žolíky, takže začínaš ty. |
+| draw.reason.closer (fn) | {winner} is closer to A than {loser}. | {winner} je bližšie k A ako {loser}. |

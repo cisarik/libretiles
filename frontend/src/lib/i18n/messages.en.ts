@@ -44,11 +44,25 @@ export const enText = {
     "Tiles, bag, and lexicon. Applies to NEW games only and never changes a running game. This is not the interface language.",
   "settings.gameVariant.english": "English",
   "settings.gameVariant.slovak": "Slovak",
+  "draw.eyebrow": "Starting draw",
+  "draw.title": "Who opens the board",
+  "draw.subtitle": "Whoever draws the tile closer to A starts. A blank always wins.",
+  "draw.side.you": "You",
+  "draw.side.ai": "AI",
+  "draw.pending": "Drawing tiles from the bag...",
+  "draw.blankCaption": "blank",
+  "draw.result.youStart": "You start",
+  "draw.result.aiStart": "AI starts",
+  "draw.reason.blankYou": "Your blank wins the draw.",
+  "draw.reason.blankAi": "The AI drew the blank.",
+  "draw.reason.bothBlank": "Both tiles are blanks, so you start.",
 } as const;
 
 export const enFn = {
   "error.throttled.minutes": (p: { minutes: number }) =>
     `Too many requests. Try again in about ${p.minutes} minutes.`,
+  "draw.reason.closer": (p: { winner: string; loser: string }) =>
+    `${p.winner} is closer to A than ${p.loser}.`,
 } as const;
 
 export type TextKey = keyof typeof enText;

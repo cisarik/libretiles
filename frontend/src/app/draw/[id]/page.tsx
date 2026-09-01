@@ -5,6 +5,8 @@ import { useParams, useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import { Board } from "@/components/board/Board";
 import { useGameStore } from "@/hooks/useGameStore";
+import { useLocale, useT } from "@/lib/i18n";
+import { describeDrawReason } from "@/lib/draw-result";
 
 type DrawStage = "board" | "flip" | "compare" | "result" | "rack";
 
@@ -13,18 +15,29 @@ function StartTile({
   revealed,
   isWinner,
   label,
+  labelClassName,
+  blankCaption,
   side,
 }: {
   letter: string;
   revealed: boolean;
   isWinner: boolean;
   label: string;
+  labelClassName: string;
+  blankCaption: string;
   side: "left" | "right";
 }) {
-  const displayLetter = letter === "?" ? "★" : letter;
+  const isBlank = letter === "?";
+  const displayLetter = isBlank ? "★" : letter;
 
   return (
     <div className="flex flex-col items-center gap-3">
+      <span
+        className={`text-sm font-black uppercase tracking-[0.3em] sm:text-base ${labelClassName}`}
+      >
+        {label}
+      </span>
+
       <motion.div
         initial={{ opacity: 0, y: 36, rotate: side === "left" ? -8 : 8, scale: 0.9 }}
         animate={{ opacity: 1, y: 0, rotate: 0, scale: 1 }}
@@ -77,27 +90,24 @@ function StartTile({
         )}
       </motion.div>
 
-      <span className="text-xs font-semibold uppercase tracking-[0.28em] text-stone-400">
-        {label}
+      <span
+        className={`text-[0.7rem] font-semibold uppercase tracking-[0.24em] transition-opacity duration-300 ${
+          revealed && isBlank ? "text-amber-300/85 opacity-100" : "opacity-0"
+        }`}
+        aria-hidden={!(revealed && isBlank)}
+      >
+        {blankCaption}
       </span>
     </div>
   );
-}
-
-function describeResult(humanTile: string, aiTile: string, humanFirst: boolean) {
-  if (humanTile === "?" || aiTile === "?") {
-    return humanFirst ? "Blank wins the draw." : "AI drew the blank.";
-  }
-
-  return humanFirst
-    ? `${humanTile} is closer to A than ${aiTile}.`
-    : `${aiTile} is closer to A than ${humanTile}.`;
 }
 
 export default function DrawPage() {
   const params = useParams();
   const router = useRouter();
   const gameId = params.id as string;
+  const { t } = useT();
+  const locale = useLocale();
 
   const startingDraw = useGameStore((s) => s.startingDraw);
   const setStartingDraw = useGameStore((s) => s.setStartingDraw);
@@ -109,6 +119,11 @@ export default function DrawPage() {
   const aiTile = startingDraw?.ai_tile ?? "?";
   const humanFirst = startingDraw?.human_first ?? true;
   const revealed = stage !== "board";
+
+  const humanLabel = t("draw.side.you");
+  const aiLabel = t("draw.side.ai");
+
+  const reason = describeDrawReason(locale, humanTile, aiTile, humanFirst);
 
   useEffect(() => {
     if (!startingDraw) {
@@ -151,13 +166,13 @@ export default function DrawPage() {
           className="text-center"
         >
           <div className="text-[0.7rem] uppercase tracking-[0.34em] text-stone-500">
-            Starting Draw
+            {t("draw.eyebrow")}
           </div>
           <h1 className="mt-2 text-2xl font-black tracking-tight text-stone-50 sm:text-3xl">
-            Deciding who opens the board
+            {t("draw.title")}
           </h1>
-          <p className="mt-2 text-sm text-stone-400">
-            Closest tile to A starts.
+          <p className="mt-2 max-w-[30rem] text-sm text-stone-400">
+            {t("draw.subtitle")}
           </p>
           <div className="mt-3 inline-flex items-center rounded-full border border-white/8 bg-white/[0.03] px-4 py-1.5 font-mono text-[0.72rem] text-stone-400">
             {selectedModelId}
@@ -180,7 +195,9 @@ export default function DrawPage() {
                     letter={humanTile}
                     revealed={revealed}
                     isWinner={humanFirst}
-                    label="You"
+                    label={humanLabel}
+                    labelClassName="text-amber-200"
+                    blankCaption={t("draw.blankCaption")}
                     side="left"
                   />
 
@@ -188,7 +205,7 @@ export default function DrawPage() {
                     initial={{ opacity: 0, scale: 0.8 }}
                     animate={{ opacity: 1, scale: 1 }}
                     transition={{ duration: 0.35, delay: 0.45 }}
-                    className="rounded-full border border-white/8 bg-black/24 px-4 py-2 text-sm font-black uppercase tracking-[0.3em] text-stone-500 sm:px-5"
+                    className="rounded-full border border-white/14 bg-black/24 px-4 py-2 text-sm font-black uppercase tracking-[0.3em] text-white sm:px-5"
                   >
                     VS
                   </motion.div>
@@ -197,7 +214,9 @@ export default function DrawPage() {
                     letter={aiTile}
                     revealed={revealed}
                     isWinner={!humanFirst}
-                    label="AI"
+                    label={aiLabel}
+                    labelClassName="text-sky-200"
+                    blankCaption={t("draw.blankCaption")}
                     side="right"
                   />
                 </div>
@@ -213,10 +232,10 @@ export default function DrawPage() {
                       className="rounded-[1.4rem] border border-white/10 bg-black/36 px-6 py-4 text-center shadow-[0_26px_50px_rgba(0,0,0,0.34)] backdrop-blur-md"
                     >
                       <div className={`text-lg font-black sm:text-xl ${humanFirst ? "text-amber-300" : "text-sky-300"}`}>
-                        {humanFirst ? "You start this game" : "AI opens this game"}
+                        {humanFirst ? t("draw.result.youStart") : t("draw.result.aiStart")}
                       </div>
                       <p className="mt-2 text-sm text-stone-300">
-                        {describeResult(humanTile, aiTile, humanFirst)}
+                        {reason}
                       </p>
                     </motion.div>
                   ) : (
@@ -227,7 +246,7 @@ export default function DrawPage() {
                       exit={{ opacity: 0 }}
                       className="text-center text-sm text-stone-500"
                     >
-                      Tiles drawn from the bag...
+                      {t("draw.pending")}
                     </motion.div>
                   )}
                 </AnimatePresence>

@@ -49,6 +49,19 @@ export const skText: Record<TextKey, string> = {
     "Písmená, vrecko a lexikón. Platí pre NOVÉ partie a nemení prebiehajúcu partiu. Toto nie je jazyk rozhrania.",
   "settings.gameVariant.english": "Angličtina",
   "settings.gameVariant.slovak": "Slovenčina",
+  "draw.eyebrow": "Ťah o poradie",
+  "draw.title": "Kto začína partiu",
+  "draw.subtitle":
+    "Začína ten, kto vytiahne písmeno bližšie k A. Žolík vyhráva vždy.",
+  "draw.side.you": "Ty",
+  "draw.side.ai": "AI",
+  "draw.pending": "Ťahám písmená z vrecka...",
+  "draw.blankCaption": "žolík",
+  "draw.result.youStart": "Začínaš ty",
+  "draw.result.aiStart": "Začína AI",
+  "draw.reason.blankYou": "Tvoj žolík vyhráva ťah o poradie.",
+  "draw.reason.blankAi": "Žolíka vytiahlo AI.",
+  "draw.reason.bothBlank": "Obidve písmená sú žolíky, takže začínaš ty.",
 };
 
 export const skFn: { [K in FnKey]: (typeof enFn)[K] } = {
@@ -56,4 +69,5 @@ export const skFn: { [K in FnKey]: (typeof enFn)[K] } = {
     `Priveľa požiadaviek. Skús znova asi za ${p.minutes} ` +
     pluralSk(p.minutes, "minútu", "minúty", "minút") +
     ".",
+  "draw.reason.closer": (p) => `${p.winner} je bližšie k A ako ${p.loser}.`,
 };
