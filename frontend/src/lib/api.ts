@@ -146,12 +146,15 @@ function humanMessageForStatus(
   status: number,
   fieldMessage: string | null,
   retryAfterSeconds: number | null,
+  requestCarriedToken: boolean,
 ): string {
   switch (status) {
     case 400:
       return fieldMessage ?? "Please check the submitted fields.";
     case 401:
-      return "Invalid username or password";
+      return requestCarriedToken
+        ? "Your session expired. Please sign in again."
+        : "Invalid username or password";
     case 403:
       return "You do not have permission to do that.";
     case 404:
@@ -262,7 +265,12 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
     const retryAfter = status === 429 ? parseRetryAfterSeconds(text, parsed) : null;
     throw new ApiError(
       status,
-      humanMessageForStatus(status, fieldMessage, retryAfter),
+      humanMessageForStatus(
+        status,
+        fieldMessage,
+        retryAfter,
+        Boolean(opts.token),
+      ),
       fields,
     );
   }

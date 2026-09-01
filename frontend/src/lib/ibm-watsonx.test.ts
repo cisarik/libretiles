@@ -123,6 +123,7 @@ beforeEach(() => {
 
 afterEach(() => {
   __ibmWatsonxRuntimeTestOnly.reset();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
 });
@@ -776,6 +777,11 @@ describe("IBM inference retry and accounting", () => {
   });
 
   it("sanitizes transport exceptions instead of exposing account values", async () => {
+    const writes: string[] = [];
+    vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+      writes.push(String(chunk));
+      return true;
+    });
     const fetchMock = installFetch(async () => {
       throw new Error(`${API_KEY} ${PROJECT_ID} eu-de bearer-secret`);
     });
@@ -795,5 +801,12 @@ describe("IBM inference retry and accounting", () => {
     expect(rendered).not.toContain(PROJECT_ID);
     expect(rendered).not.toContain("eu-de");
     expect(rendered).not.toContain("bearer-secret");
+    const logRecord = writes.join("");
+    expect(logRecord).toContain("ibm-watsonx");
+    expect(logRecord).toContain("provider_transport");
+    expect(logRecord).not.toContain(API_KEY);
+    expect(logRecord).not.toContain(PROJECT_ID);
+    expect(logRecord).not.toContain("eu-de");
+    expect(logRecord).not.toContain("bearer-secret");
   });
 });

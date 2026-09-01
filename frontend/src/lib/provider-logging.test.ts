@@ -11,6 +11,7 @@ const SYNTHETIC_CREDENTIAL_SENTINEL =
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
 });
 
 describe("recordProviderFailure", () => {
@@ -73,6 +74,101 @@ describe("recordProviderFailure", () => {
     expect(record).not.toHaveProperty("requestBody");
     expect(record).not.toHaveProperty("responseBody");
     expect(record).not.toHaveProperty("stack");
+  });
+
+  it("redacts a stubbed provider credential environment value from the record", () => {
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const stubbed = "hyphen-joined-groq-key";
+    vi.stubEnv("GROQ_API_KEY", stubbed);
+    const record = recordProviderFailure({
+      provider: "groq",
+      phase: "generate_text",
+      error: new Error(`upstream rejected ${stubbed}`),
+    });
+    expect(record.message).not.toContain(stubbed);
+    expect(JSON.stringify(record)).not.toContain(stubbed);
+  });
+
+  it("redacts hyphen and punctuation bearer forms and sub-24-character credential-shaped runs", () => {
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const record = recordProviderFailure({
+      provider: "groq",
+      phase: "generate_text",
+      error: new Error(
+        "denied bearer-secret Bearer:token bearer_token Xy9kLm2Qp8Rv4NtA",
+      ),
+    });
+    expect(record.message).not.toContain("bearer-secret");
+    expect(record.message).not.toContain("Bearer:token");
+    expect(record.message).not.toContain("bearer_token");
+    expect(record.message).not.toContain("Xy9kLm2Qp8Rv4NtA");
+  });
+
+  it("preserves the three observed benign diagnostic messages", () => {
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const generic = recordProviderFailure({
+      provider: "openrouter",
+      phase: "generate_text",
+      error: new Error("generic SDK failure"),
+    });
+    const limited = recordProviderFailure({
+      provider: "openrouter",
+      phase: "generate_text",
+      error: new Error("rate limited"),
+    });
+    const http = recordProviderFailure({
+      provider: "ibm-watsonx",
+      phase: "provider_http",
+      status: 503,
+      error: new Error("HTTP 503"),
+    });
+    expect(generic.message).toBe("generic SDK failure");
+    expect(limited.message).toBe("rate limited");
+    expect(http.message).toBe("HTTP 503");
+  });
+
+  it("does not redact ordinary text when a credential env value is absent, empty, whitespace, placeholder, or short", () => {
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const ordinary = "generic SDK failure";
+
+    const absent = recordProviderFailure({
+      provider: "groq",
+      phase: "generate_text",
+      error: new Error(ordinary),
+    });
+    expect(absent.message).toBe(ordinary);
+
+    vi.stubEnv("GROQ_API_KEY", "");
+    const empty = recordProviderFailure({
+      provider: "groq",
+      phase: "generate_text",
+      error: new Error(ordinary),
+    });
+    expect(empty.message).toBe(ordinary);
+
+    vi.stubEnv("GROQ_API_KEY", "   ");
+    const whitespace = recordProviderFailure({
+      provider: "groq",
+      phase: "generate_text",
+      error: new Error(ordinary),
+    });
+    expect(whitespace.message).toBe(ordinary);
+
+    vi.stubEnv("GROQ_API_KEY", "your-api-key");
+    const placeholder = recordProviderFailure({
+      provider: "groq",
+      phase: "generate_text",
+      error: new Error(ordinary),
+    });
+    expect(placeholder.message).toBe(ordinary);
+
+    vi.stubEnv("GROQ_API_KEY", "SDK");
+    const short = recordProviderFailure({
+      provider: "groq",
+      phase: "generate_text",
+      error: new Error(ordinary),
+    });
+    expect(short.message).toBe(ordinary);
   });
 });
 

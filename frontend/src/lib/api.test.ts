@@ -75,6 +75,49 @@ describe("ApiError human messages", () => {
     }
   });
 
+  it("renders a token-bearing 401 as a session expiry, not invalid credentials", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse({ detail: "Given token not valid." }, 401)),
+    );
+    let caught: unknown;
+    try {
+      await api.changePassword("synthetic-access", {
+        current_password: "old-pass",
+        new_password: "new-pass-ok1",
+      });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(ApiError);
+    const err = caught as ApiError;
+    expect(err.status).toBe(401);
+    expect(err.message.toLowerCase()).toContain("session");
+    expect(err.message.toLowerCase()).toContain("sign in");
+    expect(err.message).not.toContain("Invalid username or password");
+    expect(err.message).not.toContain("API error");
+    expect(err.message).not.toMatch(/[{}]/);
+  });
+
+  it("renders a tokenless 401 as invalid credentials", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse({ detail: "No active account found." }, 401)),
+    );
+    let caught: unknown;
+    try {
+      await api.login({ username: "nobody", password: "wrong-pass" });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(ApiError);
+    const err = caught as ApiError;
+    expect(err.status).toBe(401);
+    expect(err.message).toBe("Invalid username or password");
+    expect(err.message).not.toContain("API error");
+    expect(err.message).not.toMatch(/[{}]/);
+  });
+
   it("returns a body with ok: false instead of throwing", async () => {
     // Call site: handleProfilePasswordChange in frontend/src/app/game/[id]/page.tsx
     // (ProfileModal) depends on api.changePassword resolving {ok:false} on HTTP 400.
