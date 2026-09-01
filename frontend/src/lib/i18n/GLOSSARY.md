@@ -97,6 +97,4 @@ Login 401 must not distinguish an unknown user from a wrong password.
 | settings.gameVariant.title | Game variant | Variant hry |
 | settings.gameVariant.description | Tiles, bag, and lexicon. Applies to NEW games only and never changes a running game. This is not the interface language. | Písmená, vrecko a lexikón. Platí pre NOVÉ partie a nemení prebiehajúcu partiu. Toto nie je jazyk rozhrania. |
 | settings.gameVariant.english | English | Angličtina |
-| settings.gameVariant.englishDesc | Collins 2019 tiles and lexicon | Písmená a lexikón Collins 2019 |
 | settings.gameVariant.slovak | Slovak | Slovenčina |
-| settings.gameVariant.slovakDesc | SSS 100 tiles and Slovak lexicon | 100 písmen SSS a slovenský lexikón |

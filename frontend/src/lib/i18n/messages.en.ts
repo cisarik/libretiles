@@ -43,9 +43,7 @@ export const enText = {
   "settings.gameVariant.description":
     "Tiles, bag, and lexicon. Applies to NEW games only and never changes a running game. This is not the interface language.",
   "settings.gameVariant.english": "English",
-  "settings.gameVariant.englishDesc": "Collins 2019 tiles and lexicon",
   "settings.gameVariant.slovak": "Slovak",
-  "settings.gameVariant.slovakDesc": "SSS 100 tiles and Slovak lexicon",
 } as const;
 
 export const enFn = {

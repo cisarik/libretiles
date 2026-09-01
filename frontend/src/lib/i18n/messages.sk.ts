@@ -48,9 +48,7 @@ export const skText: Record<TextKey, string> = {
   "settings.gameVariant.description":
     "Písmená, vrecko a lexikón. Platí pre NOVÉ partie a nemení prebiehajúcu partiu. Toto nie je jazyk rozhrania.",
   "settings.gameVariant.english": "Angličtina",
-  "settings.gameVariant.englishDesc": "Písmená a lexikón Collins 2019",
   "settings.gameVariant.slovak": "Slovenčina",
-  "settings.gameVariant.slovakDesc": "100 písmen SSS a slovenský lexikón",
 };
 
 export const skFn: { [K in FnKey]: (typeof enFn)[K] } = {

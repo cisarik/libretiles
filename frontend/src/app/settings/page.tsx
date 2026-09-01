@@ -343,7 +343,7 @@ function InterfaceLanguagePanel() {
               whileTap={{ scale: 0.985 }}
               aria-pressed={isSelected}
               onClick={() => setUiLocale(choice.value)}
-              className={`min-h-[154px] rounded-[1.15rem] border px-4 py-4 text-left transition-[border-color,box-shadow,background-color,transform] duration-300 ${
+              className={`min-h-[96px] rounded-[1.15rem] border px-4 py-4 text-left transition-[border-color,box-shadow,background-color,transform] duration-300 ${
                 isSelected
                   ? "border-amber-300/45 bg-amber-400/10 shadow-[0_12px_30px_rgba(251,191,36,0.10)]"
                   : "border-white/8 bg-stone-950/72 hover:border-white/14 hover:shadow-[0_12px_28px_rgba(0,0,0,0.2)]"
@@ -375,17 +375,14 @@ function GameLanguagePanel({
   const choices: Array<{
     value: SelectedVariantSlug;
     label: string;
-    description: string;
   }> = [
     {
       value: "english",
       label: t("settings.gameVariant.english"),
-      description: t("settings.gameVariant.englishDesc"),
     },
     {
       value: "slovak",
       label: t("settings.gameVariant.slovak"),
-      description: t("settings.gameVariant.slovakDesc"),
     },
   ];
 
@@ -406,7 +403,7 @@ function GameLanguagePanel({
               whileTap={{ scale: 0.985 }}
               aria-pressed={isSelected}
               onClick={() => onSelect(choice.value)}
-              className={`min-h-[154px] rounded-[1.15rem] border px-4 py-4 text-left transition-[border-color,box-shadow,background-color,transform] duration-300 ${
+              className={`min-h-[96px] rounded-[1.15rem] border px-4 py-4 text-left transition-[border-color,box-shadow,background-color,transform] duration-300 ${
                 isSelected
                   ? "border-amber-300/45 bg-amber-400/10 shadow-[0_12px_30px_rgba(251,191,36,0.10)]"
                   : "border-white/8 bg-stone-950/72 hover:border-white/14 hover:shadow-[0_12px_28px_rgba(0,0,0,0.2)]"
@@ -418,9 +415,6 @@ function GameLanguagePanel({
                 }`}
               >
                 {choice.label}
-              </div>
-              <div className="mt-3 text-[0.95rem] uppercase leading-7 tracking-[0.1em] text-stone-400">
-                {choice.description}
               </div>
             </motion.button>
           );
