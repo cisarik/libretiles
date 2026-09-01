@@ -363,6 +363,16 @@ DYNAMIC_FREE_MODEL_CATALOG_ENABLED = os.getenv(
     "DYNAMIC_FREE_MODEL_CATALOG_ENABLED", "false"
 ).lower() in ("true", "1", "yes")
 
+# When false, manage.py purge_legacy_game_state refuses to delete any row
+# unless the five development game-state tables are already empty (documented
+# no-op). When true, that one-time development purge empties those five
+# tables only. Fail-closed: the default is false. A pre-existing .env
+# overrides code defaults and is read once at process start.
+ALLOW_DESTRUCTIVE_GAME_STATE_RESET = _env_flag(
+    "ALLOW_DESTRUCTIVE_GAME_STATE_RESET",
+    default=False,
+)
+
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
