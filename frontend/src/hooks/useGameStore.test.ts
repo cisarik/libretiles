@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { useGameStore } from "./useGameStore";
+import { adoptBrowserLocaleIfUnset, useGameStore } from "./useGameStore";
 
 function attempt(modelId: string, extra = {}) {
   return { provider: "openrouter", modelId, status: "pending" as const, ...extra };
@@ -135,5 +135,47 @@ describe("persist migrate to version 2", () => {
     expect(migrated.selectedVariantSlug).toBe("english");
     expect(migrated.aiTimeout).toBe(60);
     expect(migrated.aiMaxSteps).toBe(20);
+  });
+});
+
+describe("AC-ONCE explicit locale is sticky", () => {
+  beforeEach(() => {
+    useGameStore.setState(useGameStore.getInitialState(), true);
+  });
+
+  it("does not replace a stored English locale with a Slovak browser", () => {
+    useGameStore.getState().setUiLocale("en");
+    expect(adoptBrowserLocaleIfUnset(["sk-SK", "sk"])).toBe("en");
+    expect(useGameStore.getState().uiLocale).toBe("en");
+  });
+});
+
+describe("AC-MIGRATE persist version 2 to 3", () => {
+  it("yields uiLocale null when a v2 payload has no locale", async () => {
+    expect(useGameStore.persist.getOptions().version).toBe(3);
+    const migrate = useGameStore.persist.getOptions().migrate;
+    expect(migrate).toBeTypeOf("function");
+    const migrated = (await migrate!(
+      { selectedVariantSlug: "english", aiTimeout: 30 },
+      2,
+    )) as Record<string, unknown>;
+    expect(migrated.uiLocale).toBeNull();
+    expect(migrated.selectedVariantSlug).toBe("english");
+  });
+
+  it("rewrites a garbage uiLocale to null and preserves a valid stored value", async () => {
+    expect(useGameStore.persist.getOptions().version).toBe(3);
+    const migrate = useGameStore.persist.getOptions().migrate;
+    expect(migrate).toBeTypeOf("function");
+    const garbage = (await migrate!(
+      { selectedVariantSlug: "english", uiLocale: "fr" },
+      2,
+    )) as Record<string, unknown>;
+    expect(garbage.uiLocale).toBeNull();
+    const migrated = (await migrate!(
+      { selectedVariantSlug: "slovak", uiLocale: "sk" },
+      2,
+    )) as Record<string, unknown>;
+    expect(migrated.uiLocale).toBe("sk");
   });
 });

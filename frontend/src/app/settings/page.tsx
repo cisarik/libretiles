@@ -10,6 +10,8 @@ import {
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { useGameStore, type BoardTheme, type SelectedVariantSlug } from "@/hooks/useGameStore";
+import { useLocale, useT } from "@/lib/i18n";
+import type { Locale } from "@/lib/i18n/locales";
 import { providerBadgeLabel } from "@/lib/ai-fallback";
 import { api } from "@/lib/api";
 import { resolveEligibleModelId } from "@/lib/model-catalog";
@@ -312,6 +314,56 @@ function PremiumLookPanel({
   );
 }
 
+function InterfaceLanguagePanel() {
+  const { t } = useT();
+  const locale = useLocale();
+  const setUiLocale = useGameStore((s) => s.setUiLocale);
+  const choices: Array<{
+    value: Locale;
+    label: string;
+  }> = [
+    { value: "en", label: t("settings.uiLanguage.en") },
+    { value: "sk", label: t("settings.uiLanguage.sk") },
+  ];
+
+  return (
+    <SettingsPanel
+      title={t("settings.uiLanguage.title")}
+      description={t("settings.uiLanguage.description")}
+      className="xl:col-span-2"
+    >
+      <div className="grid grid-cols-2 gap-3">
+        {choices.map((choice) => {
+          const isSelected = locale === choice.value;
+          return (
+            <motion.button
+              key={choice.value}
+              type="button"
+              whileHover={{ y: -1.5, scale: 1.01 }}
+              whileTap={{ scale: 0.985 }}
+              aria-pressed={isSelected}
+              onClick={() => setUiLocale(choice.value)}
+              className={`min-h-[154px] rounded-[1.15rem] border px-4 py-4 text-left transition-[border-color,box-shadow,background-color,transform] duration-300 ${
+                isSelected
+                  ? "border-amber-300/45 bg-amber-400/10 shadow-[0_12px_30px_rgba(251,191,36,0.10)]"
+                  : "border-white/8 bg-stone-950/72 hover:border-white/14 hover:shadow-[0_12px_28px_rgba(0,0,0,0.2)]"
+              }`}
+            >
+              <div
+                className={`text-[1.45rem] font-black uppercase tracking-[0.08em] ${
+                  isSelected ? "text-amber-100" : "text-stone-100"
+                }`}
+              >
+                {choice.label}
+              </div>
+            </motion.button>
+          );
+        })}
+      </div>
+    </SettingsPanel>
+  );
+}
+
 function GameLanguagePanel({
   selected,
   onSelect,
@@ -319,6 +371,7 @@ function GameLanguagePanel({
   selected: SelectedVariantSlug;
   onSelect: (slug: SelectedVariantSlug) => void;
 }) {
+  const { t } = useT();
   const choices: Array<{
     value: SelectedVariantSlug;
     label: string;
@@ -326,20 +379,20 @@ function GameLanguagePanel({
   }> = [
     {
       value: "english",
-      label: "English",
-      description: "Collins 2019 tiles and lexicon",
+      label: t("settings.gameVariant.english"),
+      description: t("settings.gameVariant.englishDesc"),
     },
     {
       value: "slovak",
-      label: "Slovak",
-      description: "SSS 100 tiles and Slovak lexicon",
+      label: t("settings.gameVariant.slovak"),
+      description: t("settings.gameVariant.slovakDesc"),
     },
   ];
 
   return (
     <SettingsPanel
-      title="Game language"
-      description="Tiles, bag, and lexicon for new games. The interface stays English."
+      title={t("settings.gameVariant.title")}
+      description={t("settings.gameVariant.description")}
       className="xl:col-span-2"
     >
       <div className="grid grid-cols-2 gap-3">
@@ -761,6 +814,7 @@ export default function SettingsPage() {
             </section>
 
             <div className="grid w-full gap-4 xl:grid-cols-2">
+              <InterfaceLanguagePanel />
               <GameLanguagePanel
                 selected={selectedVariantSlug}
                 onSelect={setSelectedVariantSlug}

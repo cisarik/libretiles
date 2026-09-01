@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { api, ApiError } from "@/lib/api";
+import { api } from "@/lib/api";
+import { useT } from "@/lib/i18n";
 import { resolveEligibleModelId } from "@/lib/model-catalog";
 import { useGameStore } from "@/hooks/useGameStore";
 import type { AIModel } from "@/lib/types";
@@ -16,6 +17,7 @@ import {
 
 export default function Home() {
   const router = useRouter();
+  const { t } = useT();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [mode, setMode] = useState<"login" | "register">("login");
@@ -68,11 +70,7 @@ export default function Home() {
       router.push("/play");
     } catch (err) {
       setError(
-        err instanceof ApiError && err.status === 401
-          ? "Invalid username or password"
-          : err instanceof Error
-            ? err.message
-            : "Something went wrong",
+        err instanceof Error ? err.message : t("error.generic"),
       );
     } finally {
       setLoading(false);
@@ -95,35 +93,37 @@ export default function Home() {
           >
             <div className="pointer-events-none absolute inset-x-10 top-0 h-px bg-gradient-to-r from-transparent via-amber-200/58 to-transparent" />
             <div className="text-[0.78rem] uppercase tracking-[0.36em] text-stone-500">
-              Libre Tiles
+              {t("landing.brand")}
             </div>
             <h1 className={`mt-4 font-gold-shiny text-5xl font-black tracking-tight sm:text-6xl ${premiumTitleClass}`}>
-              Premium Libre Tiles,
+              {t("landing.titleLine1")}
               <br />
-              human and AI.
+              {t("landing.titleLine2")}
             </h1>
             <p className="mt-4 max-w-[34rem] text-base text-stone-300 sm:text-lg">
-              Open-source wordplay with live matchmaking, sharp AI rivals, premium board chrome, and a history surface ready for your next board.
+              {t("landing.lead")}
             </p>
 
             <div className="mt-8 grid gap-3 sm:grid-cols-3">
-              {[
-                ["🤖", "AI duels", "Model-aware premium games"],
-                ["🤝", "Live queue", "Realtime sync and chat"],
-                ["🗂️", "Saved boards", "Resume AI or human games"],
-              ].map(([emoji, title, body]) => (
+              {(
+                [
+                  ["🤖", "landing.card.ai.title", "landing.card.ai.body"],
+                  ["🤝", "landing.card.queue.title", "landing.card.queue.body"],
+                  ["🗂️", "landing.card.saved.title", "landing.card.saved.body"],
+                ] as const
+              ).map(([emoji, titleKey, bodyKey]) => (
                 <div
-                  key={title}
+                  key={titleKey}
                   className={`rounded-[1.4rem] border border-white/8 px-4 py-4 ${premiumLookEnabled ? "backdrop-blur-[12px]" : "bg-black/20"}`}
                   style={premiumLookEnabled ? PREMIUM_PANEL_STYLE : undefined}
                   onMouseMove={premiumLookEnabled ? handlePremiumSurfacePointer : undefined}
                 >
                   <div className="text-[1.15rem] leading-none">{emoji}</div>
                   <div className={`mt-3 font-gold-shiny text-[1.12rem] font-black leading-none ${premiumTitleClass}`}>
-                    {title}
+                    {t(titleKey)}
                   </div>
                   <div className="mt-2 text-sm text-stone-300">
-                    {body}
+                    {t(bodyKey)}
                   </div>
                 </div>
               ))}
@@ -138,10 +138,10 @@ export default function Home() {
             <div className="pointer-events-none absolute inset-x-10 top-0 h-px bg-gradient-to-r from-transparent via-amber-200/54 to-transparent" />
             <div className="mb-5">
               <div className="text-[0.72rem] uppercase tracking-[0.3em] text-stone-500">
-                Account
+                {t("auth.eyebrow")}
               </div>
               <div className={`mt-2 font-gold-shiny text-[2rem] font-black leading-none ${premiumTitleClass}`}>
-                {mode === "login" ? "Sign in" : "Create account"}
+                {mode === "login" ? t("auth.heading.login") : t("auth.heading.register")}
               </div>
             </div>
 
@@ -154,7 +154,7 @@ export default function Home() {
                     : "border border-transparent text-stone-400 hover:text-stone-200"
                 }`}
               >
-                Sign In
+                {t("auth.tab.login")}
               </button>
               <button
                 onClick={() => setMode("register")}
@@ -164,21 +164,21 @@ export default function Home() {
                     : "border border-transparent text-stone-400 hover:text-stone-200"
                 }`}
               >
-                Register
+                {t("auth.tab.register")}
               </button>
             </div>
 
             <div className="space-y-3">
               <input
                 type="text"
-                placeholder="Username"
+                placeholder={t("auth.field.username")}
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 className="w-full rounded-xl border border-stone-700/50 bg-stone-950/46 px-4 py-3 text-stone-100 placeholder-stone-500 outline-none transition focus:border-amber-300/40 focus:ring-2 focus:ring-amber-500/20"
               />
               <input
                 type="password"
-                placeholder="Password"
+                placeholder={t("auth.field.password")}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="w-full rounded-xl border border-stone-700/50 bg-stone-950/46 px-4 py-3 text-stone-100 placeholder-stone-500 outline-none transition focus:border-amber-300/40 focus:ring-2 focus:ring-amber-500/20"
@@ -199,12 +199,12 @@ export default function Home() {
               onMouseMove={premiumLookEnabled ? handlePremiumSurfacePointer : undefined}
             >
               <span className={`font-gold-shiny text-[1.08rem] font-black leading-none ${premiumTitleClass}`}>
-                {loading ? "Signing in..." : mode === "login" ? "Play now" : "Create account & play"}
+                {loading ? t("auth.submit.loading") : mode === "login" ? t("auth.submit.login") : t("auth.submit.register")}
               </span>
             </motion.button>
 
             <p className="mt-5 text-center text-xs text-stone-500">
-              Open source • Collins Scrabble Words 2019 • 279,496 valid words
+              {t("landing.footnote")}
             </p>
           </div>
         </motion.div>

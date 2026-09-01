@@ -1,0 +1,57 @@
+export const enText = {
+  "landing.brand": "Libre Tiles",
+  "landing.titleLine1": "Premium Libre Tiles,",
+  "landing.titleLine2": "human and AI.",
+  "landing.lead":
+    "Open-source wordplay with live matchmaking, sharp AI rivals, premium board chrome, and a history surface ready for your next board.",
+  "landing.card.ai.title": "AI duels",
+  "landing.card.ai.body": "Model-aware premium games",
+  "landing.card.queue.title": "Live queue",
+  "landing.card.queue.body": "Realtime sync and chat",
+  "landing.card.saved.title": "Saved boards",
+  "landing.card.saved.body": "Resume AI or human games",
+  "landing.footnote": "Open source • Collins Scrabble Words 2019 • 279,496 valid words",
+  "auth.eyebrow": "Account",
+  "auth.heading.login": "Sign in",
+  "auth.heading.register": "Create account",
+  "auth.tab.login": "Sign In",
+  "auth.tab.register": "Register",
+  "auth.field.username": "Username",
+  "auth.field.password": "Password",
+  "auth.submit.loading": "Signing in...",
+  "auth.submit.login": "Play now",
+  "auth.submit.register": "Create account & play",
+  "meta.title": "Libre Tiles — Web Libre Tiles with AI and Live Multiplayer",
+  "meta.description":
+    "Open-source Libre Tiles with AI rivals, live human matches, chat, and polished drag-and-drop play.",
+  "error.checkFields": "Please check the submitted fields.",
+  "error.invalidCredentials": "Invalid username or password",
+  "error.sessionExpired": "Your session expired. Please sign in again.",
+  "error.forbidden": "You do not have permission to do that.",
+  "error.notFound": "Not found.",
+  "error.conflict": "This action conflicts with the current game state.",
+  "error.throttled.unknown": "Too many requests. Please wait and try again.",
+  "error.throttled.oneMinute": "Too many requests. Try again in about a minute.",
+  "error.unavailable": "The service is temporarily unavailable. Please try again.",
+  "error.generic": "Something went wrong. Please try again.",
+  "settings.uiLanguage.title": "Interface language",
+  "settings.uiLanguage.description":
+    "Menus, buttons, and messages. Changes immediately, on this device only.",
+  "settings.uiLanguage.en": "English",
+  "settings.uiLanguage.sk": "Slovak",
+  "settings.gameVariant.title": "Game variant",
+  "settings.gameVariant.description":
+    "Tiles, bag, and lexicon. Applies to NEW games only and never changes a running game. This is not the interface language.",
+  "settings.gameVariant.english": "English",
+  "settings.gameVariant.englishDesc": "Collins 2019 tiles and lexicon",
+  "settings.gameVariant.slovak": "Slovak",
+  "settings.gameVariant.slovakDesc": "SSS 100 tiles and Slovak lexicon",
+} as const;
+
+export const enFn = {
+  "error.throttled.minutes": (p: { minutes: number }) =>
+    `Too many requests. Try again in about ${p.minutes} minutes.`,
+} as const;
+
+export type TextKey = keyof typeof enText;
+export type FnKey = keyof typeof enFn;

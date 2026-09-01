@@ -1,5 +1,11 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
+import {
+  detectBrowserLocale,
+  isLocale,
+  LOCALE_COOKIE_NAME,
+  type Locale,
+} from "@/lib/i18n/locales";
 import type {
   GameState,
   Placement,
@@ -35,6 +41,10 @@ interface GameStore {
   // Game language for new AI games and queue joins (session snapshot owns live play)
   selectedVariantSlug: SelectedVariantSlug;
   setSelectedVariantSlug: (slug: SelectedVariantSlug) => void;
+
+  // Interface locale (null = never chosen; first-visit detection may set it once)
+  uiLocale: Locale | null;
+  setUiLocale: (locale: Locale) => void;
 
   // Game state
   gameState: GameState | null;
@@ -133,6 +143,14 @@ export const useGameStore = create<GameStore>()(
 
       selectedVariantSlug: "english",
       setSelectedVariantSlug: (selectedVariantSlug) => set({ selectedVariantSlug }),
+
+      uiLocale: null,
+      setUiLocale: (locale) => {
+        if (typeof document !== "undefined") {
+          document.cookie = `${LOCALE_COOKIE_NAME}=${locale}; Path=/; Max-Age=31536000; SameSite=Lax`;
+        }
+        set({ uiLocale: locale });
+      },
 
       gameState: null,
       setGameState: (gameState) => set({ gameState }),
@@ -256,7 +274,7 @@ export const useGameStore = create<GameStore>()(
     }),
     {
       name: "libretiles-store",
-      version: 2,
+      version: 3,
       migrate: (persistedState, version) => {
         const incoming = { ...((persistedState ?? {}) as Record<string, unknown>) };
         if (version < 1) {
@@ -268,7 +286,22 @@ export const useGameStore = create<GameStore>()(
             incoming.selectedVariantSlug = "english";
           }
         }
+        if (version < 3) {
+          if (!isLocale(incoming.uiLocale)) {
+            incoming.uiLocale = null;
+          }
+        }
         return incoming as unknown as GameStore;
+      },
+      onRehydrateStorage: () => () => {
+        if (typeof navigator === "undefined") return;
+        const languages =
+          navigator.languages && navigator.languages.length > 0
+            ? Array.from(navigator.languages)
+            : navigator.language
+              ? [navigator.language]
+              : [];
+        adoptBrowserLocaleIfUnset(languages);
       },
       storage: createJSONStorage(() =>
         typeof window !== "undefined" ? localStorage : {
@@ -283,6 +316,7 @@ export const useGameStore = create<GameStore>()(
         selectedModelId: state.selectedModelId,
         selectedPromptId: state.selectedPromptId,
         selectedVariantSlug: state.selectedVariantSlug,
+        uiLocale: state.uiLocale,
         aiTimeout: state.aiTimeout,
         aiMaxSteps: state.aiMaxSteps,
         boardTheme: state.boardTheme,
@@ -292,3 +326,11 @@ export const useGameStore = create<GameStore>()(
     },
   ),
 );
+
+export function adoptBrowserLocaleIfUnset(languages: readonly string[]): Locale {
+  const current = useGameStore.getState().uiLocale;
+  if (isLocale(current)) return current;
+  const detected = detectBrowserLocale(languages);
+  useGameStore.getState().setUiLocale(detected);
+  return detected;
+}

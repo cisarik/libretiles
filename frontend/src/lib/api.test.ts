@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { useGameStore } from "@/hooks/useGameStore";
 import { ApiError, api } from "./api";
 
 function jsonResponse(body: unknown, status: number): Response {
@@ -153,5 +154,118 @@ describe("api.logout", () => {
     expect(JSON.parse(String(init.body))).toEqual({
       refresh: "synthetic-refresh-token",
     });
+  });
+});
+
+const ENUMERATION_FRAGMENTS = [
+  "neexistuje",
+  "nenájden",
+  "nesprávne heslo",
+  "wrong password",
+  "unknown user",
+];
+
+describe("AC-SEC localized 401 messages", () => {
+  afterEach(() => {
+    useGameStore.setState(useGameStore.getInitialState(), true);
+  });
+
+  it("AC-SEC-1: tokenless 401 is identical whether or not the username exists, in both locales", async () => {
+    for (const locale of ["en", "sk"] as const) {
+      useGameStore.setState({ uiLocale: locale });
+      const bodies = [
+        { detail: "No active account found." },
+        { detail: "Invalid password." },
+      ];
+      const messages: string[] = [];
+      for (const body of bodies) {
+        vi.stubGlobal(
+          "fetch",
+          vi.fn(async () => jsonResponse(body, 401)),
+        );
+        try {
+          await api.login({ username: "nobody", password: "wrong-pass" });
+          throw new Error("expected ApiError");
+        } catch (error) {
+          expect(error).toBeInstanceOf(ApiError);
+          messages.push((error as ApiError).message);
+        }
+      }
+      expect(messages[0]).toBe(messages[1]);
+      if (locale === "en") {
+        expect(messages[0]).toBe("Invalid username or password");
+      } else {
+        expect(messages[0]).toBe("Nesprávne používateľské meno alebo heslo");
+        for (const fragment of ENUMERATION_FRAGMENTS) {
+          expect(messages[0].toLowerCase()).not.toContain(fragment);
+        }
+      }
+    }
+  });
+
+  it("AC-SEC-2: token-bearing 401 is session-expired wording in both locales", async () => {
+    const loginByLocale: Record<"en" | "sk", string> = {
+      en: "Invalid username or password",
+      sk: "Nesprávne používateľské meno alebo heslo",
+    };
+    const expiredByLocale: Record<"en" | "sk", string> = {
+      en: "Your session expired. Please sign in again.",
+      sk: "Prihlásenie vypršalo. Prihlás sa znova.",
+    };
+    for (const locale of ["en", "sk"] as const) {
+      useGameStore.setState({ uiLocale: locale });
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => jsonResponse({ detail: "Given token not valid." }, 401)),
+      );
+      try {
+        await api.changePassword("synthetic-access", {
+          current_password: "old-pass",
+          new_password: "new-pass-ok1",
+        });
+        throw new Error("expected ApiError");
+      } catch (error) {
+        expect(error).toBeInstanceOf(ApiError);
+        const err = error as ApiError;
+        expect(err.status).toBe(401);
+        expect(err.message).toBe(expiredByLocale[locale]);
+        expect(err.message).not.toBe(loginByLocale[locale]);
+      }
+    }
+  });
+});
+
+describe("AC-PLURAL rendered Slovak throttle", () => {
+  afterEach(() => {
+    useGameStore.setState(useGameStore.getInitialState(), true);
+  });
+
+  it("uses minútu/minúty/minút for 1, 2, 4, 5, and 55 minutes", async () => {
+    useGameStore.setState({ uiLocale: "sk" });
+    const cases: Array<{ seconds: number; suffix: RegExp }> = [
+      { seconds: 60, suffix: /minútu\.$/ },
+      { seconds: 120, suffix: /2 minúty\.$/ },
+      { seconds: 240, suffix: /4 minúty\.$/ },
+      { seconds: 300, suffix: /5 minút\.$/ },
+      { seconds: 3300, suffix: /55 minút\.$/ },
+    ];
+    for (const { seconds, suffix } of cases) {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () =>
+          jsonResponse(
+            { detail: `Request was throttled. Expected available in ${seconds} seconds.` },
+            429,
+          ),
+        ),
+      );
+      try {
+        await api.getModels();
+        throw new Error("expected ApiError");
+      } catch (error) {
+        expect(error).toBeInstanceOf(ApiError);
+        expect((error as ApiError).message).toMatch(suffix);
+      }
+    }
   });
 });

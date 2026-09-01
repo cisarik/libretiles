@@ -1,18 +1,40 @@
 import type { Metadata } from "next";
+import { cookies } from "next/headers";
+import {
+  LOCALE_COOKIE_NAME,
+  localeFromCookieValue,
+  type Locale,
+} from "@/lib/i18n/locales";
+import { enText } from "@/lib/i18n/messages.en";
+import { skText } from "@/lib/i18n/messages.sk";
 import "./globals.css";
 
-export const metadata: Metadata = {
-  title: "Libre Tiles — Web Libre Tiles with AI and Live Multiplayer",
-  description: "Open-source Libre Tiles with AI rivals, live human matches, chat, and polished drag-and-drop play.",
-};
+async function readUiLocale(): Promise<Locale> {
+  const cookieStore = await cookies();
+  return localeFromCookieValue(cookieStore.get(LOCALE_COOKIE_NAME)?.value);
+}
 
-export default function RootLayout({
+function textFor(locale: Locale) {
+  return locale === "sk" ? skText : enText;
+}
+
+export async function generateMetadata(): Promise<Metadata> {
+  const locale = await readUiLocale();
+  const text = textFor(locale);
+  return {
+    title: text["meta.title"],
+    description: text["meta.description"],
+  };
+}
+
+export default async function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const locale = await readUiLocale();
   return (
-    <html lang="en" className="dark">
+    <html lang={locale} className="dark">
       <body className="antialiased">
         {children}
       </body>

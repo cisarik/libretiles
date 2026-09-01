@@ -1,4 +1,6 @@
 import { useGameStore } from "@/hooks/useGameStore";
+import { DEFAULT_LOCALE, t, tf } from "@/lib/i18n";
+import type { Locale } from "@/lib/i18n/locales";
 import type {
   AIModel,
   AIPrompt,
@@ -131,15 +133,15 @@ function parseRetryAfterSeconds(text: string, parsed: unknown): number | null {
   return match ? Number(match[1]) : null;
 }
 
-function formatThrottleWait(seconds: number | null): string {
+function formatThrottleWait(seconds: number | null, locale: Locale): string {
   if (seconds == null || !Number.isFinite(seconds) || seconds < 0) {
-    return "Too many requests. Please wait and try again.";
+    return t(locale, "error.throttled.unknown");
   }
   const minutes = Math.max(1, Math.round(seconds / 60));
   if (minutes === 1) {
-    return "Too many requests. Try again in about a minute.";
+    return t(locale, "error.throttled.oneMinute");
   }
-  return `Too many requests. Try again in about ${minutes} minutes.`;
+  return tf(locale, "error.throttled.minutes", { minutes });
 }
 
 function humanMessageForStatus(
@@ -147,26 +149,27 @@ function humanMessageForStatus(
   fieldMessage: string | null,
   retryAfterSeconds: number | null,
   requestCarriedToken: boolean,
+  locale: Locale,
 ): string {
   switch (status) {
     case 400:
-      return fieldMessage ?? "Please check the submitted fields.";
+      return fieldMessage ?? t(locale, "error.checkFields");
     case 401:
       return requestCarriedToken
-        ? "Your session expired. Please sign in again."
-        : "Invalid username or password";
+        ? t(locale, "error.sessionExpired")
+        : t(locale, "error.invalidCredentials");
     case 403:
-      return "You do not have permission to do that.";
+      return t(locale, "error.forbidden");
     case 404:
-      return "Not found.";
+      return t(locale, "error.notFound");
     case 409:
-      return fieldMessage ?? "This action conflicts with the current game state.";
+      return fieldMessage ?? t(locale, "error.conflict");
     case 429:
-      return formatThrottleWait(retryAfterSeconds);
+      return formatThrottleWait(retryAfterSeconds, locale);
     case 503:
-      return "The service is temporarily unavailable. Please try again.";
+      return t(locale, "error.unavailable");
     default:
-      return "Something went wrong. Please try again.";
+      return t(locale, "error.generic");
   }
 }
 
@@ -263,6 +266,7 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
     const fields = extractFieldEntries(parsed);
     const fieldMessage = firstFieldMessage(parsed);
     const retryAfter = status === 429 ? parseRetryAfterSeconds(text, parsed) : null;
+    const locale: Locale = useGameStore.getState().uiLocale ?? DEFAULT_LOCALE;
     throw new ApiError(
       status,
       humanMessageForStatus(
@@ -270,6 +274,7 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
         fieldMessage,
         retryAfter,
         Boolean(opts.token),
+        locale,
       ),
       fields,
     );
