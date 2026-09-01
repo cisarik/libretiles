@@ -128,4 +128,41 @@ describe("buildSecurityHeaders", () => {
     );
     expect(directiveSources(csp, "script-src")).not.toContain("'unsafe-eval'");
   });
+
+  it("emits every required security header in production", () => {
+    const headers = buildSecurityHeaders({
+      isDevelopment: false,
+      configuredApiUrl: "https://api.libretiles.example",
+      requestHostname: "play.libretiles.example",
+    });
+    for (const name of REQUIRED_HEADER_NAMES) {
+      expect(headers[name], `missing header ${name}`).toBeTruthy();
+    }
+  });
+
+  it("locks the required CSP directives in production", () => {
+    const csp = cspFrom(
+      buildSecurityHeaders({
+        isDevelopment: false,
+        configuredApiUrl: "https://api.libretiles.example",
+        requestHostname: "play.libretiles.example",
+      }),
+    );
+    expect(directiveSources(csp, "default-src")).toEqual(["'self'"]);
+    expect(directiveSources(csp, "frame-ancestors")).toEqual(["'none'"]);
+    expect(directiveSources(csp, "object-src")).toEqual(["'none'"]);
+    expect(directiveSources(csp, "base-uri")).toEqual(["'self'"]);
+    expect(directiveSources(csp, "form-action")).toEqual(["'self'"]);
+  });
+
+  it("emits upgrade-insecure-requests in production", () => {
+    const csp = cspFrom(
+      buildSecurityHeaders({
+        isDevelopment: false,
+        configuredApiUrl: "https://api.libretiles.example",
+        requestHostname: "play.libretiles.example",
+      }),
+    );
+    expect(csp).toMatch(/upgrade-insecure-requests/);
+  });
 });

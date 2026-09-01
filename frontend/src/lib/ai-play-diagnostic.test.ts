@@ -103,7 +103,12 @@ describe("ai-play-diagnostic helpers", () => {
 
   it("treats live mode as refused without the sentinel", () => {
     expect(liveOptInEnabled({} as NodeJS.ProcessEnv)).toBe(false);
-    expect(liveOptInEnabled({ LIBRETILES_AI_PLAY_LIVE: "1" })).toBe(true);
+    expect(
+      liveOptInEnabled({
+        NODE_ENV: "test",
+        LIBRETILES_AI_PLAY_LIVE: "1",
+      }),
+    ).toBe(true);
   });
 });
 

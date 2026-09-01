@@ -142,7 +142,10 @@ describe("api.logout", () => {
     vi.stubGlobal("fetch", fetchMock);
     await api.logout("synthetic-access-token", "synthetic-refresh-token");
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ];
     expect(String(url)).toContain("/api/auth/logout/");
     expect(init.method).toBe("POST");
     const headers = init.headers as Record<string, string>;

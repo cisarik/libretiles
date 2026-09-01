@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { buildSecurityHeaders } from "@/lib/security-headers";
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   const headers = buildSecurityHeaders({
     isDevelopment: process.env.NODE_ENV === "development",
     configuredApiUrl: process.env.NEXT_PUBLIC_API_URL,
