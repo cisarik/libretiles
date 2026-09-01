@@ -892,11 +892,11 @@ class GameAPITest(TestCase):
             "game_id"
         ]
         session = GameSession.objects.get(public_id=game_id)
-        board = ["." * 15 for _ in range(15)]
-        board[7] = "." * 8 + "T" + "." * 6
+        board = [[None] * 15 for _ in range(15)]
+        board[7][8] = {"token": "T", "blank_as": None}
         session.board_state = board
         session.premium_used = []
-        session.bag_tiles = ""
+        session.bag_tiles = []
         session.current_turn_slot = 0
         session.consecutive_scoreless_turns = 5
         session.save(
@@ -964,7 +964,7 @@ class GameAPITest(TestCase):
 
         session = GameSession.objects.get(public_id=game_id)
         session.current_turn_slot = 1
-        session.bag_tiles = "ABCDE"
+        session.bag_tiles = ["A", "B", "C", "D", "E"]
         session.save(update_fields=["current_turn_slot", "bag_tiles"])
         ai_slot = session.slots.get(slot=1)
         ai_slot.rack = ["Q"]
@@ -1437,8 +1437,8 @@ class GameAPITest(TestCase):
         self,
         *,
         rack: list[str] | None = None,
-        bag_tiles: str | None = None,
-        board: list[str] | None = None,
+        bag_tiles: list[str] | None = None,
+        board: list[Any] | None = None,
     ) -> tuple[str, GameSession]:
         game_id = self.client.post("/api/game/create/", {"game_mode": "vs_ai"}).json()["game_id"]
         session = GameSession.objects.get(public_id=game_id)
@@ -1503,7 +1503,7 @@ class GameAPITest(TestCase):
         assert validate.status_code == 200
         assert validate.json()["valid"] is True
 
-        none_id, _none_session = self._ai_turn_game(rack=["Q"], bag_tiles="ABCDEF")
+        none_id, _none_session = self._ai_turn_game(rack=["Q"], bag_tiles=["A", "B", "C", "D", "E", "F"])
         none_resp = self.client.get(f"/api/game/{none_id}/ai-playability/")
         assert none_resp.status_code == 200
         assert none_resp.json()["status"] == "none"
@@ -1718,7 +1718,7 @@ class GameAPITest(TestCase):
         assert "prompt" not in move.ai_metadata
         assert move.ai_metadata["usage"] == {"totalTokens": 3}
 
-        dead_id, dead_session = self._ai_turn_game(rack=["Q"], bag_tiles="ABCDE")
+        dead_id, dead_session = self._ai_turn_game(rack=["Q"], bag_tiles=["A", "B", "C", "D", "E"])
         dead_pass = self.client.post(
             f"/api/game/{dead_id}/ai-pass/",
             {
@@ -1738,7 +1738,7 @@ class GameAPITest(TestCase):
         ]
         assert "response_headers" not in pass_move.ai_metadata
 
-        dead_human_id, dead_human = self._ai_turn_game(rack=["Q"], bag_tiles="ABCDE")
+        dead_human_id, dead_human = self._ai_turn_game(rack=["Q"], bag_tiles=["A", "B", "C", "D", "E"])
         dead_human.current_turn_slot = 0
         dead_human.save(update_fields=["current_turn_slot"])
         human_dead = self.client.post(f"/api/game/{dead_human_id}/pass/")
@@ -1757,7 +1757,7 @@ class GameAPITest(TestCase):
             elapsed_ms=0,
             complete=False,
         )
-        game_id, session = self._ai_turn_game(rack=["Q"], bag_tiles="ABCDE")
+        game_id, session = self._ai_turn_game(rack=["Q"], bag_tiles=["A", "B", "C", "D", "E"])
         resp = self.client.post(f"/api/game/{game_id}/ai-pass/")
         assert resp.status_code == 409
         assert resp.json()["code"] == "playability_unknown"
@@ -1861,8 +1861,8 @@ class GameAPITest(TestCase):
         """Human TLAETIO vs AI XPJAOUD with board S at (7,7) — 2026-08-26 incident."""
         game_id = self.client.post("/api/game/create/", {"game_mode": "vs_ai"}).json()["game_id"]
         session = GameSession.objects.get(public_id=game_id)
-        board = ["." * 15 for _ in range(15)]
-        board[7] = "." * 7 + "S" + "." * 7
+        board = [[None] * 15 for _ in range(15)]
+        board[7][7] = {"token": "S", "blank_as": None}
         session.board_state = board
         session.current_turn_slot = 0
         session.save(update_fields=["board_state", "current_turn_slot"])

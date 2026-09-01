@@ -108,7 +108,6 @@ class GameSessionAdmin(_GameSessionAdmin):
     readonly_fields = (
         "public_id",
         "board_state",
-        "blanks",
         "premium_used",
         "bag_tiles",
         "created_at",

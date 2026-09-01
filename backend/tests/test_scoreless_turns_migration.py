@@ -31,4 +31,8 @@ class ScorelessTurnsRenameMigrationTest(TransactionTestCase):
             restored = ReversedSession.objects.get(pk=old_session.pk)
             assert restored.consecutive_passes == 5
         finally:
+            # 0008 refuses to apply while any game-state row exists. Delete the
+            # leftover session before restoring to the leaf, matching the P1 harness.
+            with connection.cursor() as cursor:
+                cursor.execute("DELETE FROM game_session")
             restore_apps_to_leaf("game")

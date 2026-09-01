@@ -54,7 +54,7 @@ from gamecore.variant_store import (
     normalise_letter,
 )
 
-from .models import ChatMessage, ConsumedWsTicket, GameSession, Move, PlayerSlot
+from .models import ChatMessage, ConsumedWsTicket, GameSession, Move, PlayerSlot, default_structured_board
 from . import realtime
 
 CHAT_HISTORY_LIMIT = 50
@@ -70,8 +70,8 @@ class GameNotFoundError(Exception):
     """Raised when a user is not allowed to access a game."""
 
 
-def _empty_board_state() -> list[str]:
-    return ["." * BOARD_SIZE for _ in range(BOARD_SIZE)]
+def _empty_board_state() -> list[list[None]]:
+    return default_structured_board()
 
 
 def _serialize_last_move(session: GameSession, *, moves: list[Move] | None = None) -> dict[str, Any]:
@@ -228,24 +228,43 @@ def _board_from_session(session: GameSession) -> Board:
     if isinstance(grid, list) and len(grid) == BOARD_SIZE:
         for r in range(BOARD_SIZE):
             row = grid[r]
-            if isinstance(row, str):
-                row = unicodedata.normalize("NFC", row)
-            for c in range(BOARD_SIZE):
-                ch = row[c] if c < len(row) else "."
-                if ch != ".":
-                    board.cells[r][c].letter = ch
-    for pos in session.blanks or []:
-        board.cells[pos["row"]][pos["col"]].is_blank = True
+            if not isinstance(row, list):
+                continue
+            for c in range(min(BOARD_SIZE, len(row))):
+                cell_data = row[c]
+                if not isinstance(cell_data, dict):
+                    continue
+                token_raw = cell_data.get("token")
+                blank_raw = cell_data.get("blank_as")
+                token = (
+                    unicodedata.normalize("NFC", token_raw)
+                    if isinstance(token_raw, str)
+                    else None
+                )
+                blank_as = (
+                    unicodedata.normalize("NFC", blank_raw)
+                    if isinstance(blank_raw, str)
+                    else None
+                )
+                if blank_as:
+                    board.cells[r][c].letter = blank_as
+                    board.cells[r][c].is_blank = True
+                elif token:
+                    board.cells[r][c].letter = token
+                    board.cells[r][c].is_blank = False
     for pos in session.premium_used or []:
         board.cells[pos["row"]][pos["col"]].premium_used = True
     return board
 
 
 def _bag_from_session(session: GameSession) -> TileBag:
-    if session.bag_tiles:
+    tiles = session.bag_tiles
+    # TileBag treats tiles=[] as "fill from the variant distribution". An
+    # empty persisted list is an empty bag, so copy only a non-empty list.
+    if isinstance(tiles, list) and tiles:
         return TileBag(
             seed=session.bag_seed,
-            tiles=list(session.bag_tiles),
+            tiles=list(tiles),
             variant=session.variant_slug,
         )
     bag = TileBag(seed=session.bag_seed, variant=session.variant_slug)
@@ -254,36 +273,95 @@ def _bag_from_session(session: GameSession) -> TileBag:
 
 
 def _persist_board(session: GameSession, board: Board) -> None:
-    grid: list[str] = []
-    blanks: list[dict[str, int]] = []
+    grid: list[list[dict[str, str | None] | None]] = []
     premium_used: list[dict[str, int]] = []
     for r in range(BOARD_SIZE):
-        row_chars: list[str] = []
+        row: list[dict[str, str | None] | None] = []
         for c in range(BOARD_SIZE):
             cell = board.cells[r][c]
-            if cell.letter:
-                row_chars.append(cell.letter)
-                if cell.is_blank:
-                    blanks.append({"row": r, "col": c})
+            token = cell.token
+            if token is None:
+                row.append(None)
             else:
-                row_chars.append(".")
+                token_nfc = unicodedata.normalize("NFC", token)
+                blank_as = cell.blank_as
+                blank_nfc = (
+                    unicodedata.normalize("NFC", blank_as) if blank_as is not None else None
+                )
+                row.append({"token": token_nfc, "blank_as": blank_nfc})
             if cell.premium_used:
                 premium_used.append({"row": r, "col": c})
-        grid.append("".join(row_chars))
+        grid.append(row)
     session.board_state = grid
-    session.blanks = blanks
     session.premium_used = premium_used
 
 
 def _persist_bag(session: GameSession, bag: TileBag) -> None:
-    session.bag_tiles = "".join(bag.tiles)
+    session.bag_tiles = list(bag.tiles)
 
 
 def _is_board_empty(session: GameSession) -> bool:
     grid = session.board_state
     if not isinstance(grid, list):
         return True
-    return all(all(ch == "." for ch in row) for row in grid)
+    for row in grid:
+        if not isinstance(row, list):
+            return False
+        for cell in row:
+            if cell is not None:
+                return False
+    return True
+
+
+def _bag_remaining_count(session: GameSession) -> int:
+    tiles = session.bag_tiles
+    return len(tiles) if isinstance(tiles, list) else 0
+
+
+_WIRE_ADAPTER_REMOVAL = (
+    "temporary wire adapter cannot represent a multi-code-point token; "
+    "this adapter is deleted when the wire format moves to state_schema_version 4"
+)
+
+
+def _legacy_wire_board_and_blanks(
+    board_state: object,
+) -> tuple[list[str], list[dict[str, int]]]:
+    """TEMPORARY adapter: structured grid -> 15 joined strings + blanks coords.
+
+    Deleted when the wire format moves to state_schema_version 4.
+    Raises rather than truncating if a token or blank_as is longer than one
+    code point — this adapter cannot represent one.
+    """
+    grid = board_state if isinstance(board_state, list) else []
+    rows: list[str] = []
+    blanks: list[dict[str, int]] = []
+    for r in range(BOARD_SIZE):
+        raw_row = grid[r] if r < len(grid) else None
+        row = raw_row if isinstance(raw_row, list) else []
+        chars: list[str] = []
+        for c in range(BOARD_SIZE):
+            cell = row[c] if c < len(row) else None
+            if not isinstance(cell, dict):
+                chars.append(".")
+                continue
+            token_raw = cell.get("token")
+            blank_raw = cell.get("blank_as")
+            token = token_raw if isinstance(token_raw, str) else ""
+            blank_as = blank_raw if isinstance(blank_raw, str) else None
+            if not token:
+                chars.append(".")
+                continue
+            if len(token) > 1 or (blank_as is not None and len(blank_as) > 1):
+                raise ValueError(_WIRE_ADAPTER_REMOVAL)
+            realized = blank_as if blank_as else token
+            if len(realized) > 1:
+                raise ValueError(_WIRE_ADAPTER_REMOVAL)
+            chars.append(realized)
+            if token == "?":
+                blanks.append({"row": r, "col": c})
+        rows.append("".join(chars))
+    return rows, blanks
 
 
 def _resolve_ai_model(
@@ -361,15 +439,17 @@ def _build_state(session: GameSession, *, current_user_id: int, my_slot: PlayerS
     )
     recent_messages.reverse()
 
+    wire_board, wire_blanks = _legacy_wire_board_and_blanks(session.board_state)
+
     return {
         "game_id": str(session.public_id),
         "status": session.status,
         "game_mode": session.game_mode,
         "variant_slug": session.variant_slug,
-        "board": session.board_state,
-        "blanks": session.blanks,
+        "board": wire_board,
+        "blanks": wire_blanks,
         "premium_used": session.premium_used,
-        "bag_remaining": len(session.bag_tiles),
+        "bag_remaining": _bag_remaining_count(session),
         "consecutive_scoreless_turns": session.consecutive_scoreless_turns,
         "current_turn_slot": session.current_turn_slot,
         "game_over": session.game_over,
@@ -450,24 +530,21 @@ def _serialize_ai_starting_draw(draw: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _perform_starting_draw(bag: TileBag) -> dict[str, Any]:
+def _perform_starting_draw(bag: TileBag, variant: VariantDefinition) -> dict[str, Any]:
     slot0_tile = bag.draw(1)[0]
     slot1_tile = bag.draw(1)[0]
     bag.put_back([slot0_tile, slot1_tile])
-
-    slot0_value = "" if slot0_tile == "?" else slot0_tile
-    slot1_value = "" if slot1_tile == "?" else slot1_tile
     return {
         "slot0_tile": slot0_tile,
         "slot1_tile": slot1_tile,
-        "slot0_first": slot0_value <= slot1_value,
+        "slot0_first": variant.slot0_wins_starting_draw(slot0_tile, slot1_tile),
     }
 
 
 def _initialize_session(session: GameSession, *, slot0: PlayerSlot, slot1: PlayerSlot) -> dict[str, Any]:
     seed = random.randint(0, 2**31)
     bag = TileBag(seed=seed, variant=session.variant_slug)
-    draw = _perform_starting_draw(bag)
+    draw = _perform_starting_draw(bag, _session_variant(session))
 
     slot0.rack = bag.draw(7)
     slot1.rack = bag.draw(7)
@@ -479,10 +556,9 @@ def _initialize_session(session: GameSession, *, slot0: PlayerSlot, slot1: Playe
     slot1.save(update_fields=["rack", "score", "pass_streak"])
 
     session.board_state = _empty_board_state()
-    session.blanks = []
     session.premium_used = []
     session.bag_seed = seed
-    session.bag_tiles = "".join(bag.tiles)
+    session.bag_tiles = list(bag.tiles)
     session.current_turn_slot = 0 if draw["slot0_first"] else 1
     session.consecutive_scoreless_turns = 0
     session.status = "active"
@@ -494,7 +570,6 @@ def _initialize_session(session: GameSession, *, slot0: PlayerSlot, slot1: Playe
     session.save(
         update_fields=[
             "board_state",
-            "blanks",
             "premium_used",
             "bag_seed",
             "bag_tiles",
@@ -555,7 +630,7 @@ def _next_turn_for(slot: int) -> int:
 def _check_endgame(session: GameSession) -> dict[str, Any]:
     slots = list(session.slots.all().order_by("slot"))
     racks = {str(s.slot): list(s.rack) if isinstance(s.rack, list) else [] for s in slots}
-    bag_remaining = len(session.bag_tiles)
+    bag_remaining = _bag_remaining_count(session)
 
     reason = determine_end_reason(
         bag_remaining=bag_remaining,
@@ -716,7 +791,7 @@ def _probe_ai_ranked_candidates(
             rack,
             is_word=_word_checker(session),
             has_prefix=_prefix_checker(session),
-            bag_count=len(session.bag_tiles),
+            bag_count=_bag_remaining_count(session),
             tile_points=get_tile_points(session.variant_slug),
             blank_letters=variant.playable_letters,
             variant=session.variant_slug,
@@ -1020,7 +1095,6 @@ def create_game(
         status="active",
         variant_slug=variant_slug,
         board_state=_empty_board_state(),
-        blanks=[],
         premium_used=[],
         current_turn_slot=None,
         ai_model=selected_ai_model,
@@ -1344,7 +1418,6 @@ def join_human_queue(*, user_id: int, variant_slug: str = "english") -> dict[str
             status="waiting",
             variant_slug=variant_slug,
             board_state=_empty_board_state(),
-            blanks=[],
             premium_used=[],
             current_turn_slot=None,
         )

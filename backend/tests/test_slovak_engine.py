@@ -148,13 +148,12 @@ def test_placements_nfc_composes_letter() -> None:
     assert placements[0].letter == "Á"
 
 
-def test_board_from_session_nfc_keeps_fifteen_cells() -> None:
+def test_board_from_session_structured_cell_is_one_cell() -> None:
     decomposed = unicodedata.normalize("NFD", "Š")
     assert len(decomposed) > 1
-    row = decomposed + ("." * 14)
     session = SimpleNamespace(
-        board_state=[row] + ["." * 15] * 14,
-        blanks=[],
+        board_state=[[{"token": decomposed, "blank_as": None}] + [None] * 14]
+        + [[None] * 15] * 14,
         premium_used=[],
     )
     board = _board_from_session(session)  # type: ignore[arg-type]

@@ -4,6 +4,11 @@ from django.conf import settings
 from django.db import models
 
 
+def default_structured_board() -> list[list[None]]:
+    """15x15 empty cell grid: each cell is null until a token is placed."""
+    return [[None] * 15 for _ in range(15)]
+
+
 class GameSession(models.Model):
     """A single Libre Tiles game session."""
 
@@ -24,12 +29,11 @@ class GameSession(models.Model):
     variant_slug = models.CharField(max_length=50, default="english")
 
     board_state = models.JSONField(
-        default=list,
-        help_text="15x15 grid as list of 15 strings",
+        default=default_structured_board,
+        help_text="15x15 structured cell grid: null or {token, blank_as}",
     )
-    blanks = models.JSONField(default=list, help_text="List of {row, col} for blank tiles")
     premium_used = models.JSONField(default=list, help_text="List of {row, col} for used premiums")
-    bag_tiles = models.TextField(default="", help_text="Remaining tiles in order")
+    bag_tiles = models.JSONField(default=list, help_text="Ordered remaining tile tokens")
     bag_seed = models.IntegerField(default=0)
 
     current_turn_slot = models.IntegerField(null=True, blank=True, default=None)
@@ -79,7 +83,7 @@ class PlayerSlot(models.Model):
         related_name="game_slots",
     )
     slot = models.IntegerField(help_text="0 or 1")
-    rack = models.JSONField(default=list, help_text="Current rack letters as list of strings")
+    rack = models.JSONField(default=list, help_text="Current rack tokens as list of strings")
     score = models.IntegerField(default=0)
     pass_streak = models.IntegerField(default=0)
     is_ai = models.BooleanField(default=False)

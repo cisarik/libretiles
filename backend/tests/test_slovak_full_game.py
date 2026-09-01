@@ -308,8 +308,8 @@ def test_check_endgame_persists_slovak_leftover_points() -> None:
         game_mode="vs_ai",
         status="active",
         variant_slug="slovak",
-        board_state=["." * 15] * 15,
-        bag_tiles="",
+        board_state=[[None] * 15 for _ in range(15)],
+        bag_tiles=[],
         consecutive_scoreless_turns=0,
     )
     slot0 = PlayerSlot.objects.create(
