@@ -139,7 +139,7 @@ class Game:
         total, _ = score_words(
             self.board, placements_list, words_coords, variant=self.bag.variant_slug
         )
-        if len(placements_list) == 7:
+        if len(placements_list) == 7:  # physical tile count, not code-point length
             total += 50
         apply_premium_consumption(self.board, placements_list)
         player.score += total

@@ -15,6 +15,7 @@ from gamecore.legality import (
     evaluate_scoring_move,
 )
 from gamecore.move_search import (
+    DEFAULT_MAX_ELAPSED_MS,
     DEFAULT_RANKED_MAX_ELAPSED_MS,
     DEFAULT_RANKED_MAX_NODES,
     DEFAULT_RANKED_MAX_UNIQUE_PLACEMENTS,
@@ -363,6 +364,7 @@ def test_ranked_search_has_fixed_caps_and_hard_top_k_limit(
     dictionary: tuple[Callable[[str], bool], Callable[[str], bool]],
 ) -> None:
     is_word, has_prefix = dictionary
+    assert DEFAULT_MAX_ELAPSED_MS == 2000
     assert DEFAULT_RANKED_TOP_K == 8
     assert MAX_RANKED_TOP_K == 20
     assert DEFAULT_RANKED_MAX_NODES == 500_000

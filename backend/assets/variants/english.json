@@ -4,6 +4,7 @@
   "source": "builtin",
   "fetched_at": "2024-01-01T00:00:00",
   "dictionary_file": "collins2019.txt",
+  "alphabet_order": ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z"],
   "letters": [
     {"letter": "?", "count": 2, "points": 0},
     {"letter": "A", "count": 9, "points": 1},

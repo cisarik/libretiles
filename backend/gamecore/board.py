@@ -11,10 +11,30 @@ BOARD_SIZE = 15
 
 @dataclass
 class Cell:
+    # Storage fields stay as letter/is_blank this slice so persistence paths
+    # outside gamecore keep compiling. F2 inverts storage onto token/blank_as
+    # and removes these derived properties.
     letter: str | None = None
     is_blank: bool = False
     premium: Premium | None = None
     premium_used: bool = False
+
+    @property
+    def token(self) -> str | None:
+        """Physical identity: '?' if blank, else the tile token. None if empty."""
+        if self.letter is None:
+            return None
+        return "?" if self.is_blank else self.letter
+
+    @property
+    def blank_as(self) -> str | None:
+        """Blank assignment (realized letter) when this cell holds a blank."""
+        return self.letter if self.is_blank else None
+
+    @property
+    def realized_token(self) -> str | None:
+        """Lexical occupant: blank_as if blank, else the tile token."""
+        return self.letter
 
 
 class Board:
@@ -87,14 +107,18 @@ class Board:
         r0, c0 = placements[0].row, placements[0].col
         main_coords = self.extend_word(r0, c0, direction)
         if len(main_coords) >= 2:
-            w = "".join(self.get_letter(r, c) or "" for r, c in main_coords)
-            words[(main_coords[0][0], main_coords[0][1], direction)] = WordFound(w, main_coords)
+            tokens = [self.get_letter(r, c) or "" for r, c in main_coords]
+            w = "".join(tokens)
+            words[(main_coords[0][0], main_coords[0][1], direction)] = WordFound(
+                w, main_coords, tokens
+            )
 
         cross_dir = Direction.DOWN if direction == Direction.ACROSS else Direction.ACROSS
         for p in placements:
             coords = self.extend_word(p.row, p.col, cross_dir)
             if len(coords) >= 2:
-                w = "".join(self.get_letter(r, c) or "" for r, c in coords)
-                words[(coords[0][0], coords[0][1], cross_dir)] = WordFound(w, coords)
+                tokens = [self.get_letter(r, c) or "" for r, c in coords]
+                w = "".join(tokens)
+                words[(coords[0][0], coords[0][1], cross_dir)] = WordFound(w, coords, tokens)
 
         return list(words.values())

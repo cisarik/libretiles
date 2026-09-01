@@ -10,7 +10,7 @@ import pytest
 from gamecore.assets import get_assets_path
 from gamecore.variant_store import (
     _load_variant_from_path,
-    load_two_letter_allowlist,
+    load_two_tile_words,
     load_variant,
     validate_dictionary_file,
 )
@@ -33,9 +33,16 @@ def test_slovak_bag_is_official_sss_100() -> None:
     assert v.tile_points["X"] == 10
     assert "Q" not in v.tile_points
     assert v.dictionary_path.is_file()
-    assert v.two_letter_allowlist_file == "slovak_two_letter.txt"
-    assert v.two_letter_allowlist_path is not None
-    assert v.two_letter_allowlist_path.is_file()
+    assert v.two_tile_words_file == "slovak_two_tile_words.txt"
+    assert v.two_tile_words_path is not None
+    assert v.two_tile_words_path.is_file()
+    assert v.alphabet_order[0] == "A"
+    assert v.alphabet_order[1] == "Á"
+    assert "DZ" in v.alphabet_order
+    assert "CH" in v.alphabet_order
+    assert "CH" not in v.distribution
+    assert v.playable_letters[0] == "A"
+    assert v.playable_letters[1] == "Á"
 
 
 def test_english_dictionary_file_is_collins() -> None:
@@ -45,9 +52,11 @@ def test_english_dictionary_file_is_collins() -> None:
     assert v.distribution["E"] == 12
     assert v.dictionary_file == "collins2019.txt"
     assert v.dictionary_path.name == "collins2019.txt"
-    assert v.two_letter_allowlist_file is None
-    assert v.two_letter_allowlist_path is None
-    assert load_two_letter_allowlist(v) is None
+    assert v.two_tile_words_file is None
+    assert v.two_tile_words_path is None
+    assert load_two_tile_words(v) is None
+    assert v.alphabet_order == tuple("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+    assert v.playable_letters == v.alphabet_order
 
 
 def test_slovak_lexicon_meets_floor() -> None:
@@ -94,8 +103,8 @@ def test_normalise_letter_composes_combining_marks() -> None:
     assert normalise_letter("á") == "Á"
 
 
-def test_slovak_two_letter_allowlist_is_sss_b2() -> None:
-    path = get_assets_path() / "dicts" / "slovak_two_letter.txt"
+def test_slovak_two_tile_words_is_sss_b2() -> None:
+    path = get_assets_path() / "dicts" / "slovak_two_tile_words.txt"
     rows: list[str] = []
     for line in path.read_text(encoding="utf-8").splitlines():
         if line.startswith("#") or not line.strip():
@@ -107,7 +116,7 @@ def test_slovak_two_letter_allowlist_is_sss_b2() -> None:
     assert "ou" not in folded
     assert "am" not in folded
     assert "ch" not in folded
-    loaded = load_two_letter_allowlist(load_variant("slovak"))
+    loaded = load_two_tile_words(load_variant("slovak"))
     assert loaded is not None
     assert len(loaded) == 103
     assert "ou" not in loaded

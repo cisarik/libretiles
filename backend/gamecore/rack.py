@@ -6,8 +6,8 @@ from .types import Placement
 def consume_rack(rack: list[str], placements: list[Placement]) -> list[str]:
     """Return a new rack with tiles used in placements removed.
 
-    Each placement consumes exactly one matching tile from the rack,
-    even when multiple placements use the same letter.
+    Each placement consumes exactly one matching atomic tile token from the
+    rack, even when multiple placements use the same token.
     """
     remaining = rack.copy()
     for pl in placements:

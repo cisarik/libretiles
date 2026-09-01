@@ -36,11 +36,15 @@ class TileBag:
         self.variant = self._variant
         self.variant_slug = self._variant.slug
         if not self.tiles:
+            # Insertion order of distribution follows VariantDefinition.letters,
+            # which is sorted by token string. That construction order has no
+            # game meaning. Changing it would change every seeded shuffle.
             for ch, count in self._variant.distribution.items():
                 self.tiles.extend([ch] * count)
             self._rng = random.Random(self.seed)
             self._rng.shuffle(self.tiles)
         else:
+            self.tiles = list(self.tiles)
             self._rng = random.Random(self.seed)
 
     def draw(self, n: int) -> list[str]:

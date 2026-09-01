@@ -37,6 +37,16 @@ _DELTA = {
 }
 
 
+def _vowel_set(variant: object) -> frozenset[str]:
+    """Optional variant vowels, defaulting to AEIOU so en/sk ranking is unchanged."""
+    vowels = getattr(variant, "vowels", None)
+    if vowels is None:
+        return frozenset("AEIOU")
+    if isinstance(vowels, str):
+        return frozenset(vowels)
+    return frozenset(str(token) for token in vowels)
+
+
 @dataclass(frozen=True)
 class SearchResult:
     status: SearchStatus
@@ -154,6 +164,7 @@ class _Searcher:
         self.blank_letters = blank_letters
         self.letter_set = frozenset(blank_letters)
         self.variant = variant
+        self.vowel_set = _vowel_set(variant)
         self.rack_size = len(rack)
         self.initial_rack = Counter(rack)
         self.nodes = 0
@@ -242,7 +253,7 @@ class _Searcher:
                 col=start_col,
                 dr=0,
                 dc=1,
-                prefix="",
+                prefix=[],
                 rack=self.initial_rack.copy(),
                 placed=[],
                 first_move=True,
@@ -255,7 +266,7 @@ class _Searcher:
                 col=7,
                 dr=1,
                 dc=0,
-                prefix="",
+                prefix=[],
                 rack=self.initial_rack.copy(),
                 placed=[],
                 first_move=True,
@@ -303,7 +314,7 @@ class _Searcher:
                         col=col,
                         dr=dr,
                         dc=dc,
-                        prefix="",
+                        prefix=[],
                         rack=self.initial_rack.copy(),
                         placed=[],
                         first_move=False,
@@ -352,12 +363,12 @@ class _Searcher:
             return True
         return self.is_word("".join(word_chars))
 
-    def _try_complete(self, prefix: str, placed: list[Placement], first_move: bool) -> None:
+    def _try_complete(self, prefix: list[str], placed: list[Placement], first_move: bool) -> None:
         if not placed or len(prefix) < 2:
             return
         if first_move and not any((p.row, p.col) == CENTER for p in placed):
             return
-        if not self.is_word(prefix):
+        if not self.is_word("".join(prefix)):
             return
         result = evaluate_scoring_move(
             self.board,
@@ -385,7 +396,7 @@ class _Searcher:
         col: int,
         dr: int,
         dc: int,
-        prefix: str,
+        prefix: list[str],
         rack: Counter[str],
         placed: list[Placement],
         first_move: bool,
@@ -398,19 +409,21 @@ class _Searcher:
 
         existing = self.grid[row][col]
         if existing:
-            nxt = prefix + existing
-            if not self.has_prefix(nxt):
+            prefix.append(existing)
+            if not self.has_prefix("".join(prefix)):
+                prefix.pop()
                 return
             self._extend(
                 row=row + dr,
                 col=col + dc,
                 dr=dr,
                 dc=dc,
-                prefix=nxt,
+                prefix=prefix,
                 rack=rack,
                 placed=placed,
                 first_move=first_move,
             )
+            prefix.pop()
             return
 
         self._try_complete(prefix, placed, first_move)
@@ -426,8 +439,9 @@ class _Searcher:
                 return
             if not self._cross_ok(row, col, letter, dr, dc):
                 continue
-            nxt = prefix + letter
-            if not self.has_prefix(nxt):
+            prefix.append(letter)
+            if not self.has_prefix("".join(prefix)):
+                prefix.pop()
                 continue
             placed.append(Placement(row=row, col=col, letter=tile, blank_as=blank_as))
             self._extend(
@@ -435,12 +449,13 @@ class _Searcher:
                 col=col + dc,
                 dr=dr,
                 dc=dc,
-                prefix=nxt,
+                prefix=prefix,
                 rack=nxt_rack,
                 placed=placed,
                 first_move=first_move,
             )
             placed.pop()
+            prefix.pop()
             if self._stop():
                 return
 
@@ -533,11 +548,11 @@ class _RankedSearcher(_Searcher):
             self.tile_points.get(tile, 0) * count for tile, count in remaining.items()
         )
         duplicate_excess = sum(max(count - 1, 0) for count in remaining.values())
-        vowels = sum(remaining.get(vowel, 0) for vowel in "AEIOU")
+        vowels = sum(remaining.get(vowel, 0) for vowel in self.vowel_set)
         consonants = sum(
             count
             for tile, count in remaining.items()
-            if tile != "?" and tile not in "AEIOU"
+            if tile != "?" and tile not in self.vowel_set
         )
         imbalance = abs(vowels - consonants)
         return point_burden, duplicate_excess, imbalance
@@ -552,12 +567,12 @@ class _RankedSearcher(_Searcher):
             candidate.canonical_key,
         )
 
-    def _try_complete(self, prefix: str, placed: list[Placement], first_move: bool) -> None:
+    def _try_complete(self, prefix: list[str], placed: list[Placement], first_move: bool) -> None:
         if self._stop() or not placed or len(prefix) < 2:
             return
         if first_move and not any((p.row, p.col) == CENTER for p in placed):
             return
-        if not self.is_word(prefix):
+        if not self.is_word("".join(prefix)):
             return
 
         canonical_key = self._canonical_key(placed)

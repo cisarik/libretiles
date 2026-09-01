@@ -27,7 +27,7 @@ from gamecore.assets import get_assets_path, get_premiums_path
 from gamecore.board import Board
 from gamecore.legality import REASON_INVALID_WORD, evaluate_scoring_move
 from gamecore.types import Placement
-from gamecore.variant_store import load_two_letter_allowlist, load_variant
+from gamecore.variant_store import load_two_tile_words, load_variant
 
 _OSAMENIU = "OSAMENIU"
 _OSAMENIU_SCORE = 74
@@ -277,7 +277,7 @@ def test_slovak_b2_rejects_complete_ou_and_am() -> None:
 
 def test_english_two_letter_policy_delegates_to_collins() -> None:
     english = load_variant("english")
-    assert load_two_letter_allowlist(english) is None
+    assert load_two_tile_words(english) is None
     context = load_variant_context("english")
     assert context.allowlist is None
     module_text = Path(diagnostics_mod.__file__).read_text(encoding="utf-8")

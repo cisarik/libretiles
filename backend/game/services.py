@@ -49,7 +49,7 @@ from gamecore.types import Placement
 from gamecore.variant_store import (
     VariantDefinition,
     list_installed_variants,
-    load_two_letter_allowlist,
+    load_two_tile_words,
     load_variant,
     normalise_letter,
 )
@@ -125,7 +125,7 @@ def _is_word(session: GameSession, word: str) -> bool:
 
 def _word_checker(session: GameSession) -> Callable[[str], bool]:
     contains = _get_dictionary(session)
-    allowlist = load_two_letter_allowlist(_session_variant(session))
+    allowlist = load_two_tile_words(_session_variant(session))
 
     def check(word: str) -> bool:
         return _word_passes_dictionary(contains, word, two_letter_allowlist=allowlist)
@@ -135,7 +135,7 @@ def _word_checker(session: GameSession) -> Callable[[str], bool]:
 
 def _prefix_checker(session: GameSession) -> Callable[[str], bool]:
     index = _get_prefix_index(session)
-    allowlist = load_two_letter_allowlist(_session_variant(session))
+    allowlist = load_two_tile_words(_session_variant(session))
 
     def check(prefix: str) -> bool:
         if index.has_prefix(prefix):

@@ -22,11 +22,11 @@ from gamecore.legality import evaluate_scoring_move, placements_to_dicts
 from gamecore.move_search import DEFAULT_MAX_NODES, find_legal_scoring_move
 from gamecore.tiles import TileBag, get_tile_distribution, get_tile_points
 from gamecore.types import Placement
-from gamecore.variant_store import load_two_letter_allowlist, load_variant
+from gamecore.variant_store import load_two_tile_words, load_variant
 
 _VARIANT = load_variant("slovak")
 _INDEX = load_prefix_index(_VARIANT.dictionary_path)
-_ALLOWLIST = load_two_letter_allowlist(_VARIANT)
+_ALLOWLIST = load_two_tile_words(_VARIANT)
 assert _ALLOWLIST is not None
 _PLAYABLE = frozenset(_VARIANT.playable_letters)
 _EXPECTED_TILES = Counter(get_tile_distribution("slovak"))

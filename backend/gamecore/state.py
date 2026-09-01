@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Literal, TypedDict
 
 from .board import Board
-from .tiles import TileBag, get_tile_distribution
+from .tiles import TileBag
 
 
 class BlankPos(TypedDict):
@@ -60,11 +60,11 @@ class _Pos(TypedDict):
 
 class SaveGameState(TypedDict, total=False):
     schema_version: str
-    grid: list[str]
+    grid: list[list[str | None]]
     blanks: list[_Pos]
     premium_used: list[_Pos]
-    player_racks: dict[str, str]
-    bag: str
+    player_racks: dict[str, list[str]]
+    bag: list[str]
     scores: dict[str, int]
     current_turn: int
     variant: str
@@ -75,6 +75,14 @@ class SaveGameState(TypedDict, total=False):
     game_over: bool
     game_end_reason: str
     seed: int
+
+
+def _require_schema_4(state: dict[str, Any]) -> None:
+    version = state.get("schema_version")
+    if version != "4":
+        raise ValueError(
+            f"Unsupported save schema_version {version!r}; only schema '4' is accepted"
+        )
 
 
 def build_save_state_dict(
@@ -93,32 +101,32 @@ def build_save_state_dict(
     seed: int = 0,
     variant_slug: str | None = None,
 ) -> SaveGameState:
-    grid: list[str] = []
+    grid: list[list[str | None]] = []
     blanks: list[_Pos] = []
     premium_used: list[_Pos] = []
     for r in range(15):
-        row_chars: list[str] = []
+        row: list[str | None] = []
         for c in range(15):
             cell = board.cells[r][c]
             if getattr(cell, "premium_used", False):
                 premium_used.append({"row": r, "col": c})
             if cell.letter:
-                row_chars.append(cell.letter)
+                row.append(cell.letter)
                 if cell.is_blank:
                     blanks.append({"row": r, "col": c})
             else:
-                row_chars.append(".")
-        grid.append("".join(row_chars))
+                row.append(None)
+        grid.append(row)
 
     variant = variant_slug or getattr(bag, "variant_slug", "english")
 
     return SaveGameState(
-        schema_version="3",
+        schema_version="4",
         grid=grid,
         blanks=blanks,
         premium_used=premium_used,
-        player_racks={name: "".join(rack) for name, rack in player_racks.items()},
-        bag="".join(bag.tiles),
+        player_racks={name: list(rack) for name, rack in player_racks.items()},
+        bag=list(bag.tiles),
         scores=scores,
         current_turn=current_turn,
         variant=str(variant),
@@ -139,14 +147,23 @@ def read_consecutive_scoreless_turns(state: dict[str, Any]) -> int:
 
 
 def restore_board_from_save(state: dict[str, Any], premiums_path: str) -> Board:
+    _require_schema_4(state)
     board = Board(premiums_path)
+    grid = state.get("grid")
+    if not isinstance(grid, list) or len(grid) != 15:
+        raise ValueError("schema 4 grid must be a 15×15 token matrix")
     for r in range(15):
-        row = state["grid"][r]
+        row = grid[r]
+        if isinstance(row, str) or not isinstance(row, list) or len(row) != 15:
+            raise ValueError("schema 4 grid must be a 15×15 token matrix")
         for c in range(15):
-            ch = row[c]
-            if ch != ".":
-                board.cells[r][c].letter = ch
-                board.cells[r][c].is_blank = False
+            cell_val = row[c]
+            if cell_val is None or cell_val == "":
+                continue
+            if not isinstance(cell_val, str):
+                raise ValueError("schema 4 cell must be a token string or empty")
+            board.cells[r][c].letter = cell_val
+            board.cells[r][c].is_blank = False
     for pos in state.get("blanks", []):
         rr, cc = pos["row"], pos["col"]
         if board.cells[rr][cc].letter:
@@ -158,36 +175,14 @@ def restore_board_from_save(state: dict[str, Any], premiums_path: str) -> Board:
 
 
 def restore_bag_from_save(state: dict[str, Any]) -> TileBag:
-    bag_serialized = state.get("bag", "")
+    _require_schema_4(state)
+    bag_tiles = state.get("bag")
+    if not isinstance(bag_tiles, list) or not all(isinstance(tok, str) for tok in bag_tiles):
+        raise ValueError("schema 4 bag must be a list of tile tokens")
     seed = state.get("seed", 0)
     variant_slug = state.get("variant", "english")
-
-    def _parse_bag(serialized: str) -> list[str]:
-        if not serialized:
-            return []
-        distribution = get_tile_distribution(variant_slug)
-        symbols = sorted(distribution.keys(), key=len, reverse=True)
-        if "?" not in distribution:
-            symbols.append("?")
-        result: list[str] = []
-        idx = 0
-        length = len(serialized)
-        while idx < length:
-            matched = None
-            for symbol in symbols:
-                if serialized.startswith(symbol, idx):
-                    matched = symbol
-                    idx += len(symbol)
-                    break
-            if matched is None:
-                matched = serialized[idx]
-                idx += 1
-            result.append(matched)
-        return result
-
-    letters = _parse_bag(bag_serialized)
-    if letters:
-        return TileBag(seed=seed, tiles=letters, variant=variant_slug)
+    if bag_tiles:
+        return TileBag(seed=seed, tiles=list(bag_tiles), variant=variant_slug)
     bag = TileBag(seed=seed, variant=variant_slug)
     bag.draw(bag.remaining())
     return bag

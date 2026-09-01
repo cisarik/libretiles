@@ -18,8 +18,10 @@ def _read_words(
     *,
     normalize: Callable[[str], str] | None,
     comment_prefix: str,
+    entry_predicate: Callable[[str], bool] | None,
 ) -> frozenset[str]:
     words: set[str] = set()
+    predicate = str.isalpha if entry_predicate is None else entry_predicate
     with path.open("r", encoding="utf-8", errors="strict") as f:
         for line in f:
             if comment_prefix and line.startswith(comment_prefix):
@@ -28,8 +30,9 @@ def _read_words(
             if not w:
                 continue
             normalized = normalize(w) if normalize else w
-            # Ignore headers or metadata lines; only alphabetic entries are playable words.
-            if not normalized.isalpha():
+            # Default predicate is str.isalpha — byte-identical English/Slovak
+            # indexes. Inject a predicate to admit tokens such as Catalan L·L.
+            if not predicate(normalized):
                 continue
             words.add(normalized)
     return frozenset(words)
@@ -55,7 +58,14 @@ class PrefixIndex:
         return index < len(self.words) and self.words[index].startswith(key)
 
 
-_INDEX_CACHE: dict[tuple[str, str], PrefixIndex] = {}
+_INDEX_CACHE: dict[tuple[str, str, str], PrefixIndex] = {}
+
+
+def _predicate_cache_key(entry_predicate: Callable[[str], bool] | None) -> str:
+    if entry_predicate is None:
+        return "default_isalpha"
+    name = getattr(entry_predicate, "__name__", "custom")
+    return f"{name}:{id(entry_predicate)}"
 
 
 def load_prefix_index(
@@ -63,15 +73,21 @@ def load_prefix_index(
     *,
     normalize: Callable[[str], str] | None = _nfc_casefold,
     comment_prefix: str = "#",
+    entry_predicate: Callable[[str], bool] | None = None,
 ) -> PrefixIndex:
     """Load (or reuse) a sorted-prefix index for `path`."""
     resolved = str(Path(path).resolve())
     norm_key = "none" if normalize is None else getattr(normalize, "__name__", "custom")
-    cache_key = (resolved, norm_key)
+    cache_key = (resolved, norm_key, _predicate_cache_key(entry_predicate))
     cached = _INDEX_CACHE.get(cache_key)
     if cached is not None:
         return cached
-    frozen = _read_words(Path(path), normalize=normalize, comment_prefix=comment_prefix)
+    frozen = _read_words(
+        Path(path),
+        normalize=normalize,
+        comment_prefix=comment_prefix,
+        entry_predicate=entry_predicate,
+    )
     index = PrefixIndex(words=tuple(sorted(frozen)), membership=frozen, normalize=normalize)
     _INDEX_CACHE[cache_key] = index
     return index
@@ -82,6 +98,12 @@ def load_dictionary(
     *,
     normalize: Callable[[str], str] | None = _nfc_casefold,
     comment_prefix: str = "#",
+    entry_predicate: Callable[[str], bool] | None = None,
 ) -> Callable[[str], bool]:
     """Load a word list (one word per line) into a frozenset and return a fast lookup function."""
-    return load_prefix_index(path, normalize=normalize, comment_prefix=comment_prefix).contains
+    return load_prefix_index(
+        path,
+        normalize=normalize,
+        comment_prefix=comment_prefix,
+        entry_predicate=entry_predicate,
+    ).contains

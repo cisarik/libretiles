@@ -6,7 +6,14 @@
   "source_url": "https://en.wikipedia.org/wiki/Scrabble_letter_distributions",
   "fetched_at": "2024-01-01T00:00:00",
   "dictionary_file": "slovak.txt",
-  "two_letter_allowlist_file": "slovak_two_letter.txt",
+  "two_tile_words_file": "slovak_two_tile_words.txt",
+  "alphabet_order": [
+    "A", "Á", "Ä", "B", "C", "Č", "D", "Ď", "DZ", "DŽ",
+    "E", "É", "F", "G", "H", "CH", "I", "Í", "J", "K",
+    "L", "Ĺ", "Ľ", "M", "N", "Ň", "O", "Ó", "Ô", "P",
+    "Q", "R", "Ŕ", "S", "Š", "T", "Ť", "U", "Ú", "V",
+    "W", "X", "Y", "Ý", "Z", "Ž"
+  ],
   "letters": [
     {"letter": "?", "count": 2, "points": 0},
     {"letter": "A", "count": 9, "points": 1},

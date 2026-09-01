@@ -20,7 +20,11 @@ from .rules import (
 )
 from .scoring import score_words
 from .types import Placement, ScoreBreakdown
+from .word_authority import WordAuthority
 
+# ASCII A–Z default for callers that pass no `letters`. This is not a variant
+# alphabet and is wrong for every non-English variant. Non-English callers
+# MUST pass `letters` (typically frozenset(variant.playable_letters)).
 LETTERS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 MAX_PLACEMENTS = 7
 
@@ -105,8 +109,15 @@ def evaluate_scoring_move(
     *,
     letters: frozenset[str] | None = None,
     variant: object = None,
+    authority: WordAuthority | None = None,
 ) -> LegalityResult:
-    """Return whether `placements` are a legal scoring move for `rack` on `board`."""
+    """Return whether `placements` are a legal scoring move for `rack` on `board`.
+
+    When ``authority`` is supplied it decides word legality over ``WordFound``
+    objects, including physical tile length. When absent, the existing
+    ``is_word`` path behaves exactly as today. F2 re-points services and
+    diagnostics at the authority and deletes ``_word_passes_dictionary``.
+    """
     alphabet = LETTERS if letters is None else letters
     if not placements:
         return _fail(REASON_EMPTY, "Move must contain at least one tile")
@@ -169,7 +180,15 @@ def evaluate_scoring_move(
             return _fail(REASON_NO_WORDS, "No words formed")
 
         words_coords = [(word.word, word.letters) for word in words_found]
-        word_results = tuple(WordVerdict(word=word, valid=is_word(word)) for word, _ in words_coords)
+        if authority is not None:
+            word_results = tuple(
+                WordVerdict(word=found.word, valid=authority.accepts_formed_word(found))
+                for found in words_found
+            )
+        else:
+            word_results = tuple(
+                WordVerdict(word=word, valid=is_word(word)) for word, _ in words_coords
+            )
         invalid = [verdict.word for verdict in word_results if not verdict.valid]
         if invalid:
             return LegalityResult(

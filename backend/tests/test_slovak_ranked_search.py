@@ -16,7 +16,7 @@ from gamecore.legality import REASON_INVALID_WORD, evaluate_scoring_move, placem
 from gamecore.move_search import RankedSearchResult, find_ranked_scoring_moves
 from gamecore.tiles import get_tile_points
 from gamecore.types import Placement
-from gamecore.variant_store import VariantDefinition, load_two_letter_allowlist, load_variant
+from gamecore.variant_store import VariantDefinition, load_two_tile_words, load_variant
 
 _REJECTED_CROSSES = frozenset({"ou", "am"})
 
@@ -34,7 +34,7 @@ class _SlovakSearch:
 def slovak_search() -> _SlovakSearch:
     variant = load_variant("slovak")
     index = load_prefix_index(variant.dictionary_path)
-    allowlist = load_two_letter_allowlist(variant)
+    allowlist = load_two_tile_words(variant)
     assert allowlist is not None
 
     def is_word(word: str) -> bool:

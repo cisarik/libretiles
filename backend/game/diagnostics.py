@@ -28,7 +28,7 @@ from gamecore.types import Placement
 from gamecore.variant_store import (
     VariantDefinition,
     list_installed_variants,
-    load_two_letter_allowlist,
+    load_two_tile_words,
     load_variant,
 )
 
@@ -328,7 +328,7 @@ def load_variant_context(variant_slug: str) -> VariantProbeContext:
     return VariantProbeContext(
         variant=variant,
         index=load_prefix_index(variant.dictionary_path),
-        allowlist=load_two_letter_allowlist(variant),
+        allowlist=load_two_tile_words(variant),
         letters=frozenset(variant.playable_letters),
     )
 

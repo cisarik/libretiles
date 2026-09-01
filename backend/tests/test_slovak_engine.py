@@ -22,7 +22,7 @@ from gamecore.legality import REASON_INVALID_BLANK, evaluate_scoring_move
 from gamecore.move_search import find_legal_scoring_move
 from gamecore.scoring import score_words
 from gamecore.types import Placement
-from gamecore.variant_store import load_two_letter_allowlist, load_variant
+from gamecore.variant_store import load_two_tile_words, load_variant
 
 
 @pytest.fixture(scope="module")
@@ -39,7 +39,7 @@ def test_slovak_diacritic_membership_only_on_slovak_path(
     collins_contains: Callable[[str], bool],
     slovak_index: Any,
 ) -> None:
-    allowlist = load_two_letter_allowlist(load_variant("slovak"))
+    allowlist = load_two_tile_words(load_variant("slovak"))
     assert _word_passes_dictionary(
         slovak_index.contains, "škola", two_letter_allowlist=allowlist
     ) is True
@@ -50,7 +50,7 @@ def test_slovak_diacritic_membership_only_on_slovak_path(
 
 
 def test_slovak_two_letter_b2_is_the_lexicon(slovak_index: Any) -> None:
-    allowlist = load_two_letter_allowlist(load_variant("slovak"))
+    allowlist = load_two_tile_words(load_variant("slovak"))
     assert allowlist is not None
     assert _word_passes_dictionary(
         slovak_index.contains, "as", two_letter_allowlist=allowlist
@@ -169,7 +169,7 @@ def test_empty_board_slovak_rack_finds_legal_word(slovak_index: Any) -> None:
         return _word_passes_dictionary(
             slovak_index.contains,
             word,
-            two_letter_allowlist=load_two_letter_allowlist(variant),
+            two_letter_allowlist=load_two_tile_words(variant),
         )
 
     result = find_legal_scoring_move(

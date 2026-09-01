@@ -113,7 +113,7 @@ class TestTileBag:
         from gamecore.state import restore_bag_from_save
 
         restored = restore_bag_from_save(
-            {"schema_version": "3", "bag": "", "seed": 42, "variant": "english"}
+            {"schema_version": "4", "bag": [], "seed": 42, "variant": "english"}
         )
         assert restored.remaining() == 0
 

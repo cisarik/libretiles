@@ -57,4 +57,5 @@ def no_gaps_in_line(
 
 
 def extract_all_words(board: Board, placements: list[Placement]) -> list[WordFound]:
+    """Complete formed words: physical length is len(word.letters) == len(word.tokens)."""
     return board.build_words_for_move(placements)

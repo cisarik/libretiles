@@ -1,7 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum, auto
+
+# One atomic tile token is one physical bag entry, rack entry, placement, or
+# board cell. It may contain more than one Unicode code point (Hungarian SZ).
+# Canonicalization is trim → NFC → uppercase → NFC. `len(str)` is a resource
+# bound only — physical tile count is always the length of a token container.
+TileToken = str
 
 
 class Direction(Enum):
@@ -15,8 +21,8 @@ class Placement:
 
     row: int
     col: int
-    letter: str  # 'A'..'Z' or '?' for blank
-    blank_as: str | None = None
+    letter: TileToken  # atomic token, or '?' for a physical blank
+    blank_as: TileToken | None = None
 
 
 @dataclass
@@ -28,6 +34,10 @@ class Move:
 class WordFound:
     word: str
     letters: list[tuple[int, int]]
+    # Realized tokens at `letters` coordinates. Third field with a default so
+    # positional WordFound(word, coords) constructions keep working. F2 will
+    # make tokens the storage identity; this slice only adds the field.
+    tokens: list[TileToken] = field(default_factory=list)
 
 
 @dataclass

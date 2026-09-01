@@ -23,6 +23,8 @@ def score_words(
     total_score = 0
     breakdowns: list[ScoreBreakdown] = []
     new_cells = set(placed.keys())
+    # Points are keyed by atomic tile token (cell.letter), never by slicing
+    # a concatenated string.
     tile_points = get_tile_points(cast(VariantDefinition | str | None, variant))
 
     for word, coords in words_coords:
