@@ -130,6 +130,41 @@ Login 401 must not distinguish an unknown user from a wrong password.
 | settings.gameVariant.slovak | Slovak | Slovenčina |
 | settings.rival.title | Your rival | Tvoj súper |
 | settings.rival.description | The administrator picks the rival for new games. | Súpera pre nové partie vyberá správca. |
+| settings.timeout.title | AI Thinking Time | Čas na rozmýšľanie AI |
+| settings.timeout.30 | Fast board read | Rýchle prečítanie plochy |
+| settings.timeout.60 | Balanced search | Vyvážené hľadanie |
+| settings.timeout.120 | Default thinking time | Predvolený čas na rozmýšľanie |
+| settings.timeout.180 | Tournament pace | Turnajové tempo |
+| settings.timeout.300 | Longest think | Najdlhšie rozmýšľanie |
+| settings.steps.title | Search Steps | Kroky hľadania |
+| settings.steps.10 | Quick tools | Rýchly priebeh |
+| settings.steps.20 | More tries | Viac pokusov |
+| settings.steps.30 | Focused search | Zamerané hľadanie |
+| settings.steps.50 | Default search depth | Predvolená hĺbka hľadania |
+| settings.steps.80 | Max pressure | Maximálny tlak |
+| settings.board.title | Board Surface | Povrch plochy |
+| settings.board.description | Saved on this device and used in the game board. | Uložené na tomto zariadení a použité v hracej ploche. |
+| settings.board.wood | Wood | Drevo |
+| settings.board.woodDesc | Classic walnut grain | Klasická orechová kresba |
+| settings.board.black | Black | Čierna |
+| settings.board.blackDesc | Glossy night lacquer | Lesklý nočný lak |
+| settings.board.green | Green | Zelená |
+| settings.board.greenDesc | Dark tournament felt | Tmavá turnajová plsť |
+| settings.board.active | Active | Aktívne |
+| settings.toggle.on | On | Zapnuté |
+| settings.toggle.off | Off | Vypnuté |
+| settings.shiny.title | Shiny Effect | Lesklý efekt |
+| settings.shiny.description | Turn the live sheen off when you want a lighter GPU load. | Vypni živý lesk, ak chceš menšiu záťaž GPU. |
+| settings.shiny.onDesc | Animated board sheen | Animovaný lesk plochy |
+| settings.shiny.offDesc | Lower GPU load | Menšia záťaž GPU |
+| settings.premium.title | Premium Look | Premium vzhľad |
+| settings.premium.description | Interactive amber spotlight for the game header and rack panel. | Interaktívne jantárové svetlo pre hlavičku hry a zásobník. |
+| settings.premium.onDesc | Premium interactive panels | Interaktívne premium panely |
+| settings.premium.offDesc | Classic dark surfaces | Klasické tmavé povrchy |
+| settings.backToGame | Back to game | Späť do hry |
+| settings.error.newGame | Could not start a fresh game right now. | Novú partiu sa teraz nepodarilo spustiť. |
+| settings.warn.accountSync | Account sync is unavailable right now. Settings still work locally on this device. | Synchronizácia účtu je momentálne nedostupná. Nastavenia fungujú lokálne na tomto zariadení. |
+| settings.warn.rivalRepair | A free rival is selected on this device. Account preference could not be repaired yet. | Súper je vybraný na tomto zariadení. Preferenciu účtu sa zatiaľ nepodarilo opraviť. |
 | draw.eyebrow | Starting draw | Ťah o poradie |
 | draw.title | Who opens the board | Kto začína partiu |
 | draw.subtitle | Whoever draws the tile closer to A starts. A blank always wins. | Začína ten, kto vytiahne písmeno bližšie k A. Žolík vyhráva vždy. |
@@ -310,3 +345,13 @@ AI move route and re-derived by `describeAiTurnTelemetry`.
 | overlay.best | Best | Najlepší |
 | overlay.bestBadge | BEST | NAJLEPŠÍ |
 | overlay.filtering | Filtering weak or invalid lines before showing a serious move... | Odfiltrúvam slabé a neplatné ťahy, kým nenájdem vážny ťah... |
+| overlay.stats.tried (fn) | {count} tried | Skúsené: {count} |
+| overlay.stats.valid (fn) | {count} valid | Platné: {count} |
+| overlay.stats.rejected (fn) | {count} rejected | Zamietnuté: {count} |
+
+The three `overlay.stats.*` keys use colon-labels for the same grammatical
+reason as `controls.tilesSelected`: one adjective form cannot agree correctly
+across all counted forms.
+
+The `TIMEOUT_CHOICES` and `STEP_CHOICES` labels are deliberately not localized;
+they are compact unit abbreviations and numbers.

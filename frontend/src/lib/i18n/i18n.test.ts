@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import SettingsPage from "@/app/settings/page";
 import { variantDisplayName } from "@/components/settings/GameLanguagePanel";
 import type { VariantSummary } from "@/lib/types";
 
@@ -20,6 +21,12 @@ import {
 import { plFn, plText } from "./messages.pl";
 import { skFn, skText } from "./messages.sk";
 import { pluralCs, pluralPl, pluralSk } from "./plural";
+
+const {
+  BOARD_THEME_CHOICES,
+  STEP_CHOICES,
+  TIMEOUT_CHOICES,
+} = SettingsPage;
 
 const ENUMERATION_FRAGMENTS = [
   "neexistuje",
@@ -793,6 +800,205 @@ describe("AC-NO-TELEMETRY-KEY en catalog excludes overlay telemetry prose", () =
       const lower = value.toLowerCase();
       for (const fragment of fragments) {
         expect(lower).not.toContain(fragment);
+      }
+    }
+  });
+});
+
+const SETTINGS_EXPECTED = {
+  "settings.timeout.30": {
+    en: "Fast board read",
+    sk: "Rýchle prečítanie plochy",
+    cs: "Rychlé přečtení desky",
+    pl: "Szybkie odczytanie planszy",
+  },
+  "settings.timeout.60": {
+    en: "Balanced search",
+    sk: "Vyvážené hľadanie",
+    cs: "Vyvážené hledání",
+    pl: "Wyważone szukanie",
+  },
+  "settings.timeout.120": {
+    en: "Default thinking time",
+    sk: "Predvolený čas na rozmýšľanie",
+    cs: "Výchozí čas na rozmýšlení",
+    pl: "Domyślny czas myślenia",
+  },
+  "settings.timeout.180": {
+    en: "Tournament pace",
+    sk: "Turnajové tempo",
+    cs: "Turnajové tempo",
+    pl: "Tempo turniejowe",
+  },
+  "settings.timeout.300": {
+    en: "Longest think",
+    sk: "Najdlhšie rozmýšľanie",
+    cs: "Nejdelší rozmýšlení",
+    pl: "Najdłuższe myślenie",
+  },
+  "settings.steps.10": {
+    en: "Quick tools",
+    sk: "Rýchly priebeh",
+    cs: "Rychlý průběh",
+    pl: "Szybki przebieg",
+  },
+  "settings.steps.20": {
+    en: "More tries",
+    sk: "Viac pokusov",
+    cs: "Více pokusů",
+    pl: "Więcej prób",
+  },
+  "settings.steps.30": {
+    en: "Focused search",
+    sk: "Zamerané hľadanie",
+    cs: "Zaměřené hledání",
+    pl: "Skoncentrowane szukanie",
+  },
+  "settings.steps.50": {
+    en: "Default search depth",
+    sk: "Predvolená hĺbka hľadania",
+    cs: "Výchozí hloubka hledání",
+    pl: "Domyślna głębokość szukania",
+  },
+  "settings.steps.80": {
+    en: "Max pressure",
+    sk: "Maximálny tlak",
+    cs: "Maximální tlak",
+    pl: "Maksymalny nacisk",
+  },
+  "settings.board.wood": {
+    en: "Wood",
+    sk: "Drevo",
+    cs: "Dřevo",
+    pl: "Drewno",
+  },
+  "settings.board.black": {
+    en: "Black",
+    sk: "Čierna",
+    cs: "Černá",
+    pl: "Czarny",
+  },
+  "settings.board.green": {
+    en: "Green",
+    sk: "Zelená",
+    cs: "Zelená",
+    pl: "Zielony",
+  },
+} as const;
+
+describe("AC-SETTINGS-4 settings choice copy", () => {
+  it("renders timeout, step, and board labels exactly in all four locales", () => {
+    for (const [key, expected] of Object.entries(SETTINGS_EXPECTED)) {
+      for (const locale of LOCALES) {
+        expect(t(locale, key as keyof typeof enText)).toBe(expected[locale]);
+      }
+    }
+  });
+});
+
+const TOGGLE_EXPECTED = {
+  "settings.toggle.on": {
+    en: "On",
+    sk: "Zapnuté",
+    cs: "Zapnuto",
+    pl: "Włączone",
+  },
+  "settings.toggle.off": {
+    en: "Off",
+    sk: "Vypnuté",
+    cs: "Vypnuto",
+    pl: "Wyłączone",
+  },
+  "settings.shiny.onDesc": {
+    en: "Animated board sheen",
+    sk: "Animovaný lesk plochy",
+    cs: "Animovaný lesk desky",
+    pl: "Animowany błysk planszy",
+  },
+  "settings.shiny.offDesc": {
+    en: "Lower GPU load",
+    sk: "Menšia záťaž GPU",
+    cs: "Menší zátěž GPU",
+    pl: "Mniejsze obciążenie GPU",
+  },
+  "settings.premium.onDesc": {
+    en: "Premium interactive panels",
+    sk: "Interaktívne premium panely",
+    cs: "Interaktivní premium panely",
+    pl: "Interaktywne panele premium",
+  },
+  "settings.premium.offDesc": {
+    en: "Classic dark surfaces",
+    sk: "Klasické tmavé povrchy",
+    cs: "Klasické tmavé povrchy",
+    pl: "Klasyczne ciemne powierzchnie",
+  },
+} as const;
+
+describe("AC-TOGGLE-4 shared labels and distinct descriptions", () => {
+  it("renders the authored toggle copy and keeps all four descriptions distinct", () => {
+    for (const [key, expected] of Object.entries(TOGGLE_EXPECTED)) {
+      for (const locale of LOCALES) {
+        expect(t(locale, key as keyof typeof enText)).toBe(expected[locale]);
+      }
+    }
+    const descriptionKeys = [
+      "settings.shiny.onDesc",
+      "settings.shiny.offDesc",
+      "settings.premium.onDesc",
+      "settings.premium.offDesc",
+    ] as const;
+    for (const locale of LOCALES) {
+      expect(new Set(descriptionKeys.map((key) => t(locale, key))).size).toBe(4);
+    }
+  });
+});
+
+describe("AC-STATS-4 overlay stats", () => {
+  it("interpolates count in every locale without English status words in Slavic copy", () => {
+    const keys = [
+      "overlay.stats.tried",
+      "overlay.stats.valid",
+      "overlay.stats.rejected",
+    ] as const;
+    for (const locale of LOCALES) {
+      for (const key of keys) {
+        expect(tf(locale, key, { count: 3 })).toContain("3");
+      }
+    }
+    expect(tf("sk", "overlay.stats.tried", { count: 3 })).toBe("Skúsené: 3");
+    expect(tf("sk", "overlay.stats.valid", { count: 3 })).toBe("Platné: 3");
+    expect(tf("sk", "overlay.stats.rejected", { count: 3 })).toBe(
+      "Zamietnuté: 3",
+    );
+    for (const locale of ["sk", "cs", "pl"] as const) {
+      for (const key of keys) {
+        expect(tf(locale, key, { count: 3 }).toLowerCase()).not.toMatch(
+          /tried|valid|rejected/,
+        );
+      }
+    }
+  });
+});
+
+describe("AC-KEYTYPED settings option keys", () => {
+  it("resolves every constant-array key to non-empty copy in all four locales", () => {
+    const textKeys = [
+      ...TIMEOUT_CHOICES.map((choice) =>
+        "descriptionKey" in choice ? choice.descriptionKey : undefined,
+      ),
+      ...STEP_CHOICES.map((choice) =>
+        "descriptionKey" in choice ? choice.descriptionKey : undefined,
+      ),
+      ...BOARD_THEME_CHOICES.flatMap((choice) => [
+        "labelKey" in choice ? choice.labelKey : undefined,
+        "descriptionKey" in choice ? choice.descriptionKey : undefined,
+      ]),
+    ];
+    for (const key of textKeys) {
+      expect(key).toBeDefined();
+      for (const locale of LOCALES) {
+        expect(t(locale, key!)).not.toBe("");
       }
     }
   });

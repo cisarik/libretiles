@@ -244,7 +244,7 @@ export function FallbackAttemptProgress() {
 }
 
 export function AIThinkingOverlay() {
-  const { t } = useT();
+  const { t, tf } = useT();
   const aiThinking = useGameStore((s) => s.aiThinking);
   const aiCountdown = useGameStore((s) => s.aiCountdown);
   const aiCandidates = useGameStore((s) => s.aiCandidates);
@@ -366,11 +366,15 @@ export function AIThinkingOverlay() {
 
             {/* Stats bar */}
             <div className="flex items-center justify-between text-xs text-stone-400 border-t border-stone-800/50 pt-2">
-              <span>{aiCandidates.length} tried</span>
+              <span>{tf("overlay.stats.tried", { count: aiCandidates.length })}</span>
               <span className="text-sm font-bold text-white">
-                {validSorted.length} valid
+                {tf("overlay.stats.valid", { count: validSorted.length })}
               </span>
-              <span>{rejectedCount > 0 ? `${rejectedCount} rejected` : ""}</span>
+              <span>
+                {rejectedCount > 0
+                  ? tf("overlay.stats.rejected", { count: rejectedCount })
+                  : ""}
+              </span>
             </div>
           </motion.div>
         </motion.div>

@@ -10,7 +10,7 @@ import {
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { useGameStore, type BoardTheme } from "@/hooks/useGameStore";
-import { useLocale, useT } from "@/lib/i18n";
+import { useLocale, useT, type TextKey } from "@/lib/i18n";
 import type { Locale } from "@/lib/i18n/locales";
 import { api } from "@/lib/api";
 import { resolveEligibleModelId } from "@/lib/model-catalog";
@@ -22,30 +22,50 @@ import type { AIModel, VariantSummary } from "@/lib/types";
 import { reconcileSelectedVariantSlug } from "@/lib/variants";
 import { GameLanguagePanel } from "@/components/settings/GameLanguagePanel";
 
-const TIMEOUT_CHOICES = [
-  { value: 30, label: "30s", description: "Fast board read" },
-  { value: 60, label: "1m", description: "Balanced search" },
-  { value: 120, label: "2m", description: "Default thinking time" },
-  { value: 180, label: "3m", description: "Tournament pace" },
-  { value: 300, label: "5m", description: "Longest think" },
+const TIMEOUT_CHOICES: Array<{
+  value: number;
+  label: string;
+  descriptionKey: TextKey;
+}> = [
+  { value: 30, label: "30s", descriptionKey: "settings.timeout.30" },
+  { value: 60, label: "1m", descriptionKey: "settings.timeout.60" },
+  { value: 120, label: "2m", descriptionKey: "settings.timeout.120" },
+  { value: 180, label: "3m", descriptionKey: "settings.timeout.180" },
+  { value: 300, label: "5m", descriptionKey: "settings.timeout.300" },
 ];
 
-const STEP_CHOICES = [
-  { value: 10, label: "10", description: "Quick tools" },
-  { value: 20, label: "20", description: "More tries" },
-  { value: 30, label: "30", description: "Focused search" },
-  { value: 50, label: "50", description: "Default search depth" },
-  { value: 80, label: "80", description: "Max pressure" },
+const STEP_CHOICES: Array<{
+  value: number;
+  label: string;
+  descriptionKey: TextKey;
+}> = [
+  { value: 10, label: "10", descriptionKey: "settings.steps.10" },
+  { value: 20, label: "20", descriptionKey: "settings.steps.20" },
+  { value: 30, label: "30", descriptionKey: "settings.steps.30" },
+  { value: 50, label: "50", descriptionKey: "settings.steps.50" },
+  { value: 80, label: "80", descriptionKey: "settings.steps.80" },
 ];
 
 const BOARD_THEME_CHOICES: Array<{
   value: BoardTheme;
-  label: string;
-  description: string;
+  labelKey: TextKey;
+  descriptionKey: TextKey;
 }> = [
-  { value: "wood", label: "Wood", description: "Classic walnut grain" },
-  { value: "black", label: "Black", description: "Glossy night lacquer" },
-  { value: "green", label: "Green", description: "Dark tournament felt" },
+  {
+    value: "wood",
+    labelKey: "settings.board.wood",
+    descriptionKey: "settings.board.woodDesc",
+  },
+  {
+    value: "black",
+    labelKey: "settings.board.black",
+    descriptionKey: "settings.board.blackDesc",
+  },
+  {
+    value: "green",
+    labelKey: "settings.board.green",
+    descriptionKey: "settings.board.greenDesc",
+  },
 ];
 
 const CLOSE_DELAY_MS = 220;
@@ -55,14 +75,11 @@ const MODAL_TRANSITION = {
   ease: [0.22, 1, 0.36, 1] as const,
 };
 
-const CATALOG_EMPTY_MESSAGE =
-  "The rival catalog is empty. Seed the free catalog to play AI matches.";
-
 type NoticeTone = "success" | "warning" | "info";
 
 type Notice = {
   tone: NoticeTone;
-  text: string;
+  textKey: TextKey;
 } | null;
 
 function noticeClasses(tone: NoticeTone): string {
@@ -117,10 +134,11 @@ function ChoiceGrid({
 }: {
   title: string;
   description?: string;
-  choices: Array<{ value: number; label: string; description: string }>;
+  choices: Array<{ value: number; label: string; descriptionKey: TextKey }>;
   selectedValue: number;
   onSelect: (value: number) => void;
 }) {
+  const { t } = useT();
   return (
     <SettingsPanel title={title} description={description}>
       <div className="grid grid-cols-[repeat(auto-fit,minmax(132px,1fr))] gap-3">
@@ -147,7 +165,7 @@ function ChoiceGrid({
                 {choice.label}
               </div>
               <div className="mt-2 text-[0.92rem] uppercase leading-7 tracking-[0.1em] text-stone-400 sm:text-[0.98rem]">
-                {choice.description}
+                {t(choice.descriptionKey)}
               </div>
             </motion.button>
           );
@@ -164,10 +182,11 @@ function BoardSurfacePanel({
   selectedTheme: BoardTheme;
   onSelect: (theme: BoardTheme) => void;
 }) {
+  const { t } = useT();
   return (
     <SettingsPanel
-      title="Board Surface"
-      description="Saved on this device and used in the game board."
+      title={t("settings.board.title")}
+      description={t("settings.board.description")}
     >
       <div className="grid grid-cols-[repeat(auto-fit,minmax(170px,1fr))] gap-3">
         {BOARD_THEME_CHOICES.map((choice) => {
@@ -191,16 +210,16 @@ function BoardSurfacePanel({
               />
               <div className="mt-3 flex items-center justify-between gap-3">
                 <span className="font-gold-dark text-[1.2rem] font-black leading-none">
-                  {choice.label}
+                  {t(choice.labelKey)}
                 </span>
                 {isSelected ? (
                   <span className="rounded-full border border-amber-300/24 bg-amber-300/12 px-2.5 py-1 text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-amber-100">
-                    Active
+                    {t("settings.board.active")}
                   </span>
                 ) : null}
               </div>
               <div className="mt-2 text-[0.85rem] uppercase tracking-[0.1em] text-stone-400">
-                {choice.description}
+                {t(choice.descriptionKey)}
               </div>
             </motion.button>
           );
@@ -217,15 +236,24 @@ function ShinyEffectPanel({
   enabled: boolean;
   onToggle: (enabled: boolean) => void;
 }) {
+  const { t } = useT();
   return (
     <SettingsPanel
-      title="Shiny Effect"
-      description="Turn the live sheen off when you want a lighter GPU load."
+      title={t("settings.shiny.title")}
+      description={t("settings.shiny.description")}
     >
       <div className="grid grid-cols-2 gap-3">
         {[
-          { value: true, label: "On", description: "Animated board sheen" },
-          { value: false, label: "Off", description: "Lower GPU load" },
+          {
+            value: true,
+            label: t("settings.toggle.on"),
+            description: t("settings.shiny.onDesc"),
+          },
+          {
+            value: false,
+            label: t("settings.toggle.off"),
+            description: t("settings.shiny.offDesc"),
+          },
         ].map((choice) => {
           const isSelected = enabled === choice.value;
           return (
@@ -266,15 +294,24 @@ function PremiumLookPanel({
   enabled: boolean;
   onToggle: (enabled: boolean) => void;
 }) {
+  const { t } = useT();
   return (
     <SettingsPanel
-      title="Premium Look"
-      description="Interactive amber spotlight for the game header and rack panel."
+      title={t("settings.premium.title")}
+      description={t("settings.premium.description")}
     >
       <div className="grid grid-cols-2 gap-3">
         {[
-          { value: true, label: "On", description: "Premium interactive panels" },
-          { value: false, label: "Off", description: "Classic dark surfaces" },
+          {
+            value: true,
+            label: t("settings.toggle.on"),
+            description: t("settings.premium.onDesc"),
+          },
+          {
+            value: false,
+            label: t("settings.toggle.off"),
+            description: t("settings.premium.offDesc"),
+          },
         ].map((choice) => {
           const isSelected = enabled === choice.value;
           return (
@@ -364,7 +401,7 @@ function InterfaceLanguagePanel() {
   );
 }
 
-export default function SettingsPage() {
+function SettingsPage() {
   const router = useRouter();
   const { t } = useT();
   const token = useGameStore((s) => s.token);
@@ -441,7 +478,7 @@ export default function SettingsPage() {
         if (!profileResult.profile && token) {
           setNotice({
             tone: "info",
-            text: "Account sync is unavailable right now. Settings still work locally on this device.",
+            textKey: "settings.warn.accountSync",
           });
         }
 
@@ -450,7 +487,7 @@ export default function SettingsPage() {
         if (!resolved) {
           setNotice({
             tone: "warning",
-            text: CATALOG_EMPTY_MESSAGE,
+            textKey: "play.error.catalogEmpty",
           });
           return;
         }
@@ -466,7 +503,7 @@ export default function SettingsPage() {
             if (!cancelled) {
               setNotice({
                 tone: "info",
-                text: "A free rival is selected on this device. Account preference could not be repaired yet.",
+                textKey: "settings.warn.rivalRepair",
               });
             }
           }
@@ -537,7 +574,7 @@ export default function SettingsPage() {
     } catch {
       setNotice({
         tone: "warning",
-        text: "Could not start a fresh game right now.",
+        textKey: "settings.error.newGame",
       });
     } finally {
       setStartingNewGame(false);
@@ -572,7 +609,7 @@ export default function SettingsPage() {
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-3">
               <h1 className="font-gold-shiny text-3xl font-black tracking-tight sm:text-[2.7rem]">
-                Settings
+                {t("nav.settings")}
               </h1>
             </div>
             <div className="mt-4 flex flex-wrap gap-2">
@@ -584,7 +621,7 @@ export default function SettingsPage() {
                 className="rounded-full border border-amber-300/26 bg-[linear-gradient(135deg,rgba(251,191,36,0.12),rgba(255,255,255,0.04))] px-5 py-2.5 shadow-[0_10px_24px_rgba(0,0,0,0.18),0_0_24px_rgba(251,191,36,0.08)] transition-[border-color,box-shadow,background-color,transform] duration-300 hover:border-amber-200/50 hover:bg-[linear-gradient(135deg,rgba(251,191,36,0.18),rgba(255,255,255,0.06))] hover:shadow-[0_14px_30px_rgba(0,0,0,0.24),0_0_30px_rgba(251,191,36,0.14)]"
               >
                 <span className="font-gold-shiny text-[1.12rem] font-black leading-none">
-                  Back to game
+                  {t("settings.backToGame")}
                 </span>
               </motion.button>
               <motion.button
@@ -596,7 +633,7 @@ export default function SettingsPage() {
                 className="rounded-full border border-amber-200/40 bg-[linear-gradient(135deg,rgba(251,191,36,0.18),rgba(245,158,11,0.08))] px-5 py-2.5 shadow-[0_10px_24px_rgba(251,191,36,0.12),0_0_28px_rgba(251,191,36,0.12)] transition-[border-color,box-shadow,background-color,transform] duration-300 hover:border-amber-100/60 hover:bg-[linear-gradient(135deg,rgba(251,191,36,0.24),rgba(245,158,11,0.12))] hover:shadow-[0_12px_28px_rgba(251,191,36,0.18),0_0_34px_rgba(251,191,36,0.18)] disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <span className="font-gold-shiny text-[1.12rem] font-black leading-none">
-                  {startingNewGame ? "Starting..." : "New game"}
+                  {startingNewGame ? t("game.starting") : t("game.newGame")}
                 </span>
               </motion.button>
             </div>
@@ -610,7 +647,7 @@ export default function SettingsPage() {
                   notice.tone,
                 )}`}
               >
-                {notice.text}
+                {t(notice.textKey)}
               </motion.div>
             )}
           </div>
@@ -631,7 +668,7 @@ export default function SettingsPage() {
                   </div>
                 ) : (
                   <div className="rounded-[1.15rem] border border-white/8 bg-stone-950/72 px-4 py-5 text-sm text-stone-400">
-                    {CATALOG_EMPTY_MESSAGE}
+                    {t("play.error.catalogEmpty")}
                   </div>
                 )}
               </SettingsPanel>
@@ -646,14 +683,14 @@ export default function SettingsPage() {
               />
 
               <ChoiceGrid
-                title="AI Thinking Time"
+                title={t("settings.timeout.title")}
                 choices={TIMEOUT_CHOICES}
                 selectedValue={aiTimeout}
                 onSelect={setAITimeout}
               />
 
               <ChoiceGrid
-                title="Search Steps"
+                title={t("settings.steps.title")}
                 choices={STEP_CHOICES}
                 selectedValue={aiMaxSteps}
                 onSelect={setAIMaxSteps}
@@ -680,3 +717,9 @@ export default function SettingsPage() {
     </div>
   );
 }
+
+SettingsPage.TIMEOUT_CHOICES = TIMEOUT_CHOICES;
+SettingsPage.STEP_CHOICES = STEP_CHOICES;
+SettingsPage.BOARD_THEME_CHOICES = BOARD_THEME_CHOICES;
+
+export default SettingsPage;

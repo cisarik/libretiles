@@ -39,6 +39,46 @@ export const csText: Record<TextKey, string> = {
   "error.throttled.oneMinute": "Příliš mnoho požadavků. Zkus to znovu asi za minutu.",
   "error.unavailable": "Služba je momentálně nedostupná. Zkus to znovu.",
   "error.generic": "Něco se pokazilo. Zkus to znovu.",
+  "settings.timeout.title": "Čas na rozmýšlení AI",
+  "settings.timeout.30": "Rychlé přečtení desky",
+  "settings.timeout.60": "Vyvážené hledání",
+  "settings.timeout.120": "Výchozí čas na rozmýšlení",
+  "settings.timeout.180": "Turnajové tempo",
+  "settings.timeout.300": "Nejdelší rozmýšlení",
+  "settings.steps.title": "Kroky hledání",
+  "settings.steps.10": "Rychlý průběh",
+  "settings.steps.20": "Více pokusů",
+  "settings.steps.30": "Zaměřené hledání",
+  "settings.steps.50": "Výchozí hloubka hledání",
+  "settings.steps.80": "Maximální tlak",
+  "settings.board.title": "Povrch desky",
+  "settings.board.description":
+    "Uloženo na tomto zařízení a použito v hrací desce.",
+  "settings.board.wood": "Dřevo",
+  "settings.board.woodDesc": "Klasická ořechová kresba",
+  "settings.board.black": "Černá",
+  "settings.board.blackDesc": "Lesklý noční lak",
+  "settings.board.green": "Zelená",
+  "settings.board.greenDesc": "Tmavá turnajová plsť",
+  "settings.board.active": "Aktivní",
+  "settings.toggle.on": "Zapnuto",
+  "settings.toggle.off": "Vypnuto",
+  "settings.shiny.title": "Lesklý efekt",
+  "settings.shiny.description":
+    "Vypni živý lesk, když chceš menší zátěž GPU.",
+  "settings.shiny.onDesc": "Animovaný lesk desky",
+  "settings.shiny.offDesc": "Menší zátěž GPU",
+  "settings.premium.title": "Premium vzhled",
+  "settings.premium.description":
+    "Interaktivní jantarové světlo pro hlavičku hry a zásobník.",
+  "settings.premium.onDesc": "Interaktivní premium panely",
+  "settings.premium.offDesc": "Klasické tmavé povrchy",
+  "settings.backToGame": "Zpět do hry",
+  "settings.error.newGame": "Novou partii se teď nepodařilo spustit.",
+  "settings.warn.accountSync":
+    "Synchronizace účtu je momentálně nedostupná. Nastavení fungují lokálně na tomto zařízení.",
+  "settings.warn.rivalRepair":
+    "Soupeř je vybraný na tomto zařízení. Preferenci účtu se zatím nepodařilo opravit.",
   "settings.uiLanguage.title": "Jazyk rozhraní",
   "settings.uiLanguage.description":
     "Menu, tlačítka a zprávy. Změna platí okamžitě a jen na tomto zařízení.",
@@ -203,6 +243,9 @@ export const csText: Record<TextKey, string> = {
 };
 
 export const csFn: { [K in FnKey]: (typeof enFn)[K] } = {
+  "overlay.stats.tried": (p) => `Zkoušené: ${p.count}`,
+  "overlay.stats.valid": (p) => `Platné: ${p.count}`,
+  "overlay.stats.rejected": (p) => `Zamítnuté: ${p.count}`,
   "error.throttled.minutes": (p) =>
     `Příliš mnoho požadavků. Zkus to znovu asi za ${p.minutes} ` +
     pluralCs(p.minutes, "minutu", "minuty", "minut") +

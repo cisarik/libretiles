@@ -39,6 +39,46 @@ export const skText: Record<TextKey, string> = {
   "error.throttled.oneMinute": "Priveľa požiadaviek. Skús znova asi za minútu.",
   "error.unavailable": "Služba je momentálne nedostupná. Skús to znova.",
   "error.generic": "Niečo sa pokazilo. Skús to znova.",
+  "settings.timeout.title": "Čas na rozmýšľanie AI",
+  "settings.timeout.30": "Rýchle prečítanie plochy",
+  "settings.timeout.60": "Vyvážené hľadanie",
+  "settings.timeout.120": "Predvolený čas na rozmýšľanie",
+  "settings.timeout.180": "Turnajové tempo",
+  "settings.timeout.300": "Najdlhšie rozmýšľanie",
+  "settings.steps.title": "Kroky hľadania",
+  "settings.steps.10": "Rýchly priebeh",
+  "settings.steps.20": "Viac pokusov",
+  "settings.steps.30": "Zamerané hľadanie",
+  "settings.steps.50": "Predvolená hĺbka hľadania",
+  "settings.steps.80": "Maximálny tlak",
+  "settings.board.title": "Povrch plochy",
+  "settings.board.description":
+    "Uložené na tomto zariadení a použité v hracej ploche.",
+  "settings.board.wood": "Drevo",
+  "settings.board.woodDesc": "Klasická orechová kresba",
+  "settings.board.black": "Čierna",
+  "settings.board.blackDesc": "Lesklý nočný lak",
+  "settings.board.green": "Zelená",
+  "settings.board.greenDesc": "Tmavá turnajová plsť",
+  "settings.board.active": "Aktívne",
+  "settings.toggle.on": "Zapnuté",
+  "settings.toggle.off": "Vypnuté",
+  "settings.shiny.title": "Lesklý efekt",
+  "settings.shiny.description":
+    "Vypni živý lesk, ak chceš menšiu záťaž GPU.",
+  "settings.shiny.onDesc": "Animovaný lesk plochy",
+  "settings.shiny.offDesc": "Menšia záťaž GPU",
+  "settings.premium.title": "Premium vzhľad",
+  "settings.premium.description":
+    "Interaktívne jantárové svetlo pre hlavičku hry a zásobník.",
+  "settings.premium.onDesc": "Interaktívne premium panely",
+  "settings.premium.offDesc": "Klasické tmavé povrchy",
+  "settings.backToGame": "Späť do hry",
+  "settings.error.newGame": "Novú partiu sa teraz nepodarilo spustiť.",
+  "settings.warn.accountSync":
+    "Synchronizácia účtu je momentálne nedostupná. Nastavenia fungujú lokálne na tomto zariadení.",
+  "settings.warn.rivalRepair":
+    "Súper je vybraný na tomto zariadení. Preferenciu účtu sa zatiaľ nepodarilo opraviť.",
   "settings.uiLanguage.title": "Jazyk rozhrania",
   "settings.uiLanguage.description":
     "Menu, tlačidlá a správy. Zmena platí okamžite a len na tomto zariadení.",
@@ -203,6 +243,9 @@ export const skText: Record<TextKey, string> = {
 };
 
 export const skFn: { [K in FnKey]: (typeof enFn)[K] } = {
+  "overlay.stats.tried": (p) => `Skúsené: ${p.count}`,
+  "overlay.stats.valid": (p) => `Platné: ${p.count}`,
+  "overlay.stats.rejected": (p) => `Zamietnuté: ${p.count}`,
   "error.throttled.minutes": (p) =>
     `Priveľa požiadaviek. Skús znova asi za ${p.minutes} ` +
     pluralSk(p.minutes, "minútu", "minúty", "minút") +

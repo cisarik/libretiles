@@ -40,6 +40,47 @@ export const plText: Record<TextKey, string> = {
   "error.throttled.oneMinute": "Zbyt wiele żądań. Spróbuj ponownie za około minutę.",
   "error.unavailable": "Usługa jest chwilowo niedostępna. Spróbuj ponownie.",
   "error.generic": "Coś poszło nie tak. Spróbuj ponownie.",
+  "settings.timeout.title": "Czas myślenia AI",
+  "settings.timeout.30": "Szybkie odczytanie planszy",
+  "settings.timeout.60": "Wyważone szukanie",
+  "settings.timeout.120": "Domyślny czas myślenia",
+  "settings.timeout.180": "Tempo turniejowe",
+  "settings.timeout.300": "Najdłuższe myślenie",
+  "settings.steps.title": "Kroki szukania",
+  "settings.steps.10": "Szybki przebieg",
+  "settings.steps.20": "Więcej prób",
+  "settings.steps.30": "Skoncentrowane szukanie",
+  "settings.steps.50": "Domyślna głębokość szukania",
+  "settings.steps.80": "Maksymalny nacisk",
+  "settings.board.title": "Powierzchnia planszy",
+  "settings.board.description":
+    "Zapisane na tym urządzeniu i używane na planszy.",
+  "settings.board.wood": "Drewno",
+  "settings.board.woodDesc": "Klasyczny rysunek orzecha",
+  "settings.board.black": "Czarny",
+  "settings.board.blackDesc": "Błyszczący nocny lakier",
+  "settings.board.green": "Zielony",
+  "settings.board.greenDesc": "Ciemne turniejowe sukno",
+  "settings.board.active": "Aktywne",
+  "settings.toggle.on": "Włączone",
+  "settings.toggle.off": "Wyłączone",
+  "settings.shiny.title": "Efekt błysku",
+  "settings.shiny.description":
+    "Wyłącz żywy błysk, gdy chcesz mniejsze obciążenie GPU.",
+  "settings.shiny.onDesc": "Animowany błysk planszy",
+  "settings.shiny.offDesc": "Mniejsze obciążenie GPU",
+  "settings.premium.title": "Wygląd premium",
+  "settings.premium.description":
+    "Interaktywne bursztynowe światło dla nagłówka gry i stojaka.",
+  "settings.premium.onDesc": "Interaktywne panele premium",
+  "settings.premium.offDesc": "Klasyczne ciemne powierzchnie",
+  "settings.backToGame": "Powrót do gry",
+  "settings.error.newGame":
+    "Nie udało się teraz rozpocząć nowej partii.",
+  "settings.warn.accountSync":
+    "Synchronizacja konta jest chwilowo niedostępna. Ustawienia działają lokalnie na tym urządzeniu.",
+  "settings.warn.rivalRepair":
+    "Rywal jest wybrany na tym urządzeniu. Preferencji konta nie udało się jeszcze naprawić.",
   "settings.uiLanguage.title": "Język interfejsu",
   "settings.uiLanguage.description":
     "Menu, przyciski i komunikaty. Zmiana działa natychmiast i tylko na tym urządzeniu.",
@@ -205,6 +246,9 @@ export const plText: Record<TextKey, string> = {
 };
 
 export const plFn: { [K in FnKey]: (typeof enFn)[K] } = {
+  "overlay.stats.tried": (p) => `Sprawdzone: ${p.count}`,
+  "overlay.stats.valid": (p) => `Poprawne: ${p.count}`,
+  "overlay.stats.rejected": (p) => `Odrzucone: ${p.count}`,
   "error.throttled.minutes": (p) =>
     `Zbyt wiele żądań. Spróbuj ponownie za około ${p.minutes} ` +
     pluralPl(p.minutes, "minutę", "minuty", "minut") +

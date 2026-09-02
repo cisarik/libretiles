@@ -34,6 +34,46 @@ export const enText = {
   "error.throttled.oneMinute": "Too many requests. Try again in about a minute.",
   "error.unavailable": "The service is temporarily unavailable. Please try again.",
   "error.generic": "Something went wrong. Please try again.",
+  "settings.timeout.title": "AI Thinking Time",
+  "settings.timeout.30": "Fast board read",
+  "settings.timeout.60": "Balanced search",
+  "settings.timeout.120": "Default thinking time",
+  "settings.timeout.180": "Tournament pace",
+  "settings.timeout.300": "Longest think",
+  "settings.steps.title": "Search Steps",
+  "settings.steps.10": "Quick tools",
+  "settings.steps.20": "More tries",
+  "settings.steps.30": "Focused search",
+  "settings.steps.50": "Default search depth",
+  "settings.steps.80": "Max pressure",
+  "settings.board.title": "Board Surface",
+  "settings.board.description":
+    "Saved on this device and used in the game board.",
+  "settings.board.wood": "Wood",
+  "settings.board.woodDesc": "Classic walnut grain",
+  "settings.board.black": "Black",
+  "settings.board.blackDesc": "Glossy night lacquer",
+  "settings.board.green": "Green",
+  "settings.board.greenDesc": "Dark tournament felt",
+  "settings.board.active": "Active",
+  "settings.toggle.on": "On",
+  "settings.toggle.off": "Off",
+  "settings.shiny.title": "Shiny Effect",
+  "settings.shiny.description":
+    "Turn the live sheen off when you want a lighter GPU load.",
+  "settings.shiny.onDesc": "Animated board sheen",
+  "settings.shiny.offDesc": "Lower GPU load",
+  "settings.premium.title": "Premium Look",
+  "settings.premium.description":
+    "Interactive amber spotlight for the game header and rack panel.",
+  "settings.premium.onDesc": "Premium interactive panels",
+  "settings.premium.offDesc": "Classic dark surfaces",
+  "settings.backToGame": "Back to game",
+  "settings.error.newGame": "Could not start a fresh game right now.",
+  "settings.warn.accountSync":
+    "Account sync is unavailable right now. Settings still work locally on this device.",
+  "settings.warn.rivalRepair":
+    "A free rival is selected on this device. Account preference could not be repaired yet.",
   "settings.uiLanguage.title": "Interface language",
   "settings.uiLanguage.description":
     "Menus, buttons, and messages. Changes immediately, on this device only.",
@@ -203,6 +243,9 @@ export const enText = {
 } as const;
 
 export const enFn = {
+  "overlay.stats.tried": (p: { count: number }) => `${p.count} tried`,
+  "overlay.stats.valid": (p: { count: number }) => `${p.count} valid`,
+  "overlay.stats.rejected": (p: { count: number }) => `${p.count} rejected`,
   "error.throttled.minutes": (p: { minutes: number }) =>
     `Too many requests. Try again in about ${p.minutes} minutes.`,
   "draw.reason.closer": (p: { winner: string; loser: string }) =>
