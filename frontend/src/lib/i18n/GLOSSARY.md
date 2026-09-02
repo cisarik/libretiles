@@ -266,6 +266,32 @@ a separate keyed mapping.
 | history.next | Next | Ďalšia |
 | history.modal.subtitle | Review past boards, switch between AI and human games, and jump back in fast. | Prezri si staré partie, prepínaj medzi AI a ľuďmi a rýchlo sa vráť do hry. |
 
+## Profile modal
+
+| Key | English | Slovak |
+|---|---|---|
+| profile.subtitle | Account details and password security in one place. | Údaje o účte a bezpečnosť hesla na jednom mieste. |
+| profile.email | Email | Email |
+| profile.noEmail | No email set | Email nie je nastavený |
+| profile.memberSince | Member since | Členom od |
+| profile.password.subtitle | Update your login password without leaving the game. | Zmeň si prihlasovacie heslo bez toho, aby si opustil hru. |
+| profile.password.footnote | Stronger passwords make multiplayer accounts safer. | Silnejšie heslo lepšie chráni tvoj účet v hre proti ľuďom. |
+| profile.field.current | Current password | Súčasné heslo |
+| profile.field.new | New password | Nové heslo |
+| profile.field.confirm | Confirm new password | Potvrď nové heslo |
+| profile.ph.current | Current password | Súčasné heslo |
+| profile.ph.new | At least 8 characters | Aspoň 8 znakov |
+| profile.ph.confirm | Repeat new password | Zopakuj nové heslo |
+| profile.submit | Update password | Zmeniť heslo |
+| profile.submitting | Updating... | Mením... |
+| profile.error.allFields | Fill in all password fields. | Vyplň všetky polia s heslom. |
+| profile.error.mismatch | New passwords do not match. | Nové heslá sa nezhodujú. |
+
+`profile.field.current` and `profile.ph.current` are deliberately identical but
+separate because the visible label and placeholder are distinct UI roles.
+
+`uii-01-F03` is CLOSED by this slice: both date call sites are now locale-aware.
+
 ## Turn chrome
 
 | Key | English | Slovak |

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import SettingsPage from "@/app/settings/page";
 import { formatUpdatedAt } from "@/components/game/GameHistoryPanel";
+import { formatJoinedDate } from "@/components/game/ProfileModal";
 import { variantDisplayName } from "@/components/settings/GameLanguagePanel";
 import type { VariantSummary } from "@/lib/types";
 
@@ -822,6 +823,148 @@ describe("AC-DATE-LOCALE saved-board dates follow the interface locale", () => {
     expect(formatUpdatedAt("not-a-date", "sk")).toBe("Neznáme");
     expect(formatUpdatedAt("not-a-date", "cs")).toBe("Neznámé");
     expect(formatUpdatedAt("not-a-date", "pl")).toBe("Nieznane");
+  });
+});
+
+describe("AC-JOINED-LOCALE profile joined date follows the interface locale", () => {
+  it("keeps en-US output pinned and removes the English month from sk/cs/pl", () => {
+    const timestamp = "2026-09-02T12:00:00Z";
+    const english = formatJoinedDate(timestamp, "en");
+
+    expect(english).toBe("September 2, 2026");
+    for (const locale of ["sk", "cs", "pl"] as const) {
+      const localized = formatJoinedDate(timestamp, locale);
+      expect(localized).not.toBe(english);
+      expect(localized).not.toContain("September");
+    }
+  });
+});
+
+describe("AC-JOINED-INVALID profile joined date uses the localized fallback", () => {
+  it("returns the active locale's history.unknownDate for null and invalid values", () => {
+    for (const value of [null, "not-a-date"] as const) {
+      expect(formatJoinedDate(value, "en")).toBe("Unknown");
+      expect(formatJoinedDate(value, "sk")).toBe("Neznáme");
+      expect(formatJoinedDate(value, "cs")).toBe("Neznámé");
+      expect(formatJoinedDate(value, "pl")).toBe("Nieznane");
+    }
+  });
+});
+
+const PROFILE_EXPECTED = {
+  "profile.subtitle": {
+    en: "Account details and password security in one place.",
+    sk: "Údaje o účte a bezpečnosť hesla na jednom mieste.",
+    cs: "Údaje o účtu a bezpečnost hesla na jednom místě.",
+    pl: "Dane konta i bezpieczeństwo hasła w jednym miejscu.",
+  },
+  "profile.email": { en: "Email", sk: "Email", cs: "Email", pl: "Email" },
+  "profile.noEmail": {
+    en: "No email set",
+    sk: "Email nie je nastavený",
+    cs: "Email není nastavený",
+    pl: "Email nie jest ustawiony",
+  },
+  "profile.memberSince": {
+    en: "Member since",
+    sk: "Členom od",
+    cs: "Členem od",
+    pl: "Członkiem od",
+  },
+  "profile.password.subtitle": {
+    en: "Update your login password without leaving the game.",
+    sk: "Zmeň si prihlasovacie heslo bez toho, aby si opustil hru.",
+    cs: "Změň si přihlašovací heslo bez toho, abys opustil hru.",
+    pl: "Zmień hasło do logowania bez opuszczania gry.",
+  },
+  "profile.password.footnote": {
+    en: "Stronger passwords make multiplayer accounts safer.",
+    sk: "Silnejšie heslo lepšie chráni tvoj účet v hre proti ľuďom.",
+    cs: "Silnější heslo lépe chrání tvůj účet ve hře proti lidem.",
+    pl: "Silniejsze hasło lepiej chroni twoje konto w grze z ludźmi.",
+  },
+  "profile.field.current": {
+    en: "Current password",
+    sk: "Súčasné heslo",
+    cs: "Současné heslo",
+    pl: "Aktualne hasło",
+  },
+  "profile.field.new": {
+    en: "New password",
+    sk: "Nové heslo",
+    cs: "Nové heslo",
+    pl: "Nowe hasło",
+  },
+  "profile.field.confirm": {
+    en: "Confirm new password",
+    sk: "Potvrď nové heslo",
+    cs: "Potvrď nové heslo",
+    pl: "Potwierdź nowe hasło",
+  },
+  "profile.ph.current": {
+    en: "Current password",
+    sk: "Súčasné heslo",
+    cs: "Současné heslo",
+    pl: "Aktualne hasło",
+  },
+  "profile.ph.new": {
+    en: "At least 8 characters",
+    sk: "Aspoň 8 znakov",
+    cs: "Alespoň 8 znaků",
+    pl: "Co najmniej 8 znaków",
+  },
+  "profile.ph.confirm": {
+    en: "Repeat new password",
+    sk: "Zopakuj nové heslo",
+    cs: "Zopakuj nové heslo",
+    pl: "Powtórz nowe hasło",
+  },
+  "profile.submit": {
+    en: "Update password",
+    sk: "Zmeniť heslo",
+    cs: "Změnit heslo",
+    pl: "Zmień hasło",
+  },
+  "profile.submitting": {
+    en: "Updating...",
+    sk: "Mením...",
+    cs: "Měním...",
+    pl: "Zmieniam...",
+  },
+  "profile.error.allFields": {
+    en: "Fill in all password fields.",
+    sk: "Vyplň všetky polia s heslom.",
+    cs: "Vyplň všechna pole s heslem.",
+    pl: "Wypełnij wszystkie pola hasła.",
+  },
+  "profile.error.mismatch": {
+    en: "New passwords do not match.",
+    sk: "Nové heslá sa nezhodujú.",
+    cs: "Nová hesla se neshodují.",
+    pl: "Nowe hasła nie są zgodne.",
+  },
+} as const;
+
+describe("AC-PROFILE-4 profile catalog", () => {
+  it("renders all sixteen authored strings in all four locales", () => {
+    for (const key of Object.keys(PROFILE_EXPECTED) as Array<
+      keyof typeof PROFILE_EXPECTED
+    >) {
+      for (const locale of LOCALES) {
+        expect(t(locale, key)).toBe(PROFILE_EXPECTED[key][locale]);
+      }
+    }
+  });
+});
+
+describe("AC-PROFILE-DUP intentional profile catalog duplicates", () => {
+  it("keeps current-password label and placeholder equal and Email unchanged", () => {
+    for (const locale of LOCALES) {
+      expect(t(locale, "profile.field.current")).toBe(
+        t(locale, "profile.ph.current"),
+      );
+      expect(t(locale, "profile.email")).toBe("Email");
+    }
   });
 });
 

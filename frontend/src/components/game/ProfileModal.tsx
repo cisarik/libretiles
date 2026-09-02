@@ -3,6 +3,7 @@
 import { FormEvent, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { useGameStore } from "@/hooks/useGameStore";
+import { t as translate, useLocale, type Locale } from "@/lib/i18n";
 import {
   PREMIUM_MODAL_CARD_STYLE,
   PREMIUM_MODAL_STYLE,
@@ -15,11 +16,16 @@ const MODAL_TRANSITION = {
   ease: [0.22, 1, 0.36, 1] as const,
 };
 
-function formatJoinedDate(value?: string | null): string {
-  if (!value) return "Unknown";
+export function formatJoinedDate(
+  value: string | null | undefined,
+  locale: Locale,
+): string {
+  if (!value) return translate(locale, "history.unknownDate");
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "Unknown";
-  return new Intl.DateTimeFormat("en-US", {
+  if (Number.isNaN(date.getTime())) {
+    return translate(locale, "history.unknownDate");
+  }
+  return new Intl.DateTimeFormat(locale === "en" ? "en-US" : locale, {
     year: "numeric",
     month: "long",
     day: "numeric",
@@ -55,19 +61,29 @@ export function ProfileModal({
   const [submitting, setSubmitting] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
   const premiumLookEnabled = useGameStore((s) => s.premiumLookEnabled);
+  const locale = useLocale();
 
-  const memberSince = useMemo(() => formatJoinedDate(profile?.date_joined), [profile?.date_joined]);
+  const memberSince = useMemo(
+    () => formatJoinedDate(profile?.date_joined, locale),
+    [profile?.date_joined, locale],
+  );
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (submitting) return;
 
     if (!currentPassword || !newPassword || !confirmPassword) {
-      setNotice({ tone: "error", text: "Fill in all password fields." });
+      setNotice({
+        tone: "error",
+        text: translate(locale, "profile.error.allFields"),
+      });
       return;
     }
     if (newPassword !== confirmPassword) {
-      setNotice({ tone: "error", text: "New passwords do not match." });
+      setNotice({
+        tone: "error",
+        text: translate(locale, "profile.error.mismatch"),
+      });
       return;
     }
 
@@ -77,14 +93,20 @@ export function ProfileModal({
     try {
       const result = await onChangePassword({ currentPassword, newPassword });
       if (!result.ok) {
-        setNotice({ tone: "error", text: result.error ?? "Unable to update password." });
+        setNotice({
+          tone: "error",
+          text: result.error ?? translate(locale, "game.password.failed"),
+        });
         return;
       }
 
       setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
-      setNotice({ tone: "success", text: "Password updated." });
+      setNotice({
+        tone: "success",
+        text: translate(locale, "game.password.updated"),
+      });
     } finally {
       setSubmitting(false);
     }
@@ -119,10 +141,10 @@ export function ProfileModal({
                 <span className="text-[1.8rem] leading-none sm:text-[2rem]">👤</span>
                 <div>
                   <div className="font-gold-shiny text-3xl font-black tracking-tight sm:text-[2.6rem]">
-                    Profile
+                    {translate(locale, "header.profile")}
                   </div>
                   <div className="mt-1 text-sm text-stone-300">
-                    Account details and password security in one place.
+                    {translate(locale, "profile.subtitle")}
                   </div>
                 </div>
               </div>
@@ -137,7 +159,7 @@ export function ProfileModal({
                 className="rounded-full border border-amber-300/26 bg-[linear-gradient(135deg,rgba(251,191,36,0.12),rgba(255,255,255,0.04))] px-4 py-2.5 shadow-[0_10px_24px_rgba(0,0,0,0.18),0_0_24px_rgba(251,191,36,0.08)] transition-[border-color,box-shadow,background-color,transform] duration-300 hover:border-amber-200/50 hover:bg-[linear-gradient(135deg,rgba(251,191,36,0.18),rgba(255,255,255,0.06))] hover:shadow-[0_14px_30px_rgba(0,0,0,0.24),0_0_30px_rgba(251,191,36,0.14)]"
               >
                 <span className="font-gold-shiny text-[1rem] font-black leading-none sm:text-[1.08rem]">
-                  Settings
+                  {translate(locale, "nav.settings")}
                 </span>
               </motion.button>
               <motion.button
@@ -148,7 +170,7 @@ export function ProfileModal({
                 className="rounded-full border border-white/10 bg-white/6 px-4 py-2.5 shadow-[0_10px_24px_rgba(0,0,0,0.18)] transition-[border-color,box-shadow,background-color,transform] duration-300 hover:border-white/18 hover:bg-white/8"
               >
                 <span className="font-gold-shiny text-[1rem] font-black leading-none sm:text-[1.08rem]">
-                  Close
+                  {translate(locale, "game.blocker.close")}
                 </span>
               </motion.button>
             </div>
@@ -165,28 +187,28 @@ export function ProfileModal({
               <div className="absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-amber-200/70 to-transparent" />
               <div className="relative">
                 <div className="text-[0.72rem] uppercase tracking-[0.24em] text-amber-100/58">
-                  Account
+                  {translate(locale, "auth.eyebrow")}
                 </div>
                 <div className="mt-4 space-y-4">
                   <div>
                     <div className="text-[0.7rem] uppercase tracking-[0.22em] text-stone-500">
-                      Username
+                      {translate(locale, "auth.field.username")}
                     </div>
                     <div className="mt-1 font-gold-shiny text-[1.55rem] font-black leading-none">
-                      {profile?.username ?? "Unknown"}
+                      {profile?.username ?? translate(locale, "history.unknownDate")}
                     </div>
                   </div>
                   <div>
                     <div className="text-[0.7rem] uppercase tracking-[0.22em] text-stone-500">
-                      Email
+                      {translate(locale, "profile.email")}
                     </div>
                     <div className="mt-1 break-all text-[1rem] text-stone-200">
-                      {profile?.email || "No email set"}
+                      {profile?.email || translate(locale, "profile.noEmail")}
                     </div>
                   </div>
                   <div className="rounded-[1.2rem] border border-white/8 bg-black/16 px-4 py-3">
                     <div className="text-[0.7rem] uppercase tracking-[0.22em] text-stone-500">
-                      Member since
+                      {translate(locale, "profile.memberSince")}
                     </div>
                     <div className="mt-2 text-sm font-semibold text-stone-200">
                       {memberSince}
@@ -207,10 +229,10 @@ export function ProfileModal({
                   <span className="text-[1.6rem] leading-none">🔐</span>
                   <div>
                     <div className="font-gold-shiny text-[1.8rem] font-black tracking-tight">
-                      Password
+                      {translate(locale, "auth.field.password")}
                     </div>
                     <div className="mt-1 text-sm text-stone-300">
-                      Update your login password without leaving the game.
+                      {translate(locale, "profile.password.subtitle")}
                     </div>
                   </div>
                 </div>
@@ -230,47 +252,47 @@ export function ProfileModal({
                 <form className="mt-4 space-y-3" onSubmit={(event) => void handleSubmit(event)}>
                   <label className="block">
                     <span className="mb-2 block text-[0.72rem] uppercase tracking-[0.22em] text-stone-400">
-                      Current password
+                      {translate(locale, "profile.field.current")}
                     </span>
                     <input
                       type="password"
                       value={currentPassword}
                       onChange={(event) => setCurrentPassword(event.target.value)}
                       className="w-full rounded-[1.1rem] border border-white/10 bg-black/26 px-4 py-3 text-stone-100 outline-none transition-colors placeholder:text-stone-500 focus:border-amber-200/34"
-                      placeholder="Current password"
+                      placeholder={translate(locale, "profile.ph.current")}
                       autoComplete="current-password"
                     />
                   </label>
                   <label className="block">
                     <span className="mb-2 block text-[0.72rem] uppercase tracking-[0.22em] text-stone-400">
-                      New password
+                      {translate(locale, "profile.field.new")}
                     </span>
                     <input
                       type="password"
                       value={newPassword}
                       onChange={(event) => setNewPassword(event.target.value)}
                       className="w-full rounded-[1.1rem] border border-white/10 bg-black/26 px-4 py-3 text-stone-100 outline-none transition-colors placeholder:text-stone-500 focus:border-amber-200/34"
-                      placeholder="At least 8 characters"
+                      placeholder={translate(locale, "profile.ph.new")}
                       autoComplete="new-password"
                     />
                   </label>
                   <label className="block">
                     <span className="mb-2 block text-[0.72rem] uppercase tracking-[0.22em] text-stone-400">
-                      Confirm new password
+                      {translate(locale, "profile.field.confirm")}
                     </span>
                     <input
                       type="password"
                       value={confirmPassword}
                       onChange={(event) => setConfirmPassword(event.target.value)}
                       className="w-full rounded-[1.1rem] border border-white/10 bg-black/26 px-4 py-3 text-stone-100 outline-none transition-colors placeholder:text-stone-500 focus:border-amber-200/34"
-                      placeholder="Repeat new password"
+                      placeholder={translate(locale, "profile.ph.confirm")}
                       autoComplete="new-password"
                     />
                   </label>
 
                   <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
                     <div className="text-xs text-stone-400">
-                      Stronger passwords make multiplayer accounts safer.
+                      {translate(locale, "profile.password.footnote")}
                     </div>
                     <motion.button
                       type="submit"
@@ -280,7 +302,9 @@ export function ProfileModal({
                       className="rounded-full border border-amber-200/40 bg-[linear-gradient(135deg,rgba(251,191,36,0.18),rgba(245,158,11,0.08))] px-5 py-2.5 shadow-[0_10px_24px_rgba(251,191,36,0.12),0_0_28px_rgba(251,191,36,0.12)] transition-[border-color,box-shadow,background-color,transform] duration-300 hover:border-amber-100/60 hover:bg-[linear-gradient(135deg,rgba(251,191,36,0.24),rgba(245,158,11,0.12))] hover:shadow-[0_12px_28px_rgba(251,191,36,0.18),0_0_34px_rgba(251,191,36,0.18)] disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <span className="font-gold-shiny text-[1.02rem] font-black leading-none">
-                        {submitting ? "Updating..." : "Update password"}
+                        {submitting
+                          ? translate(locale, "profile.submitting")
+                          : translate(locale, "profile.submit")}
                       </span>
                     </motion.button>
                   </div>
@@ -301,7 +325,9 @@ export function ProfileModal({
               className="rounded-full border border-rose-300/24 bg-rose-500/10 px-4 py-2.5 shadow-[0_10px_24px_rgba(244,63,94,0.10)] transition-[border-color,box-shadow,background-color,transform] duration-300 hover:border-rose-200/42 hover:bg-[linear-gradient(145deg,rgba(113,24,46,0.5),rgba(55,14,27,0.48))] hover:shadow-[0_14px_28px_rgba(255,255,255,0.07),0_0_24px_rgba(255,255,255,0.04)] disabled:cursor-not-allowed disabled:opacity-50"
             >
               <span className="font-gold-shiny text-[1rem] font-black leading-none">
-                {loggingOut ? "Logging out..." : "Logout"}
+                {loggingOut
+                  ? translate(locale, "header.loggingOut")
+                  : translate(locale, "header.logout")}
               </span>
             </motion.button>
           </div>
