@@ -10,7 +10,7 @@ import {
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { useGameStore, type BoardTheme } from "@/hooks/useGameStore";
-import { useLocale, useT, type TextKey } from "@/lib/i18n";
+import { useLocale, useT, isLocale, LOCALES, type TextKey } from "@/lib/i18n";
 import type { Locale } from "@/lib/i18n/locales";
 import { api } from "@/lib/api";
 import { resolveEligibleModelId } from "@/lib/model-catalog";
@@ -21,6 +21,7 @@ import {
 import type { AIModel, VariantSummary } from "@/lib/types";
 import { reconcileSelectedVariantSlug } from "@/lib/variants";
 import { GameLanguagePanel } from "@/components/settings/GameLanguagePanel";
+import { PremiumPicker } from "@/components/settings/PremiumPicker";
 
 const TIMEOUT_CHOICES: Array<{
   value: number;
@@ -97,15 +98,17 @@ function SettingsPanel({
   description,
   children,
   className = "",
+  overflowVisible = false,
 }: {
   title: string;
   description?: string;
   children: ReactNode;
   className?: string;
+  overflowVisible?: boolean;
 }) {
   return (
     <section
-      className={`relative overflow-hidden rounded-[1.6rem] border border-white/8 p-4 shadow-[0_16px_40px_rgba(0,0,0,0.22)] transition-[border-color,box-shadow,transform] duration-300 hover:border-amber-200/20 hover:shadow-[0_20px_45px_rgba(0,0,0,0.26)] ${className}`}
+      className={`relative ${overflowVisible ? "overflow-visible" : "overflow-hidden"} rounded-[1.6rem] border border-white/8 p-4 shadow-[0_16px_40px_rgba(0,0,0,0.22)] transition-[border-color,box-shadow,transform] duration-300 hover:border-amber-200/20 hover:shadow-[0_20px_45px_rgba(0,0,0,0.26)] ${className}`}
       style={PREMIUM_PANEL_STYLE}
       onMouseMove={handlePremiumSurfacePointer}
     >
@@ -350,53 +353,37 @@ function InterfaceLanguagePanel() {
   const locale = useLocale();
   const setUiLocale = useGameStore((s) => s.setUiLocale);
   const router = useRouter();
-  const choices: Array<{
-    value: Locale;
-    label: string;
-  }> = [
-    { value: "en", label: t("settings.uiLanguage.en") },
-    { value: "sk", label: t("settings.uiLanguage.sk") },
-    { value: "cs", label: t("settings.uiLanguage.cs") },
-    { value: "pl", label: t("settings.uiLanguage.pl") },
-  ];
+  const localeLabelKey: Record<Locale, TextKey> = {
+    en: "settings.uiLanguage.en",
+    sk: "settings.uiLanguage.sk",
+    cs: "settings.uiLanguage.cs",
+    pl: "settings.uiLanguage.pl",
+  };
 
   return (
     <SettingsPanel
       title={t("settings.uiLanguage.title")}
       description={t("settings.uiLanguage.description")}
       className="xl:col-span-2"
+      overflowVisible
     >
-      <div className="grid grid-cols-2 gap-3">
-        {choices.map((choice) => {
-          const isSelected = locale === choice.value;
-          return (
-            <motion.button
-              key={choice.value}
-              type="button"
-              whileHover={{ y: -1.5, scale: 1.01 }}
-              whileTap={{ scale: 0.985 }}
-              aria-pressed={isSelected}
-              onClick={() => {
-                setUiLocale(choice.value);
-                router.refresh();
-              }}
-              className={`min-h-[96px] rounded-[1.15rem] border px-4 py-4 text-left transition-[border-color,box-shadow,background-color,transform] duration-300 ${
-                isSelected
-                  ? "border-amber-300/45 bg-amber-400/10 shadow-[0_12px_30px_rgba(251,191,36,0.10)]"
-                  : "border-white/8 bg-stone-950/72 hover:border-white/14 hover:shadow-[0_12px_28px_rgba(0,0,0,0.2)]"
-              }`}
-            >
-              <div
-                className={`text-[1.45rem] font-black uppercase tracking-[0.08em] ${
-                  isSelected ? "text-amber-100" : "text-stone-100"
-                }`}
-              >
-                {choice.label}
-              </div>
-            </motion.button>
-          );
-        })}
-      </div>
+      <PremiumPicker
+        id="ui-language-picker"
+        options={LOCALES.map((value) => ({
+          value,
+          label: t(localeLabelKey[value]),
+          flagSrc: `/${value}.png`,
+        }))}
+        value={locale}
+        onChange={(next) => {
+          if (!isLocale(next)) return;
+          setUiLocale(next);
+          router.refresh();
+        }}
+        searchPlaceholder={t("picker.search")}
+        emptyText={t("picker.noMatch")}
+        ariaLabel={t("picker.uiLanguageLabel")}
+      />
     </SettingsPanel>
   );
 }

@@ -428,3 +428,24 @@ across all counted forms.
 
 The `TIMEOUT_CHOICES` and `STEP_CHOICES` labels are deliberately not localized;
 they are compact unit abbreviations and numbers.
+
+## Premium language pickers
+
+`picker.uiLanguageLabel` and `picker.gameVariantLabel` deliberately duplicate
+`settings.uiLanguage.title` and `settings.gameVariant.title` because a visible
+panel heading and a control's accessible name are different roles. A later
+designer may reword the heading without silently renaming what a screen reader
+announces.
+
+Flag images sit next to their own labels and are treated as decorative
+(`alt=""` plus `aria-hidden="true"`) so a screen reader does not announce
+"Vlajka: Slovenčina, Slovenčina". The parameterized `picker.flagAlt` keys
+remain in all four catalogs so that decision is reversible without a new slice.
+
+| Key | English | Slovak | Czech | Polish |
+|---|---|---|---|---|
+| picker.search | Search | Hľadať | Hledat | Szukaj |
+| picker.noMatch | No match | Žiadna zhoda | Žádná shoda | Brak dopasowania |
+| picker.uiLanguageLabel | Interface language | Jazyk rozhrania | Jazyk rozhraní | Język interfejsu |
+| picker.gameVariantLabel | Game variant | Variant hry | Varianta hry | Wariant gry |
+| picker.flagAlt (fn) | {language} flag | Vlajka: {language} | Vlajka: {language} | Flaga: {language} |

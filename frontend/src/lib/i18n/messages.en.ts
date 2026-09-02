@@ -84,6 +84,10 @@ export const enText = {
   "settings.uiLanguage.sk": "Slovenčina",
   "settings.uiLanguage.cs": "Čeština",
   "settings.uiLanguage.pl": "Polski",
+  "picker.search": "Search",
+  "picker.noMatch": "No match",
+  "picker.uiLanguageLabel": "Interface language",
+  "picker.gameVariantLabel": "Game variant",
   "settings.gameVariant.title": "Game variant",
   "settings.gameVariant.description":
     "Tiles, bag, and lexicon. Applies to NEW games only and never changes a running game. This is not the interface language.",
@@ -325,6 +329,7 @@ export const enFn = {
     `Page ${p.page} of ${p.total}`,
   "history.showing": (p: { from: number; to: number; total: number }) =>
     `Showing ${p.from}-${p.to} of ${p.total} games`,
+  "picker.flagAlt": (p: { language: string }) => `${p.language} flag`,
 } as const;
 
 export type TextKey = keyof typeof enText;

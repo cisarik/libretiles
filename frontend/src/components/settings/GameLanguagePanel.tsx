@@ -1,7 +1,5 @@
 "use client";
 
-import { motion } from "framer-motion";
-
 import { useT } from "@/lib/i18n";
 import type { TextKey } from "@/lib/i18n/messages.en";
 import type { VariantSummary } from "@/lib/types";
@@ -9,12 +7,20 @@ import {
   PREMIUM_PANEL_STYLE,
   handlePremiumSurfacePointer,
 } from "@/lib/premiumSurface";
+import { PremiumPicker } from "@/components/settings/PremiumPicker";
 
 const VARIANT_NAME_KEYS: Record<string, TextKey> = {
   english: "settings.gameVariant.english",
   slovak: "settings.gameVariant.slovak",
   czech: "settings.gameVariant.czech",
   polish: "settings.gameVariant.polish",
+};
+
+const VARIANT_FLAG_SRC: Record<string, string> = {
+  english: "/en.png",
+  slovak: "/sk.png",
+  czech: "/cs.png",
+  polish: "/pl.png",
 };
 
 export function variantDisplayName(
@@ -37,10 +43,19 @@ export function GameLanguagePanel({
   onSelect: (slug: string) => void;
 }) {
   const { t } = useT();
+  const options = variants.map((variant) => {
+    const flagSrc = VARIANT_FLAG_SRC[variant.slug];
+    return {
+      value: variant.slug,
+      label: variantDisplayName(variant, t),
+      ...(flagSrc ? { flagSrc } : {}),
+      disabled: variant.readiness !== "playable",
+    };
+  });
 
   return (
     <section
-      className="relative overflow-hidden rounded-[1.6rem] border border-white/8 p-4 shadow-[0_16px_40px_rgba(0,0,0,0.22)] transition-[border-color,box-shadow,transform] duration-300 hover:border-amber-200/20 hover:shadow-[0_20px_45px_rgba(0,0,0,0.26)] xl:col-span-2"
+      className="relative overflow-visible rounded-[1.6rem] border border-white/8 p-4 shadow-[0_16px_40px_rgba(0,0,0,0.22)] transition-[border-color,box-shadow,transform] duration-300 hover:border-amber-200/20 hover:shadow-[0_20px_45px_rgba(0,0,0,0.26)] xl:col-span-2"
       style={PREMIUM_PANEL_STYLE}
       onMouseMove={handlePremiumSurfacePointer}
       data-testid="game-language-panel"
@@ -54,45 +69,15 @@ export function GameLanguagePanel({
           {t("settings.gameVariant.description")}
         </p>
       </div>
-      <div className="grid grid-cols-2 gap-3">
-        {variants.map((variant) => {
-          const isSelected = selected === variant.slug;
-          const unavailable = variant.readiness !== "playable";
-          const label = variantDisplayName(variant, t);
-          return (
-            <motion.button
-              key={variant.slug}
-              type="button"
-              data-variant-slug={variant.slug}
-              data-variant-readiness={variant.readiness}
-              disabled={unavailable}
-              whileHover={unavailable ? undefined : { y: -1.5, scale: 1.01 }}
-              whileTap={unavailable ? undefined : { scale: 0.985 }}
-              aria-pressed={isSelected}
-              aria-disabled={unavailable}
-              onClick={() => {
-                if (unavailable) return;
-                onSelect(variant.slug);
-              }}
-              className={`min-h-[96px] rounded-[1.15rem] border px-4 py-4 text-left transition-[border-color,box-shadow,background-color,transform] duration-300 ${
-                unavailable
-                  ? "cursor-not-allowed border-white/6 bg-stone-950/40 opacity-45"
-                  : isSelected
-                    ? "border-amber-300/45 bg-amber-400/10 shadow-[0_12px_30px_rgba(251,191,36,0.10)]"
-                    : "border-white/8 bg-stone-950/72 hover:border-white/14 hover:shadow-[0_12px_28px_rgba(0,0,0,0.2)]"
-              }`}
-            >
-              <div
-                className={`text-[1.45rem] font-black uppercase tracking-[0.08em] ${
-                  isSelected && !unavailable ? "text-amber-100" : "text-stone-100"
-                }`}
-              >
-                {label}
-              </div>
-            </motion.button>
-          );
-        })}
-      </div>
+      <PremiumPicker
+        id="game-variant-picker"
+        options={options}
+        value={selected}
+        onChange={onSelect}
+        searchPlaceholder={t("picker.search")}
+        emptyText={t("picker.noMatch")}
+        ariaLabel={t("picker.gameVariantLabel")}
+      />
     </section>
   );
 }

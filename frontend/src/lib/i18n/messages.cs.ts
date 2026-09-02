@@ -86,6 +86,10 @@ export const csText: Record<TextKey, string> = {
   "settings.uiLanguage.sk": "Slovenčina",
   "settings.uiLanguage.cs": "Čeština",
   "settings.uiLanguage.pl": "Polski",
+  "picker.search": "Hledat",
+  "picker.noMatch": "Žádná shoda",
+  "picker.uiLanguageLabel": "Jazyk rozhraní",
+  "picker.gameVariantLabel": "Varianta hry",
   "settings.gameVariant.title": "Varianta hry",
   "settings.gameVariant.description":
     "Kameny, sáček a lexikon. Platí pro NOVÉ partie a nemění probíhající partii. Toto není jazyk rozhraní.",
@@ -321,4 +325,5 @@ export const csFn: { [K in FnKey]: (typeof enFn)[K] } = {
   "queue.room": (p) => `Místnost ${p.code}`,
   "history.pageOf": (p) => `Strana ${p.page} z ${p.total}`,
   "history.showing": (p) => `Zobrazeno ${p.from}-${p.to} z ${p.total}`,
+  "picker.flagAlt": (p) => `Vlajka: ${p.language}`,
 };

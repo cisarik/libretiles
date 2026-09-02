@@ -29,6 +29,13 @@ function renderPanel(variants: VariantSummary[], selected = "english") {
   );
 }
 
+function optionTag(markup: string, slug: string): string {
+  const marker = `data-option-value="${slug}"`;
+  const start = markup.lastIndexOf("<", markup.indexOf(marker));
+  const end = markup.indexOf(">", markup.indexOf(marker));
+  return markup.slice(start, end + 1);
+}
+
 describe("GameLanguagePanel", () => {
   beforeEach(() => {
     useGameStore.setState(useGameStore.getInitialState(), true);
@@ -36,17 +43,23 @@ describe("GameLanguagePanel", () => {
 
   it("renders an unavailable variant as disabled", () => {
     const markup = renderPanel([playable, unavailable], "czech");
-    expect(markup).toContain('data-variant-slug="ghost"');
-    expect(markup).toContain('data-variant-readiness="unavailable"');
-    const ghostStart = markup.lastIndexOf("<", markup.indexOf('data-variant-slug="ghost"'));
-    const ghostEnd = markup.indexOf(">", markup.indexOf('data-variant-slug="ghost"'));
-    const ghostTag = markup.slice(ghostStart, ghostEnd + 1);
+    expect(markup).toContain('data-option-value="ghost"');
+    expect(markup).toContain('data-option-value="czech"');
+    const ghostTag = optionTag(markup, "ghost");
     expect(ghostTag).toContain('aria-disabled="true"');
-    expect(ghostTag.replace('aria-disabled="true"', "")).toMatch(/\bdisabled\b/);
-    const czechStart = markup.lastIndexOf("<", markup.indexOf('data-variant-slug="czech"'));
-    const czechEnd = markup.indexOf(">", markup.indexOf('data-variant-slug="czech"'));
-    const czechTag = markup.slice(czechStart, czechEnd + 1);
+    expect(ghostTag.replace('aria-disabled="true"', "")).not.toMatch(
+      /\bdisabled\b/,
+    );
+    const czechTag = optionTag(markup, "czech");
     expect(czechTag).toContain('aria-disabled="false"');
-    expect(czechTag.replace('aria-disabled="false"', "")).not.toMatch(/\bdisabled\b/);
+    expect(czechTag.replace('aria-disabled="false"', "")).not.toMatch(
+      /\bdisabled\b/,
+    );
+  });
+
+  it("falls back to display_name for an unknown slug", () => {
+    const markup = renderPanel([playable, unavailable], "czech");
+    expect(markup).toContain("Ghost");
+    expect(markup).toContain("Czech");
   });
 });

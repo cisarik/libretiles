@@ -20,6 +20,24 @@ export function localeFromCookieValue(value: unknown): Locale {
   return isLocale(value) ? value : DEFAULT_LOCALE;
 }
 
+/** Letters NFD + \p{Diacritic} cannot fold: stroke (ł), D-stroke (đ), slashed O (ø). */
+const EXPLICIT_SEARCH_FOLDS: Record<string, string> = {
+  ł: "l",
+  Ł: "l",
+  đ: "d",
+  Đ: "d",
+  ø: "o",
+  Ø: "o",
+};
+
+export function foldForSearch(value: string): string {
+  let mapped = "";
+  for (const char of value) {
+    mapped += EXPLICIT_SEARCH_FOLDS[char] ?? char;
+  }
+  return mapped.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
+}
+
 export function writeLocaleCookie(locale: Locale): void {
   if (typeof document === "undefined") return;
   document.cookie = `${LOCALE_COOKIE_NAME}=${locale}; Path=/; Max-Age=31536000; SameSite=Lax`;

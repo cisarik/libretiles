@@ -86,6 +86,10 @@ export const skText: Record<TextKey, string> = {
   "settings.uiLanguage.sk": "Slovenčina",
   "settings.uiLanguage.cs": "Čeština",
   "settings.uiLanguage.pl": "Polski",
+  "picker.search": "Hľadať",
+  "picker.noMatch": "Žiadna zhoda",
+  "picker.uiLanguageLabel": "Jazyk rozhrania",
+  "picker.gameVariantLabel": "Variant hry",
   "settings.gameVariant.title": "Variant hry",
   "settings.gameVariant.description":
     "Písmená, vrecko a lexikón. Platí pre NOVÉ partie a nemení prebiehajúcu partiu. Toto nie je jazyk rozhrania.",
@@ -321,4 +325,5 @@ export const skFn: { [K in FnKey]: (typeof enFn)[K] } = {
   "queue.room": (p) => `Miestnosť ${p.code}`,
   "history.pageOf": (p) => `Strana ${p.page} z ${p.total}`,
   "history.showing": (p) => `Zobrazené ${p.from}-${p.to} z ${p.total}`,
+  "picker.flagAlt": (p) => `Vlajka: ${p.language}`,
 };

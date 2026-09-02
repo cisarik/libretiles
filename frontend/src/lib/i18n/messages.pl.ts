@@ -88,6 +88,10 @@ export const plText: Record<TextKey, string> = {
   "settings.uiLanguage.sk": "Slovenčina",
   "settings.uiLanguage.cs": "Čeština",
   "settings.uiLanguage.pl": "Polski",
+  "picker.search": "Szukaj",
+  "picker.noMatch": "Brak dopasowania",
+  "picker.uiLanguageLabel": "Język interfejsu",
+  "picker.gameVariantLabel": "Wariant gry",
   "settings.gameVariant.title": "Wariant gry",
   "settings.gameVariant.description":
     "Płytki, woreczek i leksykon. Dotyczy tylko NOWYCH partii i nie zmienia trwającej partii. To nie jest język interfejsu.",
@@ -324,4 +328,5 @@ export const plFn: { [K in FnKey]: (typeof enFn)[K] } = {
   "queue.room": (p) => `Pokój ${p.code}`,
   "history.pageOf": (p) => `Strona ${p.page} z ${p.total}`,
   "history.showing": (p) => `Pokazane ${p.from}-${p.to} z ${p.total}`,
+  "picker.flagAlt": (p) => `Flaga: ${p.language}`,
 };

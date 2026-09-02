@@ -1247,6 +1247,55 @@ describe("AC-STATS-4 overlay stats", () => {
   });
 });
 
+describe("AC-PICKER-COPY picker catalog", () => {
+  it("keeps the four picker chrome strings byte-identical to the authored table", () => {
+    expect(t("en", "picker.search")).toBe("Search");
+    expect(t("sk", "picker.search")).toBe("Hľadať");
+    expect(t("cs", "picker.search")).toBe("Hledat");
+    expect(t("pl", "picker.search")).toBe("Szukaj");
+    expect(t("en", "picker.noMatch")).toBe("No match");
+    expect(t("sk", "picker.noMatch")).toBe("Žiadna zhoda");
+    expect(t("cs", "picker.noMatch")).toBe("Žádná shoda");
+    expect(t("pl", "picker.noMatch")).toBe("Brak dopasowania");
+    expect(t("en", "picker.uiLanguageLabel")).toBe(
+      t("en", "settings.uiLanguage.title"),
+    );
+    expect(t("sk", "picker.uiLanguageLabel")).toBe(
+      t("sk", "settings.uiLanguage.title"),
+    );
+    expect(t("cs", "picker.uiLanguageLabel")).toBe(
+      t("cs", "settings.uiLanguage.title"),
+    );
+    expect(t("pl", "picker.uiLanguageLabel")).toBe(
+      t("pl", "settings.uiLanguage.title"),
+    );
+    expect(t("en", "picker.gameVariantLabel")).toBe(
+      t("en", "settings.gameVariant.title"),
+    );
+    expect(t("sk", "picker.gameVariantLabel")).toBe(
+      t("sk", "settings.gameVariant.title"),
+    );
+    expect(t("cs", "picker.gameVariantLabel")).toBe(
+      t("cs", "settings.gameVariant.title"),
+    );
+    expect(t("pl", "picker.gameVariantLabel")).toBe(
+      t("pl", "settings.gameVariant.title"),
+    );
+    expect(tf("en", "picker.flagAlt", { language: "Slovenčina" })).toBe(
+      "Slovenčina flag",
+    );
+    expect(tf("sk", "picker.flagAlt", { language: "Slovenčina" })).toBe(
+      "Vlajka: Slovenčina",
+    );
+    expect(tf("cs", "picker.flagAlt", { language: "Slovenčina" })).toBe(
+      "Vlajka: Slovenčina",
+    );
+    expect(tf("pl", "picker.flagAlt", { language: "Slovenčina" })).toBe(
+      "Flaga: Slovenčina",
+    );
+  });
+});
+
 describe("AC-KEYTYPED settings option keys", () => {
   it("resolves every constant-array key to non-empty copy in all four locales", () => {
     const textKeys = [
