@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Tile } from "./Tile";
 import { useGameStore } from "@/hooks/useGameStore";
 import { useT } from "@/lib/i18n";
+import { TILE_POINTS } from "@/lib/constants";
 import { isPlausibleRack } from "@/lib/rack";
 
 const MOBILE_TAP_MOVE_TOLERANCE = 10;
@@ -18,6 +19,7 @@ function DraggableTile({
   interactionDisabled,
   isSelected,
   tileSize,
+  ariaLabel,
   onSelect,
 }: {
   letter: string;
@@ -27,6 +29,7 @@ function DraggableTile({
   interactionDisabled: boolean;
   isSelected: boolean;
   tileSize: "sm" | "md" | "lg" | "rack";
+  ariaLabel: string;
   onSelect: () => void;
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
@@ -80,6 +83,7 @@ function DraggableTile({
       } : undefined}
       className={`will-change-transform ${isDragging ? "opacity-0" : ""}`}
       style={{ touchAction: dragEnabled ? "none" : "manipulation" }}
+      aria-label={ariaLabel}
     >
       <Tile
         letter={letter}
@@ -97,12 +101,14 @@ function TapSelectableTile({
   index,
   isSelected,
   tileSize,
+  ariaLabel,
   onSelect,
 }: {
   letter: string;
   index: number;
   isSelected: boolean;
   tileSize: "sm" | "md" | "lg" | "rack";
+  ariaLabel: string;
   onSelect: () => void;
 }) {
   const suppressClickRef = useRef(false);
@@ -145,6 +151,7 @@ function TapSelectableTile({
       className="shrink-0 appearance-none bg-transparent p-0 will-change-transform"
       style={{ touchAction: "manipulation" }}
       aria-pressed={isSelected}
+      aria-label={ariaLabel}
     >
       <Tile
         letter={letter}
@@ -178,7 +185,7 @@ export function TileRack({
   const exchangeSelected = useGameStore((s) => s.exchangeSelected);
   const toggleExchangeSelection = useGameStore((s) => s.toggleExchangeSelection);
   const pendingTiles = useGameStore((s) => s.pendingTiles);
-  const { t } = useT();
+  const { t, tf } = useT();
 
   const fullRack = useMemo(() => {
     const alphabet = gameState?.alphabet;
@@ -226,6 +233,12 @@ export function TileRack({
               interactionDisabled={!exchangeMode && !canPlaceByTap}
               isSelected={exchangeMode ? exchangeSelected.has(index) : selectedRackTileIndex === index}
               tileSize={tileSize}
+              ariaLabel={letter === "?"
+                ? t("a11y.rackBlank")
+                : tf("a11y.rackTile", {
+                    letter,
+                    points: gameState?.tile_points?.[letter] ?? TILE_POINTS[letter] ?? 0,
+                  })}
               onSelect={() => {
                 if (exchangeMode) {
                   toggleExchangeSelection(index);
@@ -241,6 +254,12 @@ export function TileRack({
               index={index}
               isSelected={exchangeMode ? exchangeSelected.has(index) : selectedRackTileIndex === index}
               tileSize={tileSize}
+              ariaLabel={letter === "?"
+                ? t("a11y.rackBlank")
+                : tf("a11y.rackTile", {
+                    letter,
+                    points: gameState?.tile_points?.[letter] ?? TILE_POINTS[letter] ?? 0,
+                  })}
               onSelect={() => {
                 if (exchangeMode) {
                   toggleExchangeSelection(index);

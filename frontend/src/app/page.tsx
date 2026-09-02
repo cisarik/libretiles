@@ -171,6 +171,7 @@ export default function Home() {
             <div className="space-y-3">
               <input
                 type="text"
+                aria-label={t("auth.field.username")}
                 placeholder={t("auth.field.username")}
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
@@ -178,6 +179,7 @@ export default function Home() {
               />
               <input
                 type="password"
+                aria-label={t("auth.field.password")}
                 placeholder={t("auth.field.password")}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}

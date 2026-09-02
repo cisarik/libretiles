@@ -1,9 +1,19 @@
+import { readFileSync } from "node:fs";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import SettingsPage from "@/app/settings/page";
+import { AIThinkingOverlay } from "@/components/game/AIThinkingOverlay";
+import { BlankPicker } from "@/components/game/BlankPicker";
+import { GameHistoryModal } from "@/components/game/GameHistoryModal";
 import { formatUpdatedAt } from "@/components/game/GameHistoryPanel";
-import { formatJoinedDate } from "@/components/game/ProfileModal";
+import {
+  formatJoinedDate,
+  ProfileModal,
+} from "@/components/game/ProfileModal";
 import { variantDisplayName } from "@/components/settings/GameLanguagePanel";
+import { useGameStore } from "@/hooks/useGameStore";
 import type { VariantSummary } from "@/lib/types";
 
 import { t, tf } from "./index";
@@ -132,6 +142,236 @@ describe("AC-EXHAUST catalogs share one key set", () => {
     expect(Object.keys(skFn).sort()).toEqual(fnKeys);
     expect(Object.keys(csFn).sort()).toEqual(fnKeys);
     expect(Object.keys(plFn).sort()).toEqual(fnKeys);
+  });
+});
+
+describe("AC-RACKTILE-4 accessible rack-tile names", () => {
+  const COUNTS = [1, 2, 4, 5, 10] as const;
+
+  it("renders the authored tile noun and point plural in all four locales", () => {
+    const expected = {
+      en: [
+        "Tile A, 1 point",
+        "Tile A, 2 points",
+        "Tile A, 4 points",
+        "Tile A, 5 points",
+        "Tile A, 10 points",
+      ],
+      sk: [
+        "Písmeno A, 1 bod",
+        "Písmeno A, 2 body",
+        "Písmeno A, 4 body",
+        "Písmeno A, 5 bodov",
+        "Písmeno A, 10 bodov",
+      ],
+      cs: [
+        "Kámen A, 1 bod",
+        "Kámen A, 2 body",
+        "Kámen A, 4 body",
+        "Kámen A, 5 bodů",
+        "Kámen A, 10 bodů",
+      ],
+      pl: [
+        "Płytka A, 1 punkt",
+        "Płytka A, 2 punkty",
+        "Płytka A, 4 punkty",
+        "Płytka A, 5 punktów",
+        "Płytka A, 10 punktów",
+      ],
+    } as const;
+
+    for (const locale of LOCALES) {
+      const rendered = COUNTS.map((points) =>
+        tf(locale, "a11y.rackTile", { letter: "A", points }),
+      );
+      expect(rendered).toEqual(expected[locale]);
+    }
+
+    expect(tf("sk", "a11y.rackTile", { letter: "A", points: 2 })).not.toBe(
+      "Písmeno A, 2 bodov",
+    );
+    expect(tf("cs", "a11y.rackTile", { letter: "A", points: 2 })).not.toContain(
+      "Písmeno",
+    );
+    expect(tf("pl", "a11y.rackTile", { letter: "A", points: 2 })).toContain(
+      "Płytka",
+    );
+  });
+});
+
+describe("AC-RACKBLANK-4 accessible blank-tile names", () => {
+  it("renders the authored blank name and never a lettered-tile name", () => {
+    const expected = {
+      en: "Blank tile",
+      sk: "Žolík",
+      cs: "Žolík",
+      pl: "Blank",
+    } as const;
+
+    for (const locale of LOCALES) {
+      const blank = t(locale, "a11y.rackBlank");
+      expect(blank).toBe(expected[locale]);
+      for (const points of [1, 2, 4, 5, 10]) {
+        expect(blank).not.toBe(
+          tf(locale, "a11y.rackTile", { letter: "?", points }),
+        );
+      }
+    }
+  });
+});
+
+describe("AC-A11Y-COPY-4 accessible UI copy", () => {
+  const expected = {
+    "a11y.chatInput": {
+      en: "Chat message",
+      sk: "Správa do chatu",
+      cs: "Zpráva do chatu",
+      pl: "Wiadomość na chat",
+    },
+    "a11y.dialog.profile": { en: "Profile", sk: "Profil", cs: "Profil", pl: "Profil" },
+    "a11y.dialog.games": {
+      en: "Saved games",
+      sk: "Uložené partie",
+      cs: "Uložené partie",
+      pl: "Zapisane partie",
+    },
+    "a11y.dialog.blank": {
+      en: "Choose a letter",
+      sk: "Vyber písmeno",
+      cs: "Vyber písmeno",
+      pl: "Wybierz literę",
+    },
+    "a11y.dialog.rival": {
+      en: "Rival unavailable",
+      sk: "Súper nedostupný",
+      cs: "Soupeř nedostupný",
+      pl: "Rywal niedostępny",
+    },
+    "a11y.status.turn": {
+      en: "Turn status",
+      sk: "Stav ťahu",
+      cs: "Stav tahu",
+      pl: "Status ruchu",
+    },
+    "a11y.status.aiThinking": {
+      en: "AI progress",
+      sk: "Priebeh AI",
+      cs: "Průběh AI",
+      pl: "Postęp AI",
+    },
+  } as const;
+
+  it("renders every remaining a11y key verbatim in all four locales", () => {
+    for (const key of Object.keys(expected) as (keyof typeof expected)[]) {
+      for (const locale of LOCALES) {
+        expect(t(locale, key)).toBe(expected[key][locale]);
+      }
+    }
+  });
+});
+
+function expectLabelledDialog(markup: string) {
+  expect(markup).toContain('role="dialog"');
+  expect(markup).toContain('aria-modal="true"');
+  const labelledBy = markup.match(/aria-labelledby="([^"]+)"/)?.[1];
+  const ariaLabel = markup.match(/aria-label="([^"]+)"/)?.[1];
+  expect(Boolean(labelledBy || ariaLabel)).toBe(true);
+  if (labelledBy) expect(markup).toContain(`id="${labelledBy}"`);
+}
+
+describe("AC-DIALOG-PRESENT dialog markup", () => {
+  it("string-renders ProfileModal with dialog semantics and a visible-heading name", () => {
+    const markup = renderToStaticMarkup(
+      createElement(ProfileModal, {
+        profile: null,
+        onClose: () => undefined,
+        onLogout: () => undefined,
+        onOpenSettings: () => undefined,
+        onChangePassword: async () => ({ ok: true }),
+      }),
+    );
+    expectLabelledDialog(markup);
+  });
+
+  it("string-renders GameHistoryModal with dialog semantics and a visible-heading name", () => {
+    const markup = renderToStaticMarkup(
+      createElement(GameHistoryModal, {
+        data: null,
+        filter: "all",
+        sort: "updated",
+        loading: false,
+        error: null,
+        onClose: () => undefined,
+        onFilterChange: () => undefined,
+        onPrevPage: () => undefined,
+        onNextPage: () => undefined,
+        onRefresh: () => undefined,
+        onSortChange: () => undefined,
+        onOpenGame: () => undefined,
+      }),
+    );
+    expectLabelledDialog(markup);
+  });
+
+  it("string-renders BlankPicker with dialog semantics and a visible-heading name", () => {
+    Object.assign(useGameStore.getInitialState(), { blankPickerOpen: true });
+    const markup = renderToStaticMarkup(
+      createElement(BlankPicker, { onSelect: () => undefined }),
+    );
+    Object.assign(useGameStore.getInitialState(), { blankPickerOpen: false });
+    expectLabelledDialog(markup);
+  });
+
+  it("source-checks the non-exported AI blocker dialog and its heading target", () => {
+    const source = readFileSync(
+      new URL("../../app/game/[id]/page.tsx", import.meta.url),
+      "utf8",
+    );
+    const blocker = source.slice(
+      source.indexOf("function AIBlockerOverlay"),
+      source.indexOf("export default function GamePage"),
+    );
+    expect(blocker).toContain('role="dialog"');
+    expect(blocker).toContain('aria-modal="true"');
+    expect(blocker).toContain('aria-labelledby="ai-blocker-title"');
+    expect(blocker).toContain('id="ai-blocker-title"');
+  });
+});
+
+describe("AC-STATUS-NOT-DIALOG status markup", () => {
+  it("string-renders AI progress as one polite status region, never a dialog", () => {
+    Object.assign(useGameStore.getInitialState(), {
+      aiThinking: true,
+      aiCandidates: [],
+      aiStatusMessage: null,
+      aiCountdown: 30,
+      aiFallbackAttempts: [],
+      aiFallbackActiveIndex: null,
+      aiTurnTelemetry: null,
+    });
+    const markup = renderToStaticMarkup(createElement(AIThinkingOverlay));
+    Object.assign(useGameStore.getInitialState(), { aiThinking: false });
+    expect(markup).toContain('role="status"');
+    expect(markup).toContain('aria-live="polite"');
+    expect(markup).toContain('aria-label="AI progress"');
+    expect(markup.match(/aria-live=/g)?.length).toBe(1);
+    expect(markup).not.toContain('role="dialog"');
+    expect(markup).not.toContain("aria-modal");
+  });
+
+  it("source-checks every non-exported toast branch as polite status, never dialog", () => {
+    const source = readFileSync(
+      new URL("../../app/game/[id]/page.tsx", import.meta.url),
+      "utf8",
+    );
+    const toast = source.slice(
+      source.indexOf("function ToastOverlay"),
+      source.indexOf("function AIBlockerOverlay"),
+    );
+    expect(toast.match(/role="status"/g)?.length).toBe(6);
+    expect(toast.match(/aria-live="polite"/g)?.length).toBe(6);
+    expect(toast).not.toContain('role="dialog"');
+    expect(toast).not.toContain("aria-modal");
   });
 });
 

@@ -192,6 +192,9 @@ function ToastOverlay({ toast, onDone }: { toast: Toast; onDone: () => void }) {
   if (toast.type === "invalid_word") {
     return (
       <motion.div
+        role="status"
+        aria-live="polite"
+        aria-label={t("a11y.status.turn")}
         initial={{ opacity: 0, scale: 0.7, y: 40 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.8, y: -20 }}
@@ -244,6 +247,9 @@ function ToastOverlay({ toast, onDone }: { toast: Toast; onDone: () => void }) {
   if (toast.type === "placement_error") {
     return (
       <motion.div
+        role="status"
+        aria-live="polite"
+        aria-label={t("a11y.status.turn")}
         initial={{ opacity: 0, scale: 0.7, y: 40 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.8, y: -20 }}
@@ -279,6 +285,9 @@ function ToastOverlay({ toast, onDone }: { toast: Toast; onDone: () => void }) {
   if (toast.type === "ai_pass") {
     return (
       <motion.div
+        role="status"
+        aria-live="polite"
+        aria-label={t("a11y.status.turn")}
         initial={{ opacity: 0, scale: 0.7 }}
         animate={{ opacity: 1, scale: 1 }}
         exit={{ opacity: 0, scale: 0.7 }}
@@ -315,6 +324,9 @@ function ToastOverlay({ toast, onDone }: { toast: Toast; onDone: () => void }) {
   if (toast.type === "ai_played") {
     return (
       <motion.div
+        role="status"
+        aria-live="polite"
+        aria-label={t("a11y.status.turn")}
         initial={{ opacity: 0, y: 30, scale: 0.9 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         exit={{ opacity: 0, y: -20 }}
@@ -354,6 +366,9 @@ function ToastOverlay({ toast, onDone }: { toast: Toast; onDone: () => void }) {
   if (toast.type === "success") {
     return (
       <motion.div
+        role="status"
+        aria-live="polite"
+        aria-label={t("a11y.status.turn")}
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0, y: -20 }}
@@ -366,6 +381,9 @@ function ToastOverlay({ toast, onDone }: { toast: Toast; onDone: () => void }) {
 
   return (
     <motion.div
+      role="status"
+      aria-live="polite"
+      aria-label={t("a11y.status.turn")}
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -20 }}
@@ -387,6 +405,24 @@ function AIBlockerOverlay({
   onOpenSettings: () => void;
 }) {
   const { t } = useT();
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
+  useEffect(() => {
+    dialogRef.current?.focus();
+
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") onCloseRef.current();
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -395,6 +431,11 @@ function AIBlockerOverlay({
       className="fixed inset-0 z-[70] flex items-center justify-center bg-black/52 px-4 backdrop-blur-sm"
     >
       <motion.div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="ai-blocker-title"
+        tabIndex={-1}
         initial={{ opacity: 0, y: 24, scale: 0.94 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         exit={{ opacity: 0, y: 16, scale: 0.97 }}
@@ -408,7 +449,7 @@ function AIBlockerOverlay({
               ? t("game.blocker.badge.rate")
               : t("game.blocker.badge.unavail")}
         </div>
-        <h3 className="mt-3 text-2xl font-black tracking-tight text-stone-50">
+        <h3 id="ai-blocker-title" className="mt-3 text-2xl font-black tracking-tight text-stone-50">
           {modal.title}
         </h3>
         <p className="mt-3 text-sm leading-6 text-stone-300">
@@ -1611,7 +1652,7 @@ export default function GamePage() {
               )}
             </div>
             {turnStatus.text ? (
-              <section className="flex justify-center pt-2" aria-live="polite">
+              <section className="flex justify-center pt-2">
                 <TurnStatusNotice text={turnStatus.text} tone={turnStatus.tone} />
               </section>
             ) : null}

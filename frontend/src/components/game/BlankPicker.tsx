@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useGameStore } from "@/hooks/useGameStore";
 import { useT } from "@/lib/i18n";
@@ -15,10 +16,23 @@ export function BlankPicker({ onSelect }: BlankPickerProps) {
   const closeBlankPicker = useGameStore((s) => s.closeBlankPicker);
   const alphabet = useGameStore((s) => s.gameState?.alphabet);
   const { t } = useT();
+  const dialogRef = useRef<HTMLDivElement>(null);
   const letters =
     alphabet && alphabet.length > 0
       ? alphabet.filter((letter) => letter !== "?")
       : ENGLISH_LETTERS;
+
+  useEffect(() => {
+    if (!isOpen) return;
+    dialogRef.current?.focus();
+
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") closeBlankPicker();
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [closeBlankPicker, isOpen]);
 
   return (
     <AnimatePresence>
@@ -31,6 +45,11 @@ export function BlankPicker({ onSelect }: BlankPickerProps) {
           onClick={closeBlankPicker}
         >
           <motion.div
+            ref={dialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="blank-picker-dialog-title"
+            tabIndex={-1}
             initial={{ scale: 0.8, y: 20 }}
             animate={{ scale: 1, y: 0 }}
             exit={{ scale: 0.8, y: 20 }}
@@ -38,7 +57,7 @@ export function BlankPicker({ onSelect }: BlankPickerProps) {
             onClick={(e) => e.stopPropagation()}
             className="max-w-[min(92vw,28rem)] bg-stone-800/95 backdrop-blur-md rounded-2xl p-6 shadow-2xl shadow-black/50 border border-stone-700/50"
           >
-            <h3 className="text-center text-stone-300 font-semibold mb-4">
+            <h3 id="blank-picker-dialog-title" className="text-center text-stone-300 font-semibold mb-4">
               {t("blank.chooseLetter")}
             </h3>
             <div className="grid grid-cols-7 gap-1.5 sm:gap-2">

@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import { motion } from "framer-motion";
 import {
   PREMIUM_MODAL_STYLE,
@@ -51,6 +52,23 @@ export function GameHistoryModal({
 }) {
   const { t } = useT();
   const premiumLookEnabled = useGameStore((s) => s.premiumLookEnabled);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
+  useEffect(() => {
+    dialogRef.current?.focus();
+
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") onCloseRef.current();
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   return (
     <motion.div
@@ -62,6 +80,11 @@ export function GameHistoryModal({
       onClick={onClose}
     >
       <motion.div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="game-history-dialog-title"
+        tabIndex={-1}
         initial={{ opacity: 0, y: 28, scale: 0.965 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         exit={{ opacity: 0, y: 20, scale: 0.985 }}
@@ -80,7 +103,7 @@ export function GameHistoryModal({
               <div className="flex items-center gap-3">
                 <span className="text-[1.8rem] leading-none sm:text-[2rem]">🗂️</span>
                 <div>
-                  <div className="font-gold-shiny text-3xl font-black tracking-tight sm:text-[2.6rem]">
+                  <div id="game-history-dialog-title" className="font-gold-shiny text-3xl font-black tracking-tight sm:text-[2.6rem]">
                     {t("header.games")}
                   </div>
                   <div className="mt-1 text-sm text-stone-300">

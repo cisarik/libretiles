@@ -157,6 +157,7 @@ function SettingsButton({
   return (
     <button
       onClick={onClick}
+      aria-label={iconOnly ? t("nav.settings") : undefined}
       className={`group relative h-[2.5rem] shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-full border border-amber-300/22 bg-[linear-gradient(145deg,rgba(50,36,22,0.96),rgba(15,11,8,0.98))] px-3 py-2 text-center shadow-[0_16px_34px_rgba(0,0,0,0.24),0_0_28px_rgba(251,191,36,0.08)] transition-all duration-200 active:scale-[0.97] hover:border-amber-100/52 hover:bg-[linear-gradient(145deg,rgba(97,76,48,0.98),rgba(29,22,16,0.99))] hover:shadow-[0_18px_38px_rgba(0,0,0,0.28),0_0_32px_rgba(251,191,36,0.12)] sm:h-auto sm:px-4 sm:py-2.5 ${className ?? "inline-flex"}`}
     >
       {iconOnly ? (
@@ -237,6 +238,7 @@ function HeaderMiniButton({
       type="button"
       onClick={onClick}
       disabled={disabled}
+      aria-label={iconOnly ? (tooltipLabel ?? label) : undefined}
       className={`group relative z-[20] inline-flex h-[2.1rem] shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full border px-3 py-1.5 text-center shadow-[0_12px_28px_rgba(0,0,0,0.24),0_0_24px_rgba(251,191,36,0.05)] transition-all duration-200 active:scale-[0.97] hover:z-[220] hover:shadow-[0_16px_32px_rgba(0,0,0,0.28),0_0_28px_rgba(251,191,36,0.08)] disabled:cursor-not-allowed disabled:opacity-50 ${toneClasses} ${className ?? ""}`}
     >
       {iconOnly ? (
@@ -353,6 +355,7 @@ export function ScorePanel({
           <div className="flex items-center gap-[1px] xl:absolute xl:bottom-[-1px] xl:left-[-1px] xl:z-[180]">
             <button
               onClick={onBack}
+              aria-label={t("header.backToBoards")}
               className="group relative inline-flex h-[2.86rem] w-[3.08rem] shrink-0 items-center justify-center rounded-[1.08rem] rounded-bl-[1.45rem] border border-rose-400/24 bg-[linear-gradient(145deg,rgba(96,25,46,0.62),rgba(42,14,23,0.7))] px-0 py-0 text-center shadow-[0_16px_34px_rgba(0,0,0,0.24)] transition-all duration-200 active:scale-[0.97] hover:border-rose-100/40 hover:bg-[linear-gradient(145deg,rgba(123,33,59,0.76),rgba(53,16,29,0.82))] hover:shadow-[0_18px_38px_rgba(0,0,0,0.28),0_0_26px_rgba(244,114,182,0.10)] disabled:cursor-not-allowed disabled:opacity-45"
             >
               <span className={`text-[1.2rem] leading-none ${premiumTitleClass}`}>↩</span>

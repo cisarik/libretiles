@@ -1,6 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion } from "framer-motion";
+import { useT } from "@/lib/i18n";
 
 export function TurnStatusNotice({
   text,
@@ -9,6 +10,7 @@ export function TurnStatusNotice({
   text?: string | null;
   tone?: "active" | "waiting" | "neutral";
 }) {
+  const { t } = useT();
   if (!text) return null;
 
   const palette =
@@ -21,6 +23,9 @@ export function TurnStatusNotice({
   return (
     <AnimatePresence mode="wait">
       <motion.div
+        role="status"
+        aria-live="polite"
+        aria-label={t("a11y.status.turn")}
         key={text}
         initial={{ opacity: 0, y: 8, scale: 0.97 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}

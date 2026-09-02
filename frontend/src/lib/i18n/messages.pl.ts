@@ -23,6 +23,14 @@ export const plText: Record<TextKey, string> = {
   "auth.tab.register": "Zarejestruj się",
   "auth.field.username": "Nazwa użytkownika",
   "auth.field.password": "Hasło",
+  "a11y.chatInput": "Wiadomość na chat",
+  "a11y.dialog.profile": "Profil",
+  "a11y.dialog.games": "Zapisane partie",
+  "a11y.dialog.blank": "Wybierz literę",
+  "a11y.dialog.rival": "Rywal niedostępny",
+  "a11y.status.turn": "Status ruchu",
+  "a11y.status.aiThinking": "Postęp AI",
+  "a11y.rackBlank": "Blank",
   "auth.submit.loading": "Logowanie...",
   "auth.submit.login": "Graj",
   "auth.submit.register": "Utwórz konto i graj",
@@ -303,6 +311,9 @@ export const plText: Record<TextKey, string> = {
 };
 
 export const plFn: { [K in FnKey]: (typeof enFn)[K] } = {
+  "a11y.rackTile": (p) =>
+    `Płytka ${p.letter}, ${p.points} ` +
+    pluralPl(p.points, "punkt", "punkty", "punktów"),
   "overlay.stats.tried": (p) => `Sprawdzone: ${p.count}`,
   "overlay.stats.valid": (p) => `Poprawne: ${p.count}`,
   "overlay.stats.rejected": (p) => `Odrzucone: ${p.count}`,

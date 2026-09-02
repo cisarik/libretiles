@@ -65,8 +65,31 @@ This codebase must not use a one-character `s` suffix for counts.
 
 English counted nouns use `pluralEn` (`one` / `other`).
 
+`a11y.rackTile` uses the locale's plural helper, including the three-form
+`1 bod / 2 body / 5 bodov`; `a11y.rackBlank` stays separate because a blank has
+no letter.
+
 Slovak, Czech, and Polish thousands separator is a non-breaking space (U+00A0):
 `279 496`.
+
+## Accessibility
+
+Real overlays that require action use dialog semantics, while transient toast,
+turn, and AI-progress announcements use polite status regions and never move
+focus. A full keyboard focus trap is deliberately out of scope; dialogs provide
+Escape dismissal, initial focus, and `aria-modal` instead.
+
+| Key | English | Slovak | Czech | Polish |
+|---|---|---|---|---|
+| a11y.chatInput | Chat message | Správa do chatu | Zpráva do chatu | Wiadomość na chat |
+| a11y.dialog.profile | Profile | Profil | Profil | Profil |
+| a11y.dialog.games | Saved games | Uložené partie | Uložené partie | Zapisane partie |
+| a11y.dialog.blank | Choose a letter | Vyber písmeno | Vyber písmeno | Wybierz literę |
+| a11y.dialog.rival | Rival unavailable | Súper nedostupný | Soupeř nedostupný | Rywal niedostępny |
+| a11y.status.turn | Turn status | Stav ťahu | Stav tahu | Status ruchu |
+| a11y.status.aiThinking | AI progress | Priebeh AI | Průběh AI | Postęp AI |
+| a11y.rackTile (fn) | Tile {letter}, {points} point/points | Písmeno {letter}, {points} bod/body/bodov | Kámen {letter}, {points} bod/body/bodů | Płytka {letter}, {points} punkt/punkty/punktów |
+| a11y.rackBlank | Blank tile | Žolík | Žolík | Blank |
 
 ## Landing and auth
 

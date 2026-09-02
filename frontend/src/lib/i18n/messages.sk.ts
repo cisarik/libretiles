@@ -23,6 +23,14 @@ export const skText: Record<TextKey, string> = {
   "auth.tab.register": "Registrovať",
   "auth.field.username": "Používateľské meno",
   "auth.field.password": "Heslo",
+  "a11y.chatInput": "Správa do chatu",
+  "a11y.dialog.profile": "Profil",
+  "a11y.dialog.games": "Uložené partie",
+  "a11y.dialog.blank": "Vyber písmeno",
+  "a11y.dialog.rival": "Súper nedostupný",
+  "a11y.status.turn": "Stav ťahu",
+  "a11y.status.aiThinking": "Priebeh AI",
+  "a11y.rackBlank": "Žolík",
   "auth.submit.loading": "Prihlasujem...",
   "auth.submit.login": "Hrať",
   "auth.submit.register": "Vytvoriť účet a hrať",
@@ -300,6 +308,9 @@ export const skText: Record<TextKey, string> = {
 };
 
 export const skFn: { [K in FnKey]: (typeof enFn)[K] } = {
+  "a11y.rackTile": (p) =>
+    `Písmeno ${p.letter}, ${p.points} ` +
+    pluralSk(p.points, "bod", "body", "bodov"),
   "overlay.stats.tried": (p) => `Skúsené: ${p.count}`,
   "overlay.stats.valid": (p) => `Platné: ${p.count}`,
   "overlay.stats.rejected": (p) => `Zamietnuté: ${p.count}`,

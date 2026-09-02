@@ -1,3 +1,5 @@
+import { pluralEn } from "./plural";
+
 export const enText = {
   "landing.brand": "Libre Tiles",
   "landing.titleLine1": "Premium Libre Tiles,",
@@ -18,6 +20,14 @@ export const enText = {
   "auth.tab.register": "Register",
   "auth.field.username": "Username",
   "auth.field.password": "Password",
+  "a11y.chatInput": "Chat message",
+  "a11y.dialog.profile": "Profile",
+  "a11y.dialog.games": "Saved games",
+  "a11y.dialog.blank": "Choose a letter",
+  "a11y.dialog.rival": "Rival unavailable",
+  "a11y.status.turn": "Turn status",
+  "a11y.status.aiThinking": "AI progress",
+  "a11y.rackBlank": "Blank tile",
   "auth.submit.loading": "Signing in...",
   "auth.submit.login": "Play now",
   "auth.submit.register": "Create account & play",
@@ -300,6 +310,8 @@ export const enText = {
 } as const;
 
 export const enFn = {
+  "a11y.rackTile": (p: { letter: string; points: number }) =>
+    `Tile ${p.letter}, ${p.points} ${pluralEn(p.points, "point", "points")}`,
   "overlay.stats.tried": (p: { count: number }) => `${p.count} tried`,
   "overlay.stats.valid": (p: { count: number }) => `${p.count} valid`,
   "overlay.stats.rejected": (p: { count: number }) => `${p.count} rejected`,

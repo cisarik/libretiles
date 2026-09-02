@@ -23,6 +23,14 @@ export const csText: Record<TextKey, string> = {
   "auth.tab.register": "Registrovat",
   "auth.field.username": "Uživatelské jméno",
   "auth.field.password": "Heslo",
+  "a11y.chatInput": "Zpráva do chatu",
+  "a11y.dialog.profile": "Profil",
+  "a11y.dialog.games": "Uložené partie",
+  "a11y.dialog.blank": "Vyber písmeno",
+  "a11y.dialog.rival": "Soupeř nedostupný",
+  "a11y.status.turn": "Stav tahu",
+  "a11y.status.aiThinking": "Průběh AI",
+  "a11y.rackBlank": "Žolík",
   "auth.submit.loading": "Přihlašuji...",
   "auth.submit.login": "Hrát",
   "auth.submit.register": "Vytvořit účet a hrát",
@@ -300,6 +308,9 @@ export const csText: Record<TextKey, string> = {
 };
 
 export const csFn: { [K in FnKey]: (typeof enFn)[K] } = {
+  "a11y.rackTile": (p) =>
+    `Kámen ${p.letter}, ${p.points} ` +
+    pluralCs(p.points, "bod", "body", "bodů"),
   "overlay.stats.tried": (p) => `Zkoušené: ${p.count}`,
   "overlay.stats.valid": (p) => `Platné: ${p.count}`,
   "overlay.stats.rejected": (p) => `Zamítnuté: ${p.count}`,

@@ -51,6 +51,7 @@ export function ChatPanel({ messages, disabled = false, onSend }: ChatPanelProps
       </div>
       <div className="mt-3 flex gap-2">
         <input
+          aria-label={t("a11y.chatInput")}
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={(event) => {

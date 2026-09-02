@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { useGameStore } from "@/hooks/useGameStore";
 import { t as translate, useLocale, type Locale } from "@/lib/i18n";
@@ -62,6 +62,23 @@ export function ProfileModal({
   const [notice, setNotice] = useState<Notice>(null);
   const premiumLookEnabled = useGameStore((s) => s.premiumLookEnabled);
   const locale = useLocale();
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
+  useEffect(() => {
+    dialogRef.current?.focus();
+
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") onCloseRef.current();
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   const memberSince = useMemo(
     () => formatJoinedDate(profile?.date_joined, locale),
@@ -122,6 +139,11 @@ export function ProfileModal({
       onClick={onClose}
     >
       <motion.div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="profile-dialog-title"
+        tabIndex={-1}
         initial={{ opacity: 0, y: 28, scale: 0.965 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         exit={{ opacity: 0, y: 20, scale: 0.985 }}
@@ -140,7 +162,7 @@ export function ProfileModal({
               <div className="flex items-center gap-3">
                 <span className="text-[1.8rem] leading-none sm:text-[2rem]">👤</span>
                 <div>
-                  <div className="font-gold-shiny text-3xl font-black tracking-tight sm:text-[2.6rem]">
+                  <div id="profile-dialog-title" className="font-gold-shiny text-3xl font-black tracking-tight sm:text-[2.6rem]">
                     {translate(locale, "header.profile")}
                   </div>
                   <div className="mt-1 text-sm text-stone-300">

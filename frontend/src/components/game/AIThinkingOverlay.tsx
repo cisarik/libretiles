@@ -233,7 +233,6 @@ export function FallbackAttemptProgress() {
       {humanState ? (
         <p
           data-testid="ai-turn-telemetry"
-          aria-live="polite"
           className="text-[10px] leading-snug text-stone-400"
         >
           {humanState}
@@ -269,6 +268,9 @@ export function AIThinkingOverlay() {
     <AnimatePresence>
       {aiThinking && (
         <motion.div
+          role="status"
+          aria-live="polite"
+          aria-label={t("a11y.status.aiThinking")}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
