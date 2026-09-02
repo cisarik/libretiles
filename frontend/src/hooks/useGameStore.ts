@@ -36,8 +36,6 @@ interface GameStore {
   // AI model selection (empty string = unresolved; pages resolve from catalog row 1)
   selectedModelId: string;
   setSelectedModelId: (id: string) => void;
-  selectedPromptId: number | null;
-  setSelectedPromptId: (id: number | null) => void;
 
   // Game language for new AI games and queue joins (session snapshot owns live play)
   selectedVariantSlug: SelectedVariantSlug;
@@ -139,8 +137,6 @@ export const useGameStore = create<GameStore>()(
 
       selectedModelId: "",
       setSelectedModelId: (selectedModelId) => set({ selectedModelId }),
-      selectedPromptId: null,
-      setSelectedPromptId: (selectedPromptId) => set({ selectedPromptId }),
 
       selectedVariantSlug: "english",
       setSelectedVariantSlug: (selectedVariantSlug) => set({ selectedVariantSlug }),
@@ -273,7 +269,7 @@ export const useGameStore = create<GameStore>()(
     }),
     {
       name: "libretiles-store",
-      version: 4,
+      version: 5,
       migrate: (persistedState, version) => {
         const incoming = { ...((persistedState ?? {}) as Record<string, unknown>) };
         if (version < 1) {
@@ -294,6 +290,9 @@ export const useGameStore = create<GameStore>()(
           if (!isSyntacticallyValidSlug(incoming.selectedVariantSlug)) {
             incoming.selectedVariantSlug = "english";
           }
+        }
+        if (version < 5) {
+          delete incoming.selectedPromptId;
         }
         return incoming as unknown as GameStore;
       },
@@ -318,7 +317,6 @@ export const useGameStore = create<GameStore>()(
         token: state.token,
         refreshToken: state.refreshToken,
         selectedModelId: state.selectedModelId,
-        selectedPromptId: state.selectedPromptId,
         selectedVariantSlug: state.selectedVariantSlug,
         uiLocale: state.uiLocale,
         aiTimeout: state.aiTimeout,

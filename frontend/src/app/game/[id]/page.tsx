@@ -27,8 +27,6 @@ import { AIThinkingOverlay } from "@/components/game/AIThinkingOverlay";
 import { ChatPanel } from "@/components/game/ChatPanel";
 import { ProfileModal } from "@/components/game/ProfileModal";
 import { GameHistoryModal } from "@/components/game/GameHistoryModal";
-import { PromptCatalogModal } from "@/components/game/PromptCatalogModal";
-import { PromptPreviewModal } from "@/components/game/PromptPreviewModal";
 import { TurnStatusNotice } from "@/components/game/TurnStatusNotice";
 import { useGameStore, type BoardTheme } from "@/hooks/useGameStore";
 import { useIsCoarsePointer } from "@/hooks/useIsCoarsePointer";
@@ -47,7 +45,6 @@ import { buildGameWebSocketUrl } from "@/lib/ws";
 import {
   describeAiMoveFailure,
   shouldHideLostAiTerminal,
-  type AIPrompt,
   type GameHistoryFilter,
   type GameHistoryItem,
   type GameHistoryResponse,
@@ -59,7 +56,8 @@ import {
   type WSTicketResponse,
 } from "@/lib/types";
 import { Tile } from "@/components/tiles/Tile";
-import { useT } from "@/lib/i18n";
+import { useLocale, useT, tf } from "@/lib/i18n";
+import type { Locale } from "@/lib/i18n/locales";
 import {
   aiPassBodyKey,
   lexiconRejectionKey,
@@ -82,21 +80,21 @@ function isHtmlResponse(body: string, contentType: string | null) {
   return contentType?.includes("text/html") === true || /<!doctype html|<html/i.test(body);
 }
 
-async function getStreamStartError(response: Response) {
+async function getStreamStartError(response: Response, locale: Locale) {
   const raw = await response.text();
 
   try {
     const parsed = JSON.parse(raw) as { error?: string; message?: string; detail?: string };
-    return parsed.error || parsed.message || parsed.detail || `AI route failed (${response.status}).`;
+    return parsed.error || parsed.message || parsed.detail || tf(locale, "game.ai.routeFailed", { status: response.status });
   } catch {
     if (isHtmlResponse(raw, response.headers.get("content-type"))) {
-      return `AI route failed (${response.status}) before the stream started.`;
+      return tf(locale, "game.ai.routeFailedBeforeStream", { status: response.status });
     }
 
     const preview = raw.replace(/\s+/g, " ").trim().slice(0, 220);
     return preview
-      ? `AI route failed (${response.status}): ${preview}`
-      : `AI route failed (${response.status}).`;
+      ? tf(locale, "game.ai.routeFailedWithPreview", { status: response.status, preview })
+      : tf(locale, "game.ai.routeFailed", { status: response.status });
   }
 }
 
@@ -184,7 +182,7 @@ function normalizeAIBlocker(
 }
 
 function ToastOverlay({ toast, onDone }: { toast: Toast; onDone: () => void }) {
-  const { t } = useT();
+  const { t, tf } = useT();
   const lexiconId = useGameStore((s) => s.gameState?.lexicon_id);
   useEffect(() => {
     const timer = setTimeout(onDone, toast.type === "ai_played" ? 4600 : toast.type === "ai_pass" ? 4200 : 3200);
@@ -219,7 +217,7 @@ function ToastOverlay({ toast, onDone }: { toast: Toast; onDone: () => void }) {
             transition={{ duration: 0.4 }}
             className="text-red-300 font-bold text-lg mb-2"
           >
-            Invalid Word{(toast.words?.length ?? 0) > 1 ? "s" : ""}!
+            {tf("game.toast.invalidWordHeading", { count: toast.words?.length ?? 0 })}
           </motion.div>
           <div className="flex flex-wrap gap-1.5 justify-center">
             {toast.words?.map((w) => (
@@ -442,6 +440,7 @@ export default function GamePage() {
   const router = useRouter();
   const gameId = params.id as string;
   const isCoarsePointer = useIsCoarsePointer();
+  const locale = useLocale();
   const { t, tf } = useT();
 
   const token = useGameStore((s) => s.token);
@@ -461,8 +460,6 @@ export default function GamePage() {
   const aiThinking = useGameStore((s) => s.aiThinking);
   const openBlankPicker = useGameStore((s) => s.openBlankPicker);
   const selectedModelId = useGameStore((s) => s.selectedModelId);
-  const selectedPromptId = useGameStore((s) => s.selectedPromptId);
-  const setSelectedPromptId = useGameStore((s) => s.setSelectedPromptId);
   const aiTimeout = useGameStore((s) => s.aiTimeout);
   const aiMaxSteps = useGameStore((s) => s.aiMaxSteps);
   const boardTheme = useGameStore((s) => s.boardTheme);
@@ -497,8 +494,6 @@ export default function GamePage() {
   const [newGameTransitioning, setNewGameTransitioning] = useState(false);
   const [profileModalOpen, setProfileModalOpen] = useState(false);
   const [gamesModalOpen, setGamesModalOpen] = useState(false);
-  const [promptsModalOpen, setPromptsModalOpen] = useState(false);
-  const [promptPreview, setPromptPreview] = useState<AIPrompt | null>(null);
   const [loggingOut, setLoggingOut] = useState(false);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [gameHistoryFilter, setGameHistoryFilter] = useState<GameHistoryFilter>("vs_ai");
@@ -506,9 +501,6 @@ export default function GamePage() {
   const [gameHistoryData, setGameHistoryData] = useState<GameHistoryResponse | null>(null);
   const [gameHistoryLoading, setGameHistoryLoading] = useState(false);
   const [gameHistoryError, setGameHistoryError] = useState<string | null>(null);
-  const [prompts, setPrompts] = useState<AIPrompt[]>([]);
-  const [promptsLoading, setPromptsLoading] = useState(false);
-  const [savingPromptId, setSavingPromptId] = useState<number | null>(null);
 
   const pointerSensor = useSensor(PointerSensor, { activationConstraint: { distance: 3 } });
   const touchSensor = useSensor(TouchSensor, {
@@ -581,48 +573,6 @@ export default function GamePage() {
       cancelled = true;
     };
   }, [token, gameId, gameState, selectedModelId, setGameState]);
-
-  useEffect(() => {
-    if (!token || !gameState || selectedPromptId == null || gameState.game_mode !== "vs_ai") return;
-    if (gameState.ai_prompt_id === selectedPromptId) return;
-
-    let cancelled = false;
-    const previousPromptId = gameState.ai_prompt_id ?? null;
-    setSavingPromptId(selectedPromptId);
-
-    api
-      .updateGameAIPrompt(token, gameId, { ai_prompt_id: selectedPromptId })
-      .then((result) => {
-        if (cancelled || !result.ok) return;
-        const latestState = useGameStore.getState().gameState;
-        if (!latestState) return;
-        setGameState({
-          ...latestState,
-          ai_prompt_id: result.ai_prompt_id,
-          ai_prompt_name: result.ai_prompt_name,
-          ai_prompt_fitness: result.ai_prompt_fitness,
-        });
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setSelectedPromptId(previousPromptId);
-          setToast({
-            id: `prompt-${Date.now()}`,
-            type: "error",
-            message: "Could not switch AI prompt right now.",
-          });
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setSavingPromptId((current) => (current === selectedPromptId ? null : current));
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [token, gameId, gameState, selectedPromptId, setGameState, setSelectedPromptId]);
 
   useEffect(() => {
     return () => { if (countdownRef.current) clearInterval(countdownRef.current); };
@@ -779,8 +729,6 @@ export default function GamePage() {
     setLoggingOut(true);
     setProfileModalOpen(false);
     setGamesModalOpen(false);
-    setPromptsModalOpen(false);
-    setPromptPreview(null);
     const access = useGameStore.getState().token;
     const refresh = useGameStore.getState().refreshToken;
     if (access && refresh) {
@@ -828,42 +776,10 @@ export default function GamePage() {
     }
   }, [gameHistoryFilter, gameHistorySort, t, token]);
 
-  const fetchPrompts = useCallback(async () => {
-    setPromptsLoading(true);
-    try {
-      const result = await fetch("/api/prompts", { cache: "no-store" });
-      const catalog = (await result.json().catch(() => [])) as unknown;
-      setPrompts(Array.isArray(catalog) ? (catalog as AIPrompt[]) : []);
-    } catch {
-      setPrompts([]);
-    } finally {
-      setPromptsLoading(false);
-    }
-  }, []);
-
   const handleOpenGamesModal = useCallback(() => {
     setGamesModalOpen(true);
     void fetchGameHistory({ page: 1 });
   }, [fetchGameHistory]);
-
-  const handleOpenPromptsModal = useCallback(() => {
-    setPromptsModalOpen(true);
-    void fetchPrompts();
-  }, [fetchPrompts]);
-
-  const handlePromptSelect = useCallback((prompt: AIPrompt) => {
-    setSelectedPromptId(prompt.id);
-    setPromptsModalOpen(false);
-  }, [setSelectedPromptId]);
-
-  const handlePromptPreview = useCallback((prompt: AIPrompt) => {
-    setPromptPreview(prompt);
-  }, []);
-
-  const handlePromptSelectFromPreview = useCallback((prompt: AIPrompt) => {
-    handlePromptSelect(prompt);
-    setPromptPreview(null);
-  }, [handlePromptSelect]);
 
   const handleGameHistoryFilterChange = useCallback((nextFilter: GameHistoryFilter) => {
     setGameHistoryFilter(nextFilter);
@@ -1005,7 +921,7 @@ export default function GamePage() {
           });
           const contentType = res.headers.get("content-type") ?? "";
           if (!res.ok || !contentType.includes("text/event-stream")) {
-            throw new Error(await getStreamStartError(res));
+            throw new Error(await getStreamStartError(res, locale));
           }
           return consumeAIStream(res, {
             onCandidate: (candidate) => {
@@ -1139,7 +1055,7 @@ export default function GamePage() {
     setAIThinking, setLastMoveResult, setGameState, setAIStatusMessage, syncState,
     clearAICandidates, addAICandidate, startCountdown, stopCountdown, showToast,
     setAIFallbackAttempts, setAIFallbackActiveIndex, markAIFallbackFailed,
-    clearAIFallbackProgress, patchAITurnTelemetry, t, tf,
+    clearAIFallbackProgress, patchAITurnTelemetry, t, tf, locale,
   ]);
 
   useEffect(() => {
@@ -1519,19 +1435,10 @@ export default function GamePage() {
       return opponentSlotInfo?.username ?? t("game.opponentFallback");
     }
     if (selectedModelId && gameState?.ai_model_id !== selectedModelId) {
-      return humanizeModelId(selectedModelId) ?? gameState?.ai_model_display_name ?? "Choose rival";
+      return humanizeModelId(selectedModelId) ?? gameState?.ai_model_display_name ?? t("game.opponentFallback");
     }
-    return gameState?.ai_model_display_name ?? humanizeModelId(gameState?.ai_model_id) ?? "Choose rival";
+    return gameState?.ai_model_display_name ?? humanizeModelId(gameState?.ai_model_id) ?? t("game.opponentFallback");
   }, [gameState?.ai_model_display_name, gameState?.ai_model_id, gameState?.game_mode, opponentSlotInfo?.username, selectedModelId, t]);
-  const effectivePromptId = selectedPromptId ?? gameState?.ai_prompt_id ?? null;
-  const activePromptLabel = useMemo(() => {
-    if (gameState?.game_mode !== "vs_ai") return null;
-    if (effectivePromptId != null) {
-      const selectedPrompt = prompts.find((prompt) => prompt.id === effectivePromptId);
-      if (selectedPrompt) return selectedPrompt.name;
-    }
-    return gameState?.ai_prompt_name ?? "Initial";
-  }, [effectivePromptId, gameState?.ai_prompt_name, gameState?.game_mode, prompts]);
   const rackTileSize = isCoarsePointer ? "rack" : "lg";
 
   const handleRackTileSelect = useCallback((tile: { letter: string; index: number }) => {
@@ -1610,12 +1517,9 @@ export default function GamePage() {
           <ScorePanel
             opponentLabel={activeHeaderModelName}
             showRivalPicker={gameState?.game_mode === "vs_ai"}
-            showPromptPicker={gameState?.game_mode === "vs_ai"}
-            promptLabel={activePromptLabel}
             frameBorderColor={frameBorderColor}
             onBack={() => router.push("/play")}
             onOpenRivalPicker={() => router.push("/settings?focus=rival")}
-            onOpenPromptPicker={handleOpenPromptsModal}
             onNewGame={() => void handleNewGame()}
             onGiveUp={() => void handleGiveUp()}
             onOpenGames={handleOpenGamesModal}
@@ -1796,26 +1700,6 @@ export default function GamePage() {
             }}
             onChangePassword={handleProfilePasswordChange}
             loggingOut={loggingOut}
-          />
-        )}
-        {promptsModalOpen && (
-          <PromptCatalogModal
-            prompts={prompts}
-            selectedPromptId={effectivePromptId}
-            loading={promptsLoading}
-            savingPromptId={savingPromptId}
-            onClose={() => setPromptsModalOpen(false)}
-            onSelect={handlePromptSelect}
-            onPreview={handlePromptPreview}
-          />
-        )}
-        {promptPreview && (
-          <PromptPreviewModal
-            prompt={promptPreview}
-            selected={effectivePromptId === promptPreview.id}
-            saving={savingPromptId === promptPreview.id}
-            onSelect={handlePromptSelectFromPreview}
-            onClose={() => setPromptPreview(null)}
           />
         )}
         {aiBlockerModal && (

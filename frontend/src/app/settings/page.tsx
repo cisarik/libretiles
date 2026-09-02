@@ -12,7 +12,6 @@ import { motion } from "framer-motion";
 import { useGameStore, type BoardTheme } from "@/hooks/useGameStore";
 import { useLocale, useT } from "@/lib/i18n";
 import type { Locale } from "@/lib/i18n/locales";
-import { providerBadgeLabel } from "@/lib/ai-fallback";
 import { api } from "@/lib/api";
 import { resolveEligibleModelId } from "@/lib/model-catalog";
 import {
@@ -65,13 +64,6 @@ type Notice = {
   tone: NoticeTone;
   text: string;
 } | null;
-
-function formatContextWindow(value?: number | null): string | null {
-  if (!value) return null;
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
-  if (value >= 1_000) return `${Math.round(value / 1_000)}K`;
-  return `${value}`;
-}
 
 function noticeClasses(tone: NoticeTone): string {
   if (tone === "success") {
@@ -393,10 +385,8 @@ export default function SettingsPage() {
   const [models, setModels] = useState<AIModel[]>([]);
   const [variants, setVariants] = useState<VariantSummary[]>([]);
   const [loading, setLoading] = useState(true);
-  const [savingModelId, setSavingModelId] = useState<string | null>(null);
   const [startingNewGame, setStartingNewGame] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
-  const [accountSyncAvailable, setAccountSyncAvailable] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
   const rivalSectionRef = useRef<HTMLElement | null>(null);
 
@@ -434,7 +424,6 @@ export default function SettingsPage() {
         const preferredId = profileResult.profile?.preferred_ai_model_id ?? "";
 
         setModels(nextModels);
-        setAccountSyncAvailable(profileResult.ok);
 
         if (variantsResult.ok && Array.isArray(variantsResult.rows)) {
           setVariants(variantsResult.rows);
@@ -533,42 +522,6 @@ export default function SettingsPage() {
       if (timeoutId) window.clearTimeout(timeoutId);
     };
   }, [isClosing, router]);
-
-  async function persistModelSelection(modelId: string) {
-    if (modelId === selectedModelId || savingModelId) return;
-    if (!models.some((model) => model.model_id === modelId)) return;
-
-    const previousModelId = selectedModelId;
-    const chosenModel = models.find((model) => model.model_id === modelId);
-
-    setNotice(null);
-    setSelectedModelId(modelId);
-
-    if (!token || !accountSyncAvailable) {
-      setNotice({
-        tone: "info",
-        text: `${chosenModel?.display_name ?? modelId} is active on this device.`,
-      });
-      return;
-    }
-
-    setSavingModelId(modelId);
-    try {
-      await api.updateMe(token, { preferred_ai_model_id: modelId });
-      setNotice({
-        tone: "success",
-        text: `${chosenModel?.display_name ?? modelId} will be used for the next AI turn.`,
-      });
-    } catch {
-      setSelectedModelId(previousModelId);
-      setNotice({
-        tone: "warning",
-        text: "Model change did not sync to your account. Try again in a moment.",
-      });
-    } finally {
-      setSavingModelId(null);
-    }
-  }
 
   async function handleNewGame() {
     if (!token) {
@@ -669,102 +622,11 @@ export default function SettingsPage() {
                 title="Choose the rival"
                 description="Provider-diverse free rivals from the live catalog, newest first."
               >
-                <div className="mb-4 min-w-0">
-                  <div
-                    className={`truncate text-[1.35rem] font-black sm:text-[1.55rem] ${
-                      selectedModel ? "font-gold-shiny" : "text-stone-400"
-                    }`}
-                  >
-                    {selectedModel?.display_name ?? "No rival selected"}
-                  </div>
-                  {savingModelId ? (
-                    <div className="mt-3 inline-flex rounded-full border border-amber-300/20 bg-amber-400/10 px-3 py-1.5 text-xs font-medium text-amber-100 shadow-[0_10px_24px_rgba(251,191,36,0.08)]">
-                      Saving selection...
-                    </div>
-                  ) : null}
-                </div>
-
                 {loading ? (
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    {Array.from({ length: 5 }).map((_, index) => (
-                      <div
-                        key={index}
-                        className="min-h-[168px] animate-pulse rounded-[1.15rem] border border-white/8 bg-black/12"
-                      />
-                    ))}
-                  </div>
-                ) : models.length > 0 ? (
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    {models.map((model) => {
-                      const isSelected = selectedModelId === model.model_id;
-                      const isSaving = savingModelId === model.model_id;
-                      const contextLabel = formatContextWindow(model.context_window);
-
-                      return (
-                        <motion.button
-                          key={`${model.provider}:${model.model_id}`}
-                          type="button"
-                          whileHover={{ y: -1.5, scale: 1.01 }}
-                          whileTap={{ scale: 0.985 }}
-                          disabled={Boolean(savingModelId)}
-                          aria-pressed={isSelected}
-                          onClick={() => void persistModelSelection(model.model_id)}
-                          className={`rounded-[1.15rem] border px-4 py-4 text-left transition-[border-color,box-shadow,background-color,transform] duration-300 disabled:cursor-not-allowed disabled:opacity-75 ${
-                            isSelected
-                              ? "border-amber-300/45 bg-amber-400/10 shadow-[0_12px_30px_rgba(251,191,36,0.10)]"
-                              : "border-white/8 bg-stone-950/72 hover:border-white/14 hover:shadow-[0_12px_28px_rgba(0,0,0,0.2)]"
-                          }`}
-                        >
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span
-                              className={`text-[1.2rem] font-black sm:text-[1.32rem] ${
-                                isSelected ? "font-gold-shiny" : "font-gold-dark"
-                              }`}
-                            >
-                              {model.display_name}
-                            </span>
-                            <span
-                              className={`rounded-full border px-2.5 py-1 text-[0.72rem] font-semibold uppercase tracking-[0.18em] ${
-                                model.provider === "nvidia-nim"
-                                  ? "border-violet-300/26 bg-violet-300/14 text-violet-50"
-                                  : "border-sky-300/26 bg-sky-300/14 text-sky-50"
-                              }`}
-                            >
-                              {providerBadgeLabel(model.provider)}
-                            </span>
-                            <span className="rounded-full border border-emerald-300/26 bg-emerald-300/14 px-2.5 py-1 text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-emerald-50">
-                              Free
-                            </span>
-                            {model.is_flagship ? (
-                              <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-300">
-                                Recommended
-                              </span>
-                            ) : null}
-                            {isSaving || isSelected ? (
-                              <span
-                                className={`rounded-full border px-2.5 py-1 text-[0.72rem] font-semibold uppercase tracking-[0.18em] ${
-                                  isSaving
-                                    ? "border-sky-400/24 bg-sky-400/12 text-sky-100"
-                                    : "border-amber-300/24 bg-amber-300/12 text-amber-100"
-                                }`}
-                              >
-                                {isSaving ? "Saving" : "Active"}
-                              </span>
-                            ) : null}
-                          </div>
-                          {model.description ? (
-                            <p className="mt-3 text-[0.98rem] leading-7 text-stone-300">
-                              {model.description}
-                            </p>
-                          ) : null}
-                          {contextLabel ? (
-                            <div className="mt-3 text-[0.78rem] uppercase tracking-[0.16em] text-stone-500">
-                              {contextLabel} context
-                            </div>
-                          ) : null}
-                        </motion.button>
-                      );
-                    })}
+                  <div className="min-h-[48px] animate-pulse rounded-[1.15rem] border border-white/8 bg-black/12" />
+                ) : selectedModel ? (
+                  <div className="truncate text-[1.35rem] font-black font-gold-shiny sm:text-[1.55rem]">
+                    {selectedModel.display_name}
                   </div>
                 ) : (
                   <div className="rounded-[1.15rem] border border-white/8 bg-stone-950/72 px-4 py-5 text-sm text-stone-400">

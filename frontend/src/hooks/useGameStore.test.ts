@@ -152,7 +152,7 @@ describe("AC-ONCE explicit locale is sticky", () => {
 
 describe("AC-MIGRATE persist version 2 to 3", () => {
   it("yields uiLocale null when a v2 payload has no locale", async () => {
-    expect(useGameStore.persist.getOptions().version).toBe(4);
+    expect(useGameStore.persist.getOptions().version).toBe(5);
     const migrate = useGameStore.persist.getOptions().migrate;
     expect(migrate).toBeTypeOf("function");
     const migrated = (await migrate!(
@@ -164,7 +164,7 @@ describe("AC-MIGRATE persist version 2 to 3", () => {
   });
 
   it("rewrites a garbage uiLocale to null and preserves a valid stored value", async () => {
-    expect(useGameStore.persist.getOptions().version).toBe(4);
+    expect(useGameStore.persist.getOptions().version).toBe(5);
     const migrate = useGameStore.persist.getOptions().migrate;
     expect(migrate).toBeTypeOf("function");
     const garbage = (await migrate!(
@@ -214,5 +214,46 @@ describe("persist migrate to version 4", () => {
       )) as Record<string, unknown>;
       expect(migrated.selectedVariantSlug).toBe("english");
     }
+  });
+});
+
+describe("AC-PERSIST-5 migrate drops selectedPromptId", () => {
+  it("removes selectedPromptId from a v4 payload and preserves the kept fields", async () => {
+    expect(useGameStore.persist.getOptions().version).toBe(5);
+    const migrate = useGameStore.persist.getOptions().migrate;
+    expect(migrate).toBeTypeOf("function");
+    const migrated = (await migrate!(
+      {
+        selectedPromptId: 7,
+        selectedModelId: "nvidia/nemotron-3-super-120b-a12b",
+        selectedVariantSlug: "slovak",
+        uiLocale: "cs",
+        aiTimeout: 90,
+      },
+      4,
+    )) as Record<string, unknown>;
+    expect(migrated).not.toHaveProperty("selectedPromptId");
+    expect(migrated.selectedModelId).toBe("nvidia/nemotron-3-super-120b-a12b");
+    expect(migrated.selectedVariantSlug).toBe("slovak");
+    expect(migrated.uiLocale).toBe("cs");
+    expect(migrated.aiTimeout).toBe(90);
+  });
+});
+
+describe("AC-MODEL-KEPT selectedModelId remains persisted", () => {
+  beforeEach(() => {
+    useGameStore.setState(useGameStore.getInitialState(), true);
+  });
+
+  it("keeps selectedModelId in partialize and round-trips a stored id", () => {
+    expect(useGameStore.persist.getOptions().version).toBe(5);
+    const id = "google/gemma-4-31b-it:free";
+    useGameStore.getState().setSelectedModelId(id);
+    expect(useGameStore.getState().selectedModelId).toBe(id);
+    const partialize = useGameStore.persist.getOptions().partialize;
+    expect(partialize).toBeTypeOf("function");
+    const sliced = partialize!(useGameStore.getState()) as Record<string, unknown>;
+    expect(sliced.selectedModelId).toBe(id);
+    expect(sliced).not.toHaveProperty("selectedPromptId");
   });
 });

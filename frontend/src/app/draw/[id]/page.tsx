@@ -6,9 +6,25 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Board } from "@/components/board/Board";
 import { useGameStore } from "@/hooks/useGameStore";
 import { useLocale, useT } from "@/lib/i18n";
+import { api } from "@/lib/api";
 import { describeDrawReason } from "@/lib/draw-result";
+import type { AIModel } from "@/lib/types";
 
 type DrawStage = "board" | "flip" | "compare" | "result" | "rack";
+
+function humanizeModelId(modelId?: string | null): string | null {
+  if (!modelId) return null;
+  const base = modelId.split("/").pop() ?? modelId;
+  return base
+    .split(/[-_]+/)
+    .filter(Boolean)
+    .map((part) => {
+      if (/^[0-9.]+$/.test(part)) return part;
+      if (part.length <= 3) return part.toUpperCase();
+      return part.charAt(0).toUpperCase() + part.slice(1);
+    })
+    .join(" ");
+}
 
 function StartTile({
   letter,
@@ -114,6 +130,7 @@ export default function DrawPage() {
   const selectedModelId = useGameStore((s) => s.selectedModelId);
 
   const [stage, setStage] = useState<DrawStage>("board");
+  const [catalogModels, setCatalogModels] = useState<AIModel[]>([]);
 
   const humanTile = startingDraw?.human_tile ?? "?";
   const aiTile = startingDraw?.ai_tile ?? "?";
@@ -124,6 +141,24 @@ export default function DrawPage() {
   const aiLabel = t("draw.side.ai");
 
   const reason = describeDrawReason(locale, humanTile, aiTile, humanFirst);
+  const catalogMatch = catalogModels.find((model) => model.model_id === selectedModelId);
+  const modelLabel =
+    catalogMatch?.display_name ?? humanizeModelId(selectedModelId) ?? selectedModelId;
+
+  useEffect(() => {
+    let cancelled = false;
+    void api.getModels().then(
+      (rows) => {
+        if (!cancelled) setCatalogModels(Array.isArray(rows) ? rows : []);
+      },
+      () => {
+        if (!cancelled) setCatalogModels([]);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!startingDraw) {
@@ -175,7 +210,7 @@ export default function DrawPage() {
             {t("draw.subtitle")}
           </p>
           <div className="mt-3 inline-flex items-center rounded-full border border-white/8 bg-white/[0.03] px-4 py-1.5 font-mono text-[0.72rem] text-stone-400">
-            {selectedModelId}
+            {modelLabel}
           </div>
         </motion.div>
 

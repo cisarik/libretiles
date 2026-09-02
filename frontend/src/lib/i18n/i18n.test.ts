@@ -409,22 +409,96 @@ describe("AC-TOAST-DISC ai pass subtitle is not load-bearing prose", () => {
     const message = t("sk", "game.toast.aiExchanged");
     expect(message).toBe("AI vymenilo písmená");
     expect(message.toLowerCase()).not.toContain("exchanged");
-    expect(aiPassBodyKey({ passKind: "exchange", message })).toBe(
+    expect(aiPassBodyKey({ passKind: "exchange" })).toBe(
       "game.toast.aiExchangedBody",
     );
-    expect(t("sk", aiPassBodyKey({ passKind: "exchange", message }))).toBe(
+    expect(t("sk", aiPassBodyKey({ passKind: "exchange" }))).toBe(
       "AI si obnovilo zásobník a spotrebovalo ťah.",
     );
   });
 
   it("selects the pass subtitle for a pass toast", () => {
-    const message = t("sk", "game.toast.aiPasses");
-    expect(aiPassBodyKey({ passKind: "pass", message })).toBe(
+    expect(aiPassBodyKey({ passKind: "pass" })).toBe(
       "game.toast.aiPassedBody",
     );
-    expect(t("sk", aiPassBodyKey({ passKind: "pass", message }))).toBe(
+    expect(t("sk", aiPassBodyKey({ passKind: "pass" }))).toBe(
       "Nenašlo platný ťah — si na ťahu!",
     );
+  });
+});
+
+describe("AC-HEADING-4 game.toast.invalidWordHeading", () => {
+  it("renders singular at count 1 and plural at 2 and 5 in all four locales", () => {
+    expect(tf("en", "game.toast.invalidWordHeading", { count: 1 })).toBe(
+      "Invalid Word!",
+    );
+    expect(tf("en", "game.toast.invalidWordHeading", { count: 2 })).toBe(
+      "Invalid Words!",
+    );
+    expect(tf("en", "game.toast.invalidWordHeading", { count: 5 })).toBe(
+      "Invalid Words!",
+    );
+    expect(tf("sk", "game.toast.invalidWordHeading", { count: 1 })).toBe(
+      "Neplatné slovo!",
+    );
+    expect(tf("sk", "game.toast.invalidWordHeading", { count: 2 })).toBe(
+      "Neplatné slová!",
+    );
+    expect(tf("sk", "game.toast.invalidWordHeading", { count: 5 })).toBe(
+      "Neplatné slová!",
+    );
+    expect(tf("cs", "game.toast.invalidWordHeading", { count: 1 })).toBe(
+      "Neplatné slovo!",
+    );
+    expect(tf("cs", "game.toast.invalidWordHeading", { count: 2 })).toBe(
+      "Neplatná slova!",
+    );
+    expect(tf("cs", "game.toast.invalidWordHeading", { count: 5 })).toBe(
+      "Neplatná slova!",
+    );
+    expect(tf("pl", "game.toast.invalidWordHeading", { count: 1 })).toBe(
+      "Nieprawidłowe słowo!",
+    );
+    expect(tf("pl", "game.toast.invalidWordHeading", { count: 2 })).toBe(
+      "Nieprawidłowe słowa!",
+    );
+    expect(tf("pl", "game.toast.invalidWordHeading", { count: 5 })).toBe(
+      "Nieprawidłowe słowa!",
+    );
+  });
+});
+
+describe("AC-ROUTEFAIL-4 game.ai.routeFailed* keys", () => {
+  it("interpolates status in all four locales without English in sk/cs/pl", () => {
+    for (const locale of LOCALES) {
+      const failed = tf(locale, "game.ai.routeFailed", { status: 503 });
+      const before = tf(locale, "game.ai.routeFailedBeforeStream", {
+        status: 502,
+      });
+      const preview = tf(locale, "game.ai.routeFailedWithPreview", {
+        status: 500,
+        preview: "upstream timeout",
+      });
+      expect(failed).toContain("503");
+      expect(before).toContain("502");
+      expect(preview).toContain("500");
+      expect(preview).toContain("upstream timeout");
+      if (locale !== "en") {
+        expect(failed.toLowerCase()).not.toContain("route failed");
+        expect(before.toLowerCase()).not.toContain("route failed");
+        expect(preview.toLowerCase()).not.toContain("route failed");
+      }
+    }
+    expect(tf("en", "game.ai.routeFailed", { status: 418 })).toBe(
+      "AI route failed (418).",
+    );
+    expect(tf("en", "game.ai.routeFailedBeforeStream", { status: 502 })).toBe(
+      "AI route failed (502) before the stream started.",
+    );
+    expect(tf("en", "game.ai.routeFailedWithPreview", {
+      status: 500,
+      preview: "nope",
+    })).toBe("AI route failed (500): nope");
   });
 });
 

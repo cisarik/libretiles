@@ -164,4 +164,11 @@ export const plFn: { [K in FnKey]: (typeof enFn)[K] } = {
   "game.ai.attempt": (p) => `Próba ${p.index}/${p.total} · ${p.label}`,
   "game.toast.aiPlayedWord": (p) => `AI zagrało ${p.word}`,
   "game.status.opponentPlaying": (p) => `${p.name} wykonuje ruch`,
+  "game.toast.invalidWordHeading": (p) =>
+    p.count > 1 ? "Nieprawidłowe słowa!" : "Nieprawidłowe słowo!",
+  "game.ai.routeFailed": (p) => `Wywołanie AI nie udało się (${p.status}).`,
+  "game.ai.routeFailedBeforeStream": (p) =>
+    `Wywołanie AI nie udało się (${p.status}) przed rozpoczęciem streamu.`,
+  "game.ai.routeFailedWithPreview": (p) =>
+    `Wywołanie AI nie udało się (${p.status}): ${p.preview}`,
 };

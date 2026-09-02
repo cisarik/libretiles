@@ -163,4 +163,11 @@ export const skFn: { [K in FnKey]: (typeof enFn)[K] } = {
   "game.ai.attempt": (p) => `Pokus ${p.index}/${p.total} · ${p.label}`,
   "game.toast.aiPlayedWord": (p) => `AI zahralo ${p.word}`,
   "game.status.opponentPlaying": (p) => `${p.name} je na ťahu`,
+  "game.toast.invalidWordHeading": (p) =>
+    p.count > 1 ? "Neplatné slová!" : "Neplatné slovo!",
+  "game.ai.routeFailed": (p) => `Volanie AI zlyhalo (${p.status}).`,
+  "game.ai.routeFailedBeforeStream": (p) =>
+    `Volanie AI zlyhalo (${p.status}) ešte pred začiatkom streamu.`,
+  "game.ai.routeFailedWithPreview": (p) =>
+    `Volanie AI zlyhalo (${p.status}): ${p.preview}`,
 };

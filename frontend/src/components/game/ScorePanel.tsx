@@ -258,12 +258,9 @@ function HeaderMiniButton({
 interface ScorePanelProps {
   opponentLabel: string;
   showRivalPicker?: boolean;
-  showPromptPicker?: boolean;
-  promptLabel?: string | null;
   frameBorderColor?: string;
   onBack: () => void;
   onOpenRivalPicker: () => void;
-  onOpenPromptPicker: () => void;
   onNewGame: () => void;
   onGiveUp: () => void;
   onOpenGames: () => void;
@@ -279,12 +276,9 @@ interface ScorePanelProps {
 export function ScorePanel({
   opponentLabel,
   showRivalPicker = false,
-  showPromptPicker = false,
-  promptLabel,
   frameBorderColor,
   onBack,
   onOpenRivalPicker,
-  onOpenPromptPicker,
   onNewGame,
   onGiveUp,
   onOpenGames,
@@ -415,17 +409,6 @@ export function ScorePanel({
                   ) : (
                     <span className="shrink-0 uppercase text-white">{opponentLabel}</span>
                   )}
-                  {showPromptPicker ? (
-                    <HeaderMiniButton
-                      onClick={onOpenPromptPicker}
-                      label="Prompt"
-                      leading="📝"
-                      iconOnly
-                      className="h-[2.04rem] w-[2.04rem] border-amber-300/24 bg-[linear-gradient(145deg,rgba(96,74,28,0.9),rgba(29,21,12,0.96))] px-0 py-0 shadow-[0_12px_26px_rgba(0,0,0,0.22),0_0_24px_rgba(251,191,36,0.08)] hover:border-amber-100/42 hover:bg-[linear-gradient(145deg,rgba(134,104,39,0.96),rgba(39,28,16,0.98))] hover:shadow-[0_16px_30px_rgba(0,0,0,0.28),0_0_30px_rgba(251,191,36,0.12)]"
-                      tooltipLabel={promptLabel ? `Prompt: ${promptLabel}` : "Prompt presets"}
-                      tooltipAlign="right"
-                    />
-                  ) : null}
                 </div>
               )}
             />

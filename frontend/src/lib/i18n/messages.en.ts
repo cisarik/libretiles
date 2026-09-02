@@ -163,6 +163,14 @@ export const enFn = {
     `Attempt ${p.index}/${p.total} · ${p.label}`,
   "game.toast.aiPlayedWord": (p: { word: string }) => `AI played ${p.word}`,
   "game.status.opponentPlaying": (p: { name: string }) => `${p.name} is playing`,
+  "game.toast.invalidWordHeading": (p: { count: number }) =>
+    `Invalid Word${p.count > 1 ? "s" : ""}!`,
+  "game.ai.routeFailed": (p: { status: number }) =>
+    `AI route failed (${p.status}).`,
+  "game.ai.routeFailedBeforeStream": (p: { status: number }) =>
+    `AI route failed (${p.status}) before the stream started.`,
+  "game.ai.routeFailedWithPreview": (p: { status: number; preview: string }) =>
+    `AI route failed (${p.status}): ${p.preview}`,
 } as const;
 
 export type TextKey = keyof typeof enText;
@@ -189,7 +197,6 @@ export function lexiconRejectionKey(
 
 export function aiPassBodyKey(input: {
   passKind?: AiPassKind;
-  message?: string;
 }): TextKey {
   return input.passKind === "exchange"
     ? "game.toast.aiExchangedBody"

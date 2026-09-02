@@ -201,6 +201,7 @@ independent axes; this is the first key family that depends on the other one.
 | game.toast.aiExchanged | AI exchanged tiles | AI vymenilo písmená |
 | game.toast.aiExchangedBody | AI refreshed the rack and spent the turn. | AI si obnovilo zásobník a spotrebovalo ťah. |
 | game.toast.aiPassedBody | Couldn't find a valid move - your turn! | Nenašlo platný ťah — si na ťahu! |
+| game.toast.invalidWordHeading (fn) | Invalid Word! / Invalid Words! | Neplatné slovo! / Neplatné slová! |
 | game.aiPlayedFor.before | AI played for | AI zahralo za |
 | game.aiPlayedFor.points | pts | b. |
 | game.aWord | a word | slovo |
@@ -229,6 +230,9 @@ independent axes; this is the first key family that depends on the other one.
 | game.ai.noRival | No eligible free rival is available. | Nie je dostupný žiadny vhodný súper. |
 | game.ai.timeout | AI thinking time ran out. | AI vypršal čas na rozmýšľanie. |
 | game.ai.moveFailed | AI move failed | Ťah AI zlyhal |
+| game.ai.routeFailed (fn) | AI route failed ({status}). | Volanie AI zlyhalo ({status}). |
+| game.ai.routeFailedBeforeStream (fn) | AI route failed ({status}) before the stream started. | Volanie AI zlyhalo ({status}) ešte pred začiatkom streamu. |
+| game.ai.routeFailedWithPreview (fn) | AI route failed ({status}): {preview} | Volanie AI zlyhalo ({status}): {preview} |
 | game.ws.syncFailed | Realtime sync failed | Synchronizácia zlyhala |
 | game.ws.connectFailed | Realtime connection failed | Realtime spojenie zlyhalo |
 | game.ws.authExpired | Realtime authentication expired. Refresh the page to reconnect. | Prihlásenie pre realtime vypršalo. Obnov stránku a pripoj sa znova. |

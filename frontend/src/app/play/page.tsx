@@ -30,22 +30,11 @@ const CATALOG_EMPTY_MESSAGE =
 const VARIANT_UNAVAILABLE_MESSAGE =
   "No playable game variant is available. Game creation is blocked until a playable variant can be loaded.";
 
-function humanizeModelId(modelId?: string | null): string {
-  if (!modelId) return "Choose AI";
-  const base = modelId.split("/").pop() ?? modelId;
-  return base
-    .split(/[-_]+/)
-    .filter(Boolean)
-    .map((part) => (/^[0-9.]+$/.test(part) ? part : part[0].toUpperCase() + part.slice(1)))
-    .join(" ");
-}
-
 export default function PlayPage() {
   const router = useRouter();
   const token = useGameStore((state) => state.token);
   const selectedModelId = useGameStore((state) => state.selectedModelId);
   const setSelectedModelId = useGameStore((state) => state.setSelectedModelId);
-  const selectedPromptId = useGameStore((state) => state.selectedPromptId);
   const selectedVariantSlug = useGameStore((state) => state.selectedVariantSlug);
   const setSelectedVariantSlug = useGameStore((state) => state.setSelectedVariantSlug);
   const premiumLookEnabled = useGameStore((state) => state.premiumLookEnabled);
@@ -66,7 +55,7 @@ export default function PlayPage() {
   const [catalogReady, setCatalogReady] = useState(false);
   const catalogMatch = catalogModels.find((model) => model.model_id === selectedModelId);
   const activeModelLabel = catalogMatch?.display_name
-    ?? (catalogReady ? "Choose AI" : humanizeModelId(selectedModelId));
+    ?? (catalogReady ? (catalogModels[0]?.display_name ?? CATALOG_EMPTY_MESSAGE) : "Preparing game...");
   const premiumTitleClass = premiumLookEnabled ? PREMIUM_GOLD_TEXT_SHADOW_CLASS : "";
   const canStartAI = catalogReady && catalogModels.length > 0;
 
@@ -186,7 +175,6 @@ export default function PlayPage() {
       const result = (await api.createGame(token, {
         game_mode: "vs_ai",
         ai_model_model_id: resolved,
-        ai_prompt_id: selectedPromptId ?? undefined,
         variant_slug: variantSlug,
       })) as CreateGameResponse;
       resetGameUi();
