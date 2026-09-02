@@ -7,7 +7,12 @@ import {
   LOCALES,
 } from "./locales";
 import { csFn, csText } from "./messages.cs";
-import { enFn, enText } from "./messages.en";
+import {
+  aiPassBodyKey,
+  enFn,
+  enText,
+  lexiconRejectionKey,
+} from "./messages.en";
 import { plFn, plText } from "./messages.pl";
 import { skFn, skText } from "./messages.sk";
 import { pluralCs, pluralPl, pluralSk } from "./plural";
@@ -356,5 +361,78 @@ describe("AC-TERM-4 Czech tile vs letter and Polish płytk/literę", () => {
       );
     }
     expect(t("pl", "blank.chooseLetter")).toContain("literę");
+  });
+});
+
+describe("AC-LEX-4 lexicon rejection follows lexicon_id", () => {
+  const IDS = ["collins2019", "slovak", "czech", "polish"] as const;
+
+  it("selects the matching message in every locale and does not call Czech Collins", () => {
+    for (const locale of LOCALES) {
+      for (const lexiconId of IDS) {
+        const message = t(locale, lexiconRejectionKey(lexiconId));
+        expect(message.length).toBeGreaterThan(0);
+        if (lexiconId === "czech") {
+          expect(message).not.toContain("Collins");
+        }
+        if (lexiconId === "collins2019") {
+          expect(message).toContain("Collins");
+        }
+      }
+      expect(t(locale, lexiconRejectionKey("slovak"))).toBe(
+        t(locale, "game.lexicon.slovak"),
+      );
+      expect(t(locale, lexiconRejectionKey("polish"))).toBe(
+        t(locale, "game.lexicon.polish"),
+      );
+    }
+  });
+});
+
+describe("AC-LEX-UNK unknown lexicon_id", () => {
+  it("selects game.lexicon.unknown and does not throw", () => {
+    expect(() => lexiconRejectionKey("hungarian")).not.toThrow();
+    expect(lexiconRejectionKey("hungarian")).toBe("game.lexicon.unknown");
+    expect(lexiconRejectionKey(undefined)).toBe("game.lexicon.unknown");
+    expect(lexiconRejectionKey(null)).toBe("game.lexicon.unknown");
+    expect(lexiconRejectionKey("")).toBe("game.lexicon.unknown");
+    for (const locale of LOCALES) {
+      expect(t(locale, lexiconRejectionKey("nope"))).toBe(
+        t(locale, "game.lexicon.unknown"),
+      );
+    }
+  });
+});
+
+describe("AC-TOAST-DISC ai pass subtitle is not load-bearing prose", () => {
+  it("selects the exchange subtitle for a Slovak exchange title that contains no 'exchanged'", () => {
+    const message = t("sk", "game.toast.aiExchanged");
+    expect(message).toBe("AI vymenilo písmená");
+    expect(message.toLowerCase()).not.toContain("exchanged");
+    expect(aiPassBodyKey({ passKind: "exchange", message })).toBe(
+      "game.toast.aiExchangedBody",
+    );
+    expect(t("sk", aiPassBodyKey({ passKind: "exchange", message }))).toBe(
+      "AI si obnovilo zásobník a spotrebovalo ťah.",
+    );
+  });
+
+  it("selects the pass subtitle for a pass toast", () => {
+    const message = t("sk", "game.toast.aiPasses");
+    expect(aiPassBodyKey({ passKind: "pass", message })).toBe(
+      "game.toast.aiPassedBody",
+    );
+    expect(t("sk", aiPassBodyKey({ passKind: "pass", message }))).toBe(
+      "Nenašlo platný ťah — si na ťahu!",
+    );
+  });
+});
+
+describe("AC-GAME-TERM Czech kámen and Polish płytki on the exchange prompt", () => {
+  it("keeps Czech kameny not písmen, and Polish płytki", () => {
+    const cs = t("cs", "game.status.selectExchange");
+    expect(cs).toContain("kameny");
+    expect(cs).not.toContain("písmen");
+    expect(t("pl", "game.status.selectExchange")).toContain("płytki");
   });
 });

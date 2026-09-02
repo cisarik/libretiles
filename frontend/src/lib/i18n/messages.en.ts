@@ -81,6 +81,73 @@ export const enText = {
   "chat.unavailable": "Chat unavailable",
   "chat.placeholder": "Say something",
   "chat.send": "Send",
+  "game.lexicon.collins2019": "Not in Collins Scrabble Words 2019",
+  "game.lexicon.slovak": "Not in the Slovak lexicon",
+  "game.lexicon.czech": "Not in the Czech lexicon",
+  "game.lexicon.polish": "Not in the Polish lexicon",
+  "game.lexicon.unknown": "Not in the game lexicon",
+  "game.blocker.auth.title": "Rival authentication failed",
+  "game.blocker.auth.body":
+    "This free rival could not authenticate. Switch to another free rival or retry later.",
+  "game.blocker.rate.title": "Rival is rate limited",
+  "game.blocker.rate.body":
+    "This free rival is rate limited. Switch to another free rival or retry later.",
+  "game.blocker.unavail.title": "Rival is unavailable",
+  "game.blocker.unavail.body":
+    "This free rival is temporarily unavailable. Switch to another free rival or retry later.",
+  "game.blocker.badge.auth": "Authentication",
+  "game.blocker.badge.rate": "Rate Limited",
+  "game.blocker.badge.unavail": "Unavailable",
+  "game.blocker.close": "Close",
+  "game.blocker.openSettings": "Open settings",
+  "game.toast.invalidPlacement": "Invalid Placement",
+  "game.toast.invalidWords": "Invalid words",
+  "game.toast.moveRejected": "Move rejected",
+  "game.toast.exchangeRejected": "Exchange rejected",
+  "game.toast.passRejected": "Pass rejected",
+  "game.toast.chatOffline": "Chat is offline",
+  "game.toast.aiPasses": "AI passes",
+  "game.toast.aiExchanged": "AI exchanged tiles",
+  "game.toast.aiExchangedBody": "AI refreshed the rack and spent the turn.",
+  "game.toast.aiPassedBody": "Couldn't find a valid move - your turn!",
+  "game.aiPlayedFor.before": "AI played for",
+  "game.aiPlayedFor.points": "pts",
+  "game.aWord": "a word",
+  "game.status.selectExchange": "Select tiles to exchange",
+  "game.status.aiMoveReady": "AI move ready",
+  "game.status.aiThinking": "AI is thinking",
+  "game.status.yourTurn": "Your turn",
+  "game.status.waitingForAi": "Waiting for the AI",
+  "game.opponentFallback": "Opponent",
+  "game.waitingSlot": "Waiting",
+  "game.sessionExpired": "Session expired",
+  "game.lastError": "Last error:",
+  "game.newGame": "New Game",
+  "game.starting": "Starting...",
+  "game.victory": "Victory!",
+  "game.draw": "Draw!",
+  "game.gameOver": "Game Over",
+  "game.giveUp.ai": "Give up this game? The AI will be declared the winner.",
+  "game.giveUp.human":
+    "Give up this game? Your opponent will be declared the winner.",
+  "game.gaveUp": "You gave up the game.",
+  "game.error.giveUp": "Could not give up this game",
+  "game.error.newGame": "Could not start a new game",
+  "game.error.loadGames": "Unable to load games.",
+  "game.password.updated": "Password updated.",
+  "game.password.failed": "Unable to update password.",
+  "game.ai.noRival": "No eligible free rival is available.",
+  "game.ai.timeout": "AI thinking time ran out.",
+  "game.ai.moveFailed": "AI move failed",
+  "game.ws.syncFailed": "Realtime sync failed",
+  "game.ws.connectFailed": "Realtime connection failed",
+  "game.ws.authExpired":
+    "Realtime authentication expired. Refresh the page to reconnect.",
+  "game.ws.invalidSession":
+    "This realtime session is not valid. Refresh the page to reconnect.",
+  "game.ws.unavailable":
+    "The realtime service is unavailable. Please try again.",
+  "board.zoomNoun": "zoom",
 } as const;
 
 export const enFn = {
@@ -90,7 +157,41 @@ export const enFn = {
     `${p.winner} is closer to A than ${p.loser}.`,
   "controls.tilesSelected": (p: { count: number }) =>
     `${p.count} tile${p.count !== 1 ? "s" : ""} selected`,
+  "game.ai.exploring": (p: { model: string }) =>
+    `Exploring legal words with ${p.model}...`,
+  "game.ai.attempt": (p: { index: number; total: number; label: string }) =>
+    `Attempt ${p.index}/${p.total} · ${p.label}`,
+  "game.toast.aiPlayedWord": (p: { word: string }) => `AI played ${p.word}`,
+  "game.status.opponentPlaying": (p: { name: string }) => `${p.name} is playing`,
 } as const;
 
 export type TextKey = keyof typeof enText;
 export type FnKey = keyof typeof enFn;
+
+export type AiPassKind = "pass" | "exchange";
+
+export function lexiconRejectionKey(
+  lexiconId: string | null | undefined,
+): TextKey {
+  switch (lexiconId) {
+    case "collins2019":
+      return "game.lexicon.collins2019";
+    case "slovak":
+      return "game.lexicon.slovak";
+    case "czech":
+      return "game.lexicon.czech";
+    case "polish":
+      return "game.lexicon.polish";
+    default:
+      return "game.lexicon.unknown";
+  }
+}
+
+export function aiPassBodyKey(input: {
+  passKind?: AiPassKind;
+  message?: string;
+}): TextKey {
+  return input.passKind === "exchange"
+    ? "game.toast.aiExchangedBody"
+    : "game.toast.aiPassedBody";
+}

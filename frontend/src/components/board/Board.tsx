@@ -686,7 +686,7 @@ export function Board({
           className="inline-flex items-center gap-2 rounded-full border border-amber-200/26 bg-[linear-gradient(135deg,rgba(17,20,23,0.96),rgba(8,10,12,0.98))] px-3 py-2 text-[0.74rem] font-black uppercase tracking-[0.18em] text-amber-100 shadow-[0_18px_38px_rgba(0,0,0,0.28)] backdrop-blur-sm transition-all hover:border-amber-100/38 hover:text-white"
         >
           <span className="font-gold-shiny leading-none">{t("board.reset")}</span>
-          <span className="text-white/34">zoom</span>
+          <span className="text-white/34">{t("board.zoomNoun")}</span>
         </button>
       </div>
     </div>

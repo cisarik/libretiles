@@ -59,6 +59,13 @@ import {
   type WSTicketResponse,
 } from "@/lib/types";
 import { Tile } from "@/components/tiles/Tile";
+import { useT } from "@/lib/i18n";
+import {
+  aiPassBodyKey,
+  lexiconRejectionKey,
+  type AiPassKind,
+  type TextKey,
+} from "@/lib/i18n/messages.en";
 
 type RackDragData = {
   letter: string;
@@ -100,6 +107,7 @@ type Toast = {
   message: string;
   words?: string[];
   score?: number;
+  passKind?: AiPassKind;
 };
 
 type AIBlockerModal = {
@@ -130,6 +138,7 @@ function humanizeModelId(modelId?: string | null): string | null {
 
 function normalizeAIBlocker(
   message: string,
+  t: (k: TextKey) => string,
   code?: string,
 ): AIBlockerModal | null {
   const normalized = message.toLowerCase();
@@ -142,9 +151,8 @@ function normalizeAIBlocker(
   ) {
     return {
       kind: "provider_auth_failed",
-      title: "Rival authentication failed",
-      message:
-        "This free rival could not authenticate. Switch to another free rival or retry later.",
+      title: t("game.blocker.auth.title"),
+      message: t("game.blocker.auth.body"),
     };
   }
 
@@ -155,9 +163,8 @@ function normalizeAIBlocker(
   ) {
     return {
       kind: "provider_rate_limited",
-      title: "Rival is rate limited",
-      message:
-        "This free rival is rate limited. Switch to another free rival or retry later.",
+      title: t("game.blocker.rate.title"),
+      message: t("game.blocker.rate.body"),
     };
   }
 
@@ -168,9 +175,8 @@ function normalizeAIBlocker(
   ) {
     return {
       kind: "provider_unavailable",
-      title: "Rival is unavailable",
-      message:
-        "This free rival is temporarily unavailable. Switch to another free rival or retry later.",
+      title: t("game.blocker.unavail.title"),
+      message: t("game.blocker.unavail.body"),
     };
   }
 
@@ -178,10 +184,11 @@ function normalizeAIBlocker(
 }
 
 function ToastOverlay({ toast, onDone }: { toast: Toast; onDone: () => void }) {
+  const { t } = useT();
   const lexiconId = useGameStore((s) => s.gameState?.lexicon_id);
   useEffect(() => {
-    const t = setTimeout(onDone, toast.type === "ai_played" ? 4600 : toast.type === "ai_pass" ? 4200 : 3200);
-    return () => clearTimeout(t);
+    const timer = setTimeout(onDone, toast.type === "ai_played" ? 4600 : toast.type === "ai_pass" ? 4200 : 3200);
+    return () => clearTimeout(timer);
   }, [toast, onDone]);
 
   if (toast.type === "invalid_word") {
@@ -229,9 +236,7 @@ function ToastOverlay({ toast, onDone }: { toast: Toast; onDone: () => void }) {
             ))}
           </div>
           <p className="text-red-400/60 text-xs mt-3">
-            {lexiconId === "slovak"
-              ? "Not in the Slovak lexicon"
-              : "Not in Collins Scrabble Words 2019"}
+            {t(lexiconRejectionKey(lexiconId))}
           </p>
         </div>
       </motion.div>
@@ -265,7 +270,7 @@ function ToastOverlay({ toast, onDone }: { toast: Toast; onDone: () => void }) {
             transition={{ duration: 0.4 }}
             className="text-amber-300 font-bold text-lg mb-2"
           >
-            Invalid Placement
+            {t("game.toast.invalidPlacement")}
           </motion.div>
           <p className="text-amber-400/70 text-sm">{toast.message}</p>
         </div>
@@ -302,9 +307,7 @@ function ToastOverlay({ toast, onDone }: { toast: Toast; onDone: () => void }) {
             {toast.message}
           </motion.div>
           <p className="text-sky-400/60 text-sm">
-            {toast.message.toLowerCase().includes("exchanged")
-              ? "AI refreshed the rack and spent the turn."
-              : "Couldn't find a valid move - your turn!"}
+            {t(aiPassBodyKey({ passKind: toast.passKind }))}
           </p>
         </div>
       </motion.div>
@@ -333,7 +336,7 @@ function ToastOverlay({ toast, onDone }: { toast: Toast; onDone: () => void }) {
             </svg>
           </motion.div>
           <div className="text-emerald-300 font-bold text-[1.36rem] leading-tight">
-            AI played for <span className="text-emerald-100 text-[1.78rem] font-black">{toast.score}</span> pts
+            {t("game.aiPlayedFor.before")} <span className="text-emerald-100 text-[1.78rem] font-black">{toast.score}</span> {t("game.aiPlayedFor.points")}
           </div>
           {toast.words && toast.words.length > 0 && (
             <div className="flex flex-wrap gap-1.5 justify-center mt-3">
@@ -385,6 +388,7 @@ function AIBlockerOverlay({
   onClose: () => void;
   onOpenSettings: () => void;
 }) {
+  const { t } = useT();
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -401,10 +405,10 @@ function AIBlockerOverlay({
       >
         <div className="text-[0.68rem] uppercase tracking-[0.28em] text-amber-200/66">
           {modal.kind === "provider_auth_failed"
-            ? "Authentication"
+            ? t("game.blocker.badge.auth")
             : modal.kind === "provider_rate_limited"
-              ? "Rate Limited"
-              : "Unavailable"}
+              ? t("game.blocker.badge.rate")
+              : t("game.blocker.badge.unavail")}
         </div>
         <h3 className="mt-3 text-2xl font-black tracking-tight text-stone-50">
           {modal.title}
@@ -418,14 +422,14 @@ function AIBlockerOverlay({
             onClick={onClose}
             className="rounded-full border border-white/10 bg-white/6 px-4 py-2 text-sm font-semibold text-stone-200 transition-all hover:border-white/16 hover:bg-white/8"
           >
-            Close
+            {t("game.blocker.close")}
           </button>
           <button
             type="button"
             onClick={onOpenSettings}
             className="rounded-full border border-amber-300/28 bg-amber-300/14 px-4 py-2 text-sm font-semibold text-amber-100 shadow-[0_10px_24px_rgba(251,191,36,0.10)] transition-all hover:border-amber-200/44 hover:bg-amber-300/18"
           >
-            Open settings
+            {t("game.blocker.openSettings")}
           </button>
         </div>
       </motion.div>
@@ -438,6 +442,7 @@ export default function GamePage() {
   const router = useRouter();
   const gameId = params.id as string;
   const isCoarsePointer = useIsCoarsePointer();
+  const { t, tf } = useT();
 
   const token = useGameStore((s) => s.token);
   const clearAuth = useGameStore((s) => s.clearAuth);
@@ -670,7 +675,7 @@ export default function GamePage() {
       showToast({
         id: `new-${Date.now()}`,
         type: "error",
-        message: err instanceof Error ? err.message : "Could not start a new game",
+        message: err instanceof Error ? err.message : t("game.error.newGame"),
       });
     } finally {
       setStartingNewGame(false);
@@ -681,13 +686,14 @@ export default function GamePage() {
     resetGameUi,
     router,
     showToast,
+    t,
   ]);
 
   const handleGiveUp = useCallback(async () => {
     if (!token || givingUp || gameState?.game_over || aiThinking) return;
     const giveUpMessage = gameState?.game_mode === "vs_ai"
-      ? "Give up this game? The AI will be declared the winner."
-      : "Give up this game? Your opponent will be declared the winner.";
+      ? t("game.giveUp.ai")
+      : t("game.giveUp.human");
     if (!window.confirm(giveUpMessage)) return;
 
     setGivingUp(true);
@@ -702,7 +708,7 @@ export default function GamePage() {
         showToast({
           id: `giveup-${Date.now()}`,
           type: "error",
-          message: "You gave up the game.",
+          message: t("game.gaveUp"),
         });
         return;
       }
@@ -710,13 +716,13 @@ export default function GamePage() {
       showToast({
         id: `giveup-${Date.now()}`,
         type: "error",
-        message: result.error ?? "Could not give up this game",
+        message: result.error ?? t("game.error.giveUp"),
       });
     } catch (err) {
       showToast({
         id: `giveup-${Date.now()}`,
         type: "error",
-        message: err instanceof Error ? err.message : "Could not give up this game",
+        message: err instanceof Error ? err.message : t("game.error.giveUp"),
       });
     } finally {
       setGivingUp(false);
@@ -733,6 +739,7 @@ export default function GamePage() {
     clearPendingTiles,
     setExchangeMode,
     showToast,
+    t,
   ]);
 
   const handleProfilePasswordChange = useCallback(async ({
@@ -743,7 +750,7 @@ export default function GamePage() {
     newPassword: string;
   }) => {
     if (!token) {
-      return { ok: false, error: "Session expired." };
+      return { ok: false, error: t("game.sessionExpired") };
     }
 
     try {
@@ -757,16 +764,16 @@ export default function GamePage() {
       showToast({
         id: `password-${Date.now()}`,
         type: "success",
-        message: "Password updated.",
+        message: t("game.password.updated"),
       });
       return { ok: true };
     } catch (err) {
       return {
         ok: false,
-        error: err instanceof Error ? err.message : "Unable to update password.",
+        error: err instanceof Error ? err.message : t("game.password.failed"),
       };
     }
-  }, [showToast, token]);
+  }, [showToast, t, token]);
 
   const handleLogout = useCallback(() => {
     setLoggingOut(true);
@@ -800,7 +807,7 @@ export default function GamePage() {
     sort?: GameHistorySort;
   } = {}) => {
     if (!token) {
-      setGameHistoryError("Session expired.");
+      setGameHistoryError(t("game.sessionExpired"));
       return;
     }
 
@@ -815,11 +822,11 @@ export default function GamePage() {
       });
       setGameHistoryData(result);
     } catch (err) {
-      setGameHistoryError(err instanceof Error ? err.message : "Unable to load games.");
+      setGameHistoryError(err instanceof Error ? err.message : t("game.error.loadGames"));
     } finally {
       setGameHistoryLoading(false);
     }
-  }, [gameHistoryFilter, gameHistorySort, token]);
+  }, [gameHistoryFilter, gameHistorySort, t, token]);
 
   const fetchPrompts = useCallback(async () => {
     setPromptsLoading(true);
@@ -919,7 +926,7 @@ export default function GamePage() {
     clearAICandidates();
     clearAIFallbackProgress();
     setAIThinking(true);
-    setAIStatusMessage(`Exploring legal words with ${preferenceModelId}...`);
+    setAIStatusMessage(tf("game.ai.exploring", { model: preferenceModelId }));
     setAiError(null);
     setAIBlockerModal(null);
     startCountdown(aiTimeout);
@@ -969,7 +976,11 @@ export default function GamePage() {
           }
         },
         runStream: async ({ pair, attemptIndex, timeoutSeconds, maxStepsRemaining }) => {
-          const attemptLabel = `Attempt ${attemptIndex + 1}/${queue.length} · ${providerBadgeLabel(pair.provider)} · ${pair.model_id}`;
+          const attemptLabel = tf("game.ai.attempt", {
+            index: attemptIndex + 1,
+            total: queue.length,
+            label: `${providerBadgeLabel(pair.provider)} · ${pair.model_id}`,
+          });
           setAIStatusMessage(attemptLabel);
           setAIFallbackActiveIndex(attemptIndex);
           const payload = aiMoveRequestBody({
@@ -1033,7 +1044,8 @@ export default function GamePage() {
           showToast({
             id: `pass-${Date.now()}`,
             type: "ai_pass",
-            message: "AI passes",
+            passKind: "pass",
+            message: t("game.toast.aiPasses"),
           });
         } else if (action === "place") {
           const bestWord = doneData.best_word as string | undefined;
@@ -1042,7 +1054,7 @@ export default function GamePage() {
           showToast({
             id: `played-${Date.now()}`,
             type: "ai_played",
-            message: `AI played ${bestWord ?? "a word"}`,
+            message: tf("game.toast.aiPlayedWord", { word: bestWord ?? t("game.aWord") }),
             words: words?.map((w) => w.word) ?? (bestWord ? [bestWord] : []),
             score: bestScore ?? (doneData.points as number | undefined) ?? 0,
           });
@@ -1050,7 +1062,8 @@ export default function GamePage() {
           showToast({
             id: `exchange-${Date.now()}`,
             type: "ai_pass",
-            message: "AI exchanged tiles",
+            passKind: "exchange",
+            message: t("game.toast.aiExchanged"),
           });
         }
       } else if (
@@ -1062,7 +1075,7 @@ export default function GamePage() {
         patchAITurnTelemetry({ humanState: "providers exhausted" });
         setAiApproved(false);
         if (last?.kind === "coded_provider_error") {
-          const blocker = normalizeAIBlocker(last.message, last.code);
+          const blocker = normalizeAIBlocker(last.message, t, last.code);
           if (blocker) {
             setAiError(blocker.message);
             setAIBlockerModal(blocker);
@@ -1070,12 +1083,12 @@ export default function GamePage() {
             setAiError(last.message);
           }
         } else if (result.stopReason === "empty_queue") {
-          const blocker = normalizeAIBlocker("", "provider_unavailable");
-          setAiError(blocker?.message ?? "No eligible free rival is available.");
+          const blocker = normalizeAIBlocker("", t, "provider_unavailable");
+          setAiError(blocker?.message ?? t("game.ai.noRival"));
           setAIBlockerModal(blocker);
         } else if (result.stopReason === "deadline") {
-          const blocker = normalizeAIBlocker("", "provider_unavailable");
-          setAiError(blocker?.message ?? "AI thinking time ran out.");
+          const blocker = normalizeAIBlocker("", t, "provider_unavailable");
+          setAiError(blocker?.message ?? t("game.ai.timeout"));
           setAIBlockerModal(blocker);
         }
       } else if (result.stopReason === "generic_error" || result.stopReason === "no_terminal") {
@@ -1110,7 +1123,7 @@ export default function GamePage() {
         confetti({ particleCount: 200, spread: 100, origin: { y: 0.6 } });
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : "AI move failed";
+      const message = err instanceof Error ? err.message : t("game.ai.moveFailed");
       setAiApproved(false);
       console.error("AI move failed:", err);
       setAiError(message);
@@ -1126,7 +1139,7 @@ export default function GamePage() {
     setAIThinking, setLastMoveResult, setGameState, setAIStatusMessage, syncState,
     clearAICandidates, addAICandidate, startCountdown, stopCountdown, showToast,
     setAIFallbackAttempts, setAIFallbackActiveIndex, markAIFallbackFailed,
-    clearAIFallbackProgress, patchAITurnTelemetry,
+    clearAIFallbackProgress, patchAITurnTelemetry, t, tf,
   ]);
 
   useEffect(() => {
@@ -1198,7 +1211,7 @@ export default function GamePage() {
             showToast({
               id: `ws-${Date.now()}`,
               type: "error",
-              message: "Realtime sync failed",
+              message: t("game.ws.syncFailed"),
             });
           }
         };
@@ -1213,12 +1226,12 @@ export default function GamePage() {
           if (event.code === 1000 || event.code === 1005) return;
           const message =
             event.code === 4401
-              ? "Realtime authentication expired. Refresh the page to reconnect."
+              ? t("game.ws.authExpired")
               : event.code === 4403
-                ? "This realtime session is not valid. Refresh the page to reconnect."
+                ? t("game.ws.invalidSession")
                 : event.code === 4503
-                  ? "The realtime service is unavailable. Please try again."
-                  : "Realtime connection failed";
+                  ? t("game.ws.unavailable")
+                  : t("game.ws.connectFailed");
           showToast({
             id: `ws-close-${Date.now()}`,
             type: "error",
@@ -1229,7 +1242,7 @@ export default function GamePage() {
         showToast({
           id: `ws-${Date.now()}`,
           type: "error",
-          message: err instanceof Error ? err.message : "Realtime connection failed",
+          message: err instanceof Error ? err.message : t("game.ws.connectFailed"),
         });
       }
     }
@@ -1242,7 +1255,7 @@ export default function GamePage() {
       multiplayerSocketRef.current?.close();
       multiplayerSocketRef.current = null;
     };
-  }, [gameId, isMultiplayerGame, setGameState, showToast, token]);
+  }, [gameId, isMultiplayerGame, setGameState, showToast, t, token]);
 
   const clearDragState = useCallback(() => {
     setActiveDragTile(null);
@@ -1342,7 +1355,7 @@ export default function GamePage() {
           showToast({
             id: `invalid-${Date.now()}`,
             type: "invalid_word",
-            message: validation.reason ?? "Invalid words",
+            message: validation.reason ?? t("game.toast.invalidWords"),
             words: invalidWords,
           });
           return;
@@ -1351,7 +1364,7 @@ export default function GamePage() {
         showToast({
           id: `err-${Date.now()}`,
           type: "placement_error",
-          message: validation.reason ?? "Move rejected",
+          message: validation.reason ?? t("game.toast.moveRejected"),
         });
         return;
       }
@@ -1372,7 +1385,7 @@ export default function GamePage() {
         showToast({
           id: `invalid-${Date.now()}`,
           type: "invalid_word",
-          message: result.error ?? "Invalid words",
+          message: result.error ?? t("game.toast.invalidWords"),
           words: result.invalid_words,
         });
         return;
@@ -1381,13 +1394,13 @@ export default function GamePage() {
       showToast({
         id: `err-${Date.now()}`,
         type: "placement_error",
-        message: result.error ?? "Move rejected",
+        message: result.error ?? t("game.toast.moveRejected"),
       });
     } catch (err) {
       showToast({
         id: `err-${Date.now()}`,
         type: "placement_error",
-        message: err instanceof Error ? err.message : "Move rejected",
+        message: err instanceof Error ? err.message : t("game.toast.moveRejected"),
       });
     }
   };
@@ -1407,13 +1420,13 @@ export default function GamePage() {
       showToast({
         id: `exchange-${Date.now()}`,
         type: "placement_error",
-        message: result.error ?? "Exchange rejected",
+        message: result.error ?? t("game.toast.exchangeRejected"),
       });
     } catch (err) {
       showToast({
         id: `exchange-${Date.now()}`,
         type: "placement_error",
-        message: err instanceof Error ? err.message : "Exchange rejected",
+        message: err instanceof Error ? err.message : t("game.toast.exchangeRejected"),
       });
     }
   };
@@ -1430,13 +1443,13 @@ export default function GamePage() {
       showToast({
         id: `pass-${Date.now()}`,
         type: "placement_error",
-        message: result.error ?? "Pass rejected",
+        message: result.error ?? t("game.toast.passRejected"),
       });
     } catch (err) {
       showToast({
         id: `pass-${Date.now()}`,
         type: "placement_error",
-        message: err instanceof Error ? err.message : "Pass rejected",
+        message: err instanceof Error ? err.message : t("game.toast.passRejected"),
       });
     }
   };
@@ -1447,12 +1460,12 @@ export default function GamePage() {
       showToast({
         id: `chat-${Date.now()}`,
         type: "error",
-        message: "Chat is offline",
+        message: t("game.toast.chatOffline"),
       });
       return;
     }
     socket.send(JSON.stringify({ type: "chat_message", body }));
-  }, [showToast]);
+  }, [showToast, t]);
 
   const isMyTurn = gameState?.current_turn_slot === gameState?.my_slot;
   const isAITurn =
@@ -1472,38 +1485,44 @@ export default function GamePage() {
       return { text: null, tone: "neutral" as const };
     }
     if (exchangeMode && isMyTurn) {
-      return { text: "Select tiles to exchange", tone: "active" as const };
+      return { text: t("game.status.selectExchange"), tone: "active" as const };
     }
     if (showAIPrompt) {
-      return { text: "AI move ready", tone: "active" as const };
+      return { text: t("game.status.aiMoveReady"), tone: "active" as const };
     }
     if (aiThinking) {
       return {
-        text: gameState.game_mode === "vs_ai" ? "AI is thinking" : "Opponent is playing",
+        text: gameState.game_mode === "vs_ai"
+          ? t("game.status.aiThinking")
+          : tf("game.status.opponentPlaying", {
+              name: opponentSlotInfo?.username ?? t("game.opponentFallback"),
+            }),
         tone: "waiting" as const,
       };
     }
     if (isMyTurn) {
-      return { text: "Your turn", tone: "active" as const };
+      return { text: t("game.status.yourTurn"), tone: "active" as const };
     }
     if (gameState.game_mode === "vs_human") {
       return {
-        text: `${opponentSlotInfo?.username ?? "Opponent"} is playing`,
+        text: tf("game.status.opponentPlaying", {
+          name: opponentSlotInfo?.username ?? t("game.opponentFallback"),
+        }),
         tone: "waiting" as const,
       };
     }
-    return { text: "Waiting for the AI", tone: "waiting" as const };
-  }, [aiThinking, exchangeMode, gameState, isMyTurn, opponentSlotInfo?.username, showAIPrompt]);
+    return { text: t("game.status.waitingForAi"), tone: "waiting" as const };
+  }, [aiThinking, exchangeMode, gameState, isMyTurn, opponentSlotInfo?.username, showAIPrompt, t, tf]);
   const frameBorderColor = THEME_FRAME_BORDER[boardTheme];
   const activeHeaderModelName = useMemo(() => {
     if (gameState?.game_mode === "vs_human") {
-      return opponentSlotInfo?.username ?? "Opponent";
+      return opponentSlotInfo?.username ?? t("game.opponentFallback");
     }
     if (selectedModelId && gameState?.ai_model_id !== selectedModelId) {
       return humanizeModelId(selectedModelId) ?? gameState?.ai_model_display_name ?? "Choose rival";
     }
     return gameState?.ai_model_display_name ?? humanizeModelId(gameState?.ai_model_id) ?? "Choose rival";
-  }, [gameState?.ai_model_display_name, gameState?.ai_model_id, gameState?.game_mode, opponentSlotInfo?.username, selectedModelId]);
+  }, [gameState?.ai_model_display_name, gameState?.ai_model_id, gameState?.game_mode, opponentSlotInfo?.username, selectedModelId, t]);
   const effectivePromptId = selectedPromptId ?? gameState?.ai_prompt_id ?? null;
   const activePromptLabel = useMemo(() => {
     if (gameState?.game_mode !== "vs_ai") return null;
@@ -1556,10 +1575,10 @@ export default function GamePage() {
     return (
       <div className="min-h-screen bg-gradient-to-br from-stone-950 via-stone-900 to-stone-950 flex items-center justify-center">
         <div className="text-center">
-          <p className="text-stone-400 mb-4">Session expired</p>
+          <p className="text-stone-400 mb-4">{t("game.sessionExpired")}</p>
           <button onClick={() => router.push("/")}
             className="px-6 py-3 rounded-xl bg-amber-500 text-stone-900 font-semibold">
-            Sign In
+            {t("auth.tab.login")}
           </button>
         </div>
       </div>
@@ -1663,7 +1682,7 @@ export default function GamePage() {
                             className="group inline-flex min-w-[5.2rem] items-center justify-center rounded-full border border-emerald-200/28 bg-[linear-gradient(135deg,rgba(34,197,94,1),rgba(22,163,74,1)_42%,rgba(11,107,53,1))] px-4 py-2.5 text-center shadow-[inset_0_1px_0_rgba(255,255,255,0.16),0_16px_32px_rgba(0,0,0,0.38),0_0_24px_rgba(22,163,74,0.24)] transition-all duration-200 active:scale-[0.97] hover:border-emerald-50/36 hover:bg-[linear-gradient(135deg,rgba(46,214,108,1),rgba(26,179,83,1)_42%,rgba(14,122,61,1))] hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.2),0_18px_36px_rgba(0,0,0,0.42),0_0_30px_rgba(34,197,94,0.3)]"
                           >
                             <span className="text-[1.12rem] font-black leading-none tracking-[0.01em] text-white [text-shadow:0_2px_0_rgba(0,0,0,0.55)] sm:text-[1.34rem]">
-                              Play
+                              {t("controls.play")}
                             </span>
                           </button>
                         </div>
@@ -1675,7 +1694,7 @@ export default function GamePage() {
                           exit={{ opacity: 0, y: -8 }}
                           className="mt-4 text-center text-xs text-red-400/80 lg:pr-[184px]"
                         >
-                          Last error: {aiError}
+                          {t("game.lastError")} {aiError}
                         </motion.div>
                       )}
                     </>
@@ -1704,14 +1723,14 @@ export default function GamePage() {
               <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
                 className="text-center p-6 bg-stone-800/80 backdrop-blur rounded-xl">
                 <h2 className="text-3xl font-bold mb-2">
-                  {gameState.winner_slot === gameState.my_slot ? "Victory!" : gameState.winner_slot == null ? "Draw!" : "Game Over"}
+                  {gameState.winner_slot === gameState.my_slot ? t("game.victory") : gameState.winner_slot == null ? t("game.draw") : t("game.gameOver")}
                 </h2>
                 <p className="text-stone-400 mb-4">
-                  {gameState.slots.map((s) => `${s.username ?? "Waiting"}: ${s.score}`).join(" vs ")}
+                  {gameState.slots.map((s) => `${s.username ?? t("game.waitingSlot")}: ${s.score}`).join(" vs ")}
                 </p>
                 <button onClick={() => void handleNewGame()}
                   className="px-6 py-3 rounded-xl bg-amber-500 text-stone-900 font-semibold hover:bg-amber-400 transition-colors">
-                  {startingNewGame ? "Starting..." : "New Game"}
+                  {startingNewGame ? t("game.starting") : t("game.newGame")}
                 </button>
               </motion.div>
             )}
