@@ -5,9 +5,11 @@ import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 
 import { GameHistoryPanel } from "@/components/game/GameHistoryPanel";
+import { variantDisplayName } from "@/components/settings/GameLanguagePanel";
 import { useGameStore } from "@/hooks/useGameStore";
 import { providerBadgeLabel } from "@/lib/ai-fallback";
 import { api } from "@/lib/api";
+import { t as translate, useLocale, useT } from "@/lib/i18n";
 import { resolveEligibleModelId } from "@/lib/model-catalog";
 import {
   PREMIUM_GOLD_TEXT_SHADOW_CLASS,
@@ -22,16 +24,14 @@ import type {
   GameHistoryResponse,
   GameHistorySort,
   QueueJoinResponse,
+  VariantSummary,
 } from "@/lib/types";
 import { reconcileSelectedVariantSlug } from "@/lib/variants";
 
-const CATALOG_EMPTY_MESSAGE =
-  "The rival catalog is empty. Seed the free catalog to play AI matches.";
-const VARIANT_UNAVAILABLE_MESSAGE =
-  "No playable game variant is available. Game creation is blocked until a playable variant can be loaded.";
-
 export default function PlayPage() {
   const router = useRouter();
+  const locale = useLocale();
+  const { t, tf } = useT();
   const token = useGameStore((state) => state.token);
   const selectedModelId = useGameStore((state) => state.selectedModelId);
   const setSelectedModelId = useGameStore((state) => state.setSelectedModelId);
@@ -55,9 +55,19 @@ export default function PlayPage() {
   const [catalogReady, setCatalogReady] = useState(false);
   const catalogMatch = catalogModels.find((model) => model.model_id === selectedModelId);
   const activeModelLabel = catalogMatch?.display_name
-    ?? (catalogReady ? (catalogModels[0]?.display_name ?? CATALOG_EMPTY_MESSAGE) : "Preparing game...");
+    ?? (catalogReady ? (catalogModels[0]?.display_name ?? t("play.rival.unavailable")) : t("play.ai.preparing"));
   const premiumTitleClass = premiumLookEnabled ? PREMIUM_GOLD_TEXT_SHADOW_CLASS : "";
   const canStartAI = catalogReady && catalogModels.length > 0;
+  const queueSlug = selectedVariantSlug || "english";
+  const queueVariant: VariantSummary = {
+    slug: queueSlug,
+    display_name: queueSlug,
+    language_code: null,
+    readiness: "playable",
+  };
+  const queueLabel = tf("play.humanQueue.queueFor", {
+    variant: variantDisplayName(queueVariant, t),
+  });
 
   const fetchHistory = useCallback(async ({
     page = 1,
@@ -81,11 +91,11 @@ export default function PlayPage() {
       });
       setHistoryData(result);
     } catch (err) {
-      setHistoryError(err instanceof Error ? err.message : "Unable to load your games.");
+      setHistoryError(err instanceof Error ? err.message : translate(locale, "play.error.loadGames"));
     } finally {
       setHistoryLoading(false);
     }
-  }, [historyFilter, historySort, token]);
+  }, [historyFilter, historySort, locale, token]);
 
   const reconcileRival = useCallback(async (): Promise<string | null> => {
     if (!token) return null;
@@ -134,13 +144,13 @@ export default function PlayPage() {
       if (cancelled) return;
       setCatalogReady(true);
       if (!resolved) {
-        setError(CATALOG_EMPTY_MESSAGE);
+        setError(translate(locale, "play.error.catalogEmpty"));
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [reconcileRival, token]);
+  }, [locale, reconcileRival, token]);
 
   async function handleStartAI() {
     if (!token || startingAI) return;
@@ -151,7 +161,7 @@ export default function PlayPage() {
       const resolved = await reconcileRival();
       setCatalogReady(true);
       if (!resolved) {
-        setError(CATALOG_EMPTY_MESSAGE);
+        setError(t("play.error.catalogEmpty"));
         return;
       }
 
@@ -160,7 +170,7 @@ export default function PlayPage() {
         const variants = await api.getVariants(token);
         const reconciled = reconcileSelectedVariantSlug(variantSlug, variants);
         if (!reconciled) {
-          setError(VARIANT_UNAVAILABLE_MESSAGE);
+          setError(t("play.error.variantUnavailable"));
           return;
         }
         if (reconciled !== variantSlug) {
@@ -168,7 +178,7 @@ export default function PlayPage() {
         }
         variantSlug = reconciled;
       } catch {
-        setError(VARIANT_UNAVAILABLE_MESSAGE);
+        setError(t("play.error.variantUnavailable"));
         return;
       }
 
@@ -182,7 +192,7 @@ export default function PlayPage() {
       setStartingRack(result.human_rack);
       router.push(`/draw/${result.game_id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not start an AI game.");
+      setError(err instanceof Error ? err.message : t("play.error.startAi"));
     } finally {
       setStartingAI(false);
     }
@@ -199,7 +209,7 @@ export default function PlayPage() {
         const variants = await api.getVariants(token);
         const reconciled = reconcileSelectedVariantSlug(variantSlug, variants);
         if (!reconciled) {
-          setError(VARIANT_UNAVAILABLE_MESSAGE);
+          setError(t("play.error.variantUnavailable"));
           return;
         }
         if (reconciled !== variantSlug) {
@@ -207,7 +217,7 @@ export default function PlayPage() {
         }
         variantSlug = reconciled;
       } catch {
-        setError(VARIANT_UNAVAILABLE_MESSAGE);
+        setError(t("play.error.variantUnavailable"));
         return;
       }
 
@@ -222,7 +232,7 @@ export default function PlayPage() {
       }
       router.push(`/game/${result.state.game_id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not join the human queue.");
+      setError(err instanceof Error ? err.message : t("play.error.joinQueue"));
     } finally {
       setJoiningHuman(false);
     }
@@ -269,13 +279,13 @@ export default function PlayPage() {
             <div className="pointer-events-none absolute inset-x-10 top-0 h-px bg-gradient-to-r from-transparent via-amber-200/58 to-transparent" />
             <div className="text-center">
               <div className="text-[0.78rem] uppercase tracking-[0.36em] text-stone-500">
-                Libre Tiles
+                {t("landing.brand")}
               </div>
               <h1 className="mt-3 text-4xl font-black tracking-tight text-stone-50 sm:text-5xl">
-                Choose the next board
+                {t("play.title")}
               </h1>
               <p className="mt-3 text-sm text-stone-400 sm:text-base">
-                Start a premium AI duel, jump into the live queue, or reopen one of your saved boards.
+                {t("play.lead")}
               </p>
             </div>
           </div>
@@ -290,16 +300,16 @@ export default function PlayPage() {
             >
               <div className="pointer-events-none absolute inset-x-10 top-0 h-px bg-gradient-to-r from-transparent via-amber-200/54 to-transparent" />
               <div className="text-[0.72rem] uppercase tracking-[0.34em] text-amber-300/70">
-                AI Match
+                {t("play.ai.eyebrow")}
               </div>
               <div className={`mt-4 font-gold-shiny text-3xl font-black leading-none text-stone-50 sm:text-[2.15rem] ${premiumTitleClass}`}>
-                Play the house
+                {t("play.ai.title")}
               </div>
               <p className="mt-3 max-w-[28rem] text-sm text-stone-300">
-                Use the current AI rival and keep the animated opening draw.
+                {t("play.ai.body")}
               </p>
               <div className="mt-6 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-semibold text-stone-200">
-                <span>{startingAI ? "Preparing game..." : activeModelLabel}</span>
+                <span>{startingAI ? t("play.ai.preparing") : activeModelLabel}</span>
                 {catalogMatch && !startingAI ? (
                   <span
                     className={`rounded-full border px-2 py-0.5 text-[0.68rem] font-semibold uppercase tracking-[0.16em] ${
@@ -323,20 +333,16 @@ export default function PlayPage() {
             >
               <div className="pointer-events-none absolute inset-x-10 top-0 h-px bg-gradient-to-r from-transparent via-amber-200/54 to-transparent" />
               <div className="text-[0.72rem] uppercase tracking-[0.34em] text-stone-400">
-                Human Queue
+                {t("play.humanQueue.eyebrow")}
               </div>
               <div className={`mt-4 font-gold-shiny text-3xl font-black leading-none text-stone-50 sm:text-[2.15rem] ${premiumTitleClass}`}>
-                Find a live opponent
+                {t("play.humanQueue.title")}
               </div>
               <p className="mt-3 max-w-[28rem] text-sm text-stone-300">
-                Join the first waiting player. If nobody is there, your board waits in the room.
+                {t("play.humanQueue.body")}
               </p>
               <div className="mt-6 inline-flex items-center rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-semibold text-stone-200">
-                {joiningHuman
-                  ? "Joining queue..."
-                  : selectedVariantSlug === "slovak"
-                    ? "Slovak queue"
-                    : "English queue"}
+                {joiningHuman ? t("play.humanQueue.joining") : queueLabel}
               </div>
             </button>
           </div>
@@ -345,14 +351,14 @@ export default function PlayPage() {
             <div className="mb-3 flex items-end justify-between gap-3">
               <div>
                 <div className="text-[0.72rem] uppercase tracking-[0.28em] text-stone-500">
-                  Saved boards
+                  {t("play.saved.eyebrow")}
                 </div>
                 <div className={`mt-1 font-gold-shiny text-[1.65rem] font-black leading-none sm:text-[1.9rem] ${premiumTitleClass}`}>
-                  Resume where you left off
+                  {t("play.saved.title")}
                 </div>
               </div>
               <div className="hidden text-right text-sm text-stone-400 md:block">
-                AI and human games share one premium history surface.
+                {t("play.saved.note")}
               </div>
             </div>
 
@@ -376,13 +382,13 @@ export default function PlayPage() {
               onClick={() => router.push("/settings")}
               className="rounded-full border border-white/10 px-4 py-2 transition-colors hover:border-white/30 hover:text-stone-100"
             >
-              Settings
+              {t("nav.settings")}
             </button>
             <button
               onClick={() => router.push("/")}
               className="rounded-full border border-white/10 px-4 py-2 transition-colors hover:border-white/30 hover:text-stone-100"
             >
-              Account
+              {t("nav.account")}
             </button>
           </div>
 

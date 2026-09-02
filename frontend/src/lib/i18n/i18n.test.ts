@@ -1,4 +1,8 @@
 import { describe, expect, it } from "vitest";
+
+import { variantDisplayName } from "@/components/settings/GameLanguagePanel";
+import type { VariantSummary } from "@/lib/types";
+
 import { t, tf } from "./index";
 import {
   detectBrowserLocale,
@@ -508,5 +512,140 @@ describe("AC-GAME-TERM Czech kámen and Polish płytki on the exchange prompt", 
     expect(cs).toContain("kameny");
     expect(cs).not.toContain("písmen");
     expect(t("pl", "game.status.selectExchange")).toContain("płytki");
+  });
+});
+
+const INSTALLED_VARIANTS = [
+  "english",
+  "slovak",
+  "czech",
+  "polish",
+] as const;
+
+function variantForSlug(slug: string, displayName: string): VariantSummary {
+  return {
+    slug,
+    display_name: displayName,
+    language_code: null,
+    readiness: "playable",
+  };
+}
+
+function queueLabel(
+  locale: (typeof LOCALES)[number],
+  variant: VariantSummary,
+): string {
+  return tf(locale, "play.humanQueue.queueFor", {
+    variant: variantDisplayName(variant, (key) => t(locale, key)),
+  });
+}
+
+describe("AC-QUEUE-VARIANT uii-01-F14 queue label follows the variant", () => {
+  it("renders each installed variant's own name and never another variant's", () => {
+    const ownName: Record<(typeof INSTALLED_VARIANTS)[number], Record<(typeof LOCALES)[number], string>> = {
+      english: {
+        en: "English",
+        sk: "Angličtina",
+        cs: "Angličtina",
+        pl: "Angielski",
+      },
+      slovak: {
+        en: "Slovak",
+        sk: "Slovenčina",
+        cs: "Slovenština",
+        pl: "Słowacki",
+      },
+      czech: {
+        en: "Czech",
+        sk: "Čeština",
+        cs: "Čeština",
+        pl: "Czeski",
+      },
+      polish: {
+        en: "Polish",
+        sk: "Poľština",
+        cs: "Polština",
+        pl: "Polski",
+      },
+    };
+
+    for (const locale of LOCALES) {
+      for (const slug of INSTALLED_VARIANTS) {
+        const label = queueLabel(
+          locale,
+          variantForSlug(slug, `NOT-${slug}`),
+        );
+        expect(label).toContain(ownName[slug][locale]);
+        for (const other of INSTALLED_VARIANTS) {
+          if (other === slug) continue;
+          expect(label).not.toContain(ownName[other][locale]);
+        }
+      }
+    }
+
+    const czechSk = queueLabel("sk", variantForSlug("czech", "NOT-czech"));
+    expect(czechSk).toContain("Čeština");
+    expect(czechSk).not.toContain("Angličtina");
+    expect(czechSk).not.toContain("Slovenčina");
+
+    for (const locale of LOCALES) {
+      expect(queueLabel(locale, variantForSlug("czech", "NOT-czech"))).not.toContain(
+        "English",
+      );
+    }
+  });
+});
+
+describe("AC-QUEUE-UNKNOWN unrecognised slug uses display_name", () => {
+  it("does not throw and does not render another variant's name", () => {
+    const unknown = variantForSlug("hungarian", "Magyar");
+    expect(() =>
+      variantDisplayName(unknown, (key) => t("sk", key)),
+    ).not.toThrow();
+    expect(variantDisplayName(unknown, (key) => t("sk", key))).toBe("Magyar");
+
+    const label = queueLabel("sk", unknown);
+    expect(label).toContain("Magyar");
+    expect(label).not.toContain("Angličtina");
+    expect(label).not.toContain("Slovenčina");
+    expect(label).not.toContain("Čeština");
+    expect(label).not.toContain("Poľština");
+    expect(label).not.toBe("English queue");
+    expect(label).not.toBe("Slovak queue");
+  });
+});
+
+describe("AC-PLAY-4 lobby titles", () => {
+  it("renders play.title, play.ai.title and play.humanQueue.title in all four locales", () => {
+    expect(t("en", "play.title")).toBe("Choose the next board");
+    expect(t("sk", "play.title")).toBe("Vyber si ďalšiu partiu");
+    expect(t("cs", "play.title")).toBe("Vyber si další partii");
+    expect(t("pl", "play.title")).toBe("Wybierz następną partię");
+
+    expect(t("en", "play.ai.title")).toBe("Play the house");
+    expect(t("sk", "play.ai.title")).toBe("Hraj proti AI");
+    expect(t("cs", "play.ai.title")).toBe("Hraj proti AI");
+    expect(t("pl", "play.ai.title")).toBe("Zagraj z AI");
+
+    expect(t("en", "play.humanQueue.title")).toBe("Find a live opponent");
+    expect(t("sk", "play.humanQueue.title")).toBe("Nájdi živého súpera");
+    expect(t("cs", "play.humanQueue.title")).toBe("Najdi živého soupeře");
+    expect(t("pl", "play.humanQueue.title")).toBe("Znajdź żywego rywala");
+  });
+});
+
+describe("AC-QUEUE-ROOM-4 queue.room interpolates the code", () => {
+  it("includes the code in all four locales and Slavic forms omit Room", () => {
+    expect(tf("en", "queue.room", { code: "abcd1234" })).toBe("Room abcd1234");
+    expect(tf("sk", "queue.room", { code: "abcd1234" })).toBe(
+      "Miestnosť abcd1234",
+    );
+    expect(tf("cs", "queue.room", { code: "abcd1234" })).toBe(
+      "Místnost abcd1234",
+    );
+    expect(tf("pl", "queue.room", { code: "abcd1234" })).toBe("Pokój abcd1234");
+    expect(tf("sk", "queue.room", { code: "abcd1234" })).not.toContain("Room");
+    expect(tf("cs", "queue.room", { code: "abcd1234" })).not.toContain("Room");
+    expect(tf("pl", "queue.room", { code: "abcd1234" })).not.toContain("Room");
   });
 });

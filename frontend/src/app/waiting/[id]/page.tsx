@@ -6,6 +6,7 @@ import { motion } from "framer-motion";
 
 import { useGameStore } from "@/hooks/useGameStore";
 import { api } from "@/lib/api";
+import { t as translate, useLocale, useT } from "@/lib/i18n";
 import { buildGameWebSocketUrl } from "@/lib/ws";
 import type { GameState, WSTicketResponse } from "@/lib/types";
 
@@ -13,6 +14,8 @@ export default function WaitingPage() {
   const params = useParams();
   const router = useRouter();
   const gameId = params.id as string;
+  const { t, tf } = useT();
+  const locale = useLocale();
 
   const token = useGameStore((state) => state.token);
   const gameState = useGameStore((state) => state.gameState);
@@ -60,15 +63,15 @@ export default function WaitingPage() {
               router.replace(`/game/${gameId}`);
             }
           } catch {
-            setError("Realtime connection dropped.");
+            setError(translate(locale, "queue.error.dropped"));
           }
         };
 
         socket.onerror = () => {
-          setError("Realtime connection failed.");
+          setError(translate(locale, "game.ws.connectFailed"));
         };
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Could not enter the waiting room.");
+        setError(err instanceof Error ? err.message : translate(locale, "queue.error.enter"));
       }
     }
 
@@ -79,7 +82,7 @@ export default function WaitingPage() {
       socketRef.current?.close();
       socketRef.current = null;
     };
-  }, [gameId, router, setGameState, token]);
+  }, [gameId, locale, router, setGameState, token]);
 
   async function handleCancel() {
     if (!token || cancelling) return;
@@ -89,7 +92,7 @@ export default function WaitingPage() {
       socketRef.current?.close();
       router.replace("/play");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not leave the queue.");
+      setError(err instanceof Error ? err.message : t("queue.error.leave"));
     } finally {
       setCancelling(false);
     }
@@ -114,17 +117,17 @@ export default function WaitingPage() {
             </motion.div>
           </div>
           <div className="mt-8 text-[0.78rem] uppercase tracking-[0.34em] text-sky-300/72">
-            Human Queue
+            {t("play.humanQueue.eyebrow")}
           </div>
           <h1 className="mt-4 text-3xl font-black tracking-tight text-stone-50 sm:text-4xl">
-            Waiting for an opponent
+            {t("queue.title")}
           </h1>
           <p className="mt-3 text-sm text-stone-400 sm:text-base">
-            Your board is ready. The match starts as soon as another player joins.
+            {t("queue.body")}
           </p>
           {gameState && (
             <p className="mt-3 text-xs uppercase tracking-[0.26em] text-stone-500">
-              Room {gameState.game_id.slice(0, 8)}
+              {tf("queue.room", { code: gameState.game_id.slice(0, 8) })}
             </p>
           )}
           {error && (
@@ -135,7 +138,7 @@ export default function WaitingPage() {
             disabled={cancelling}
             className="mt-8 rounded-full border border-white/12 px-5 py-2.5 text-sm font-semibold text-stone-200 transition-colors hover:border-white/32 hover:text-stone-50 disabled:opacity-50"
           >
-            {cancelling ? "Leaving queue..." : "Leave queue"}
+            {cancelling ? t("queue.leaving") : t("queue.leave")}
           </button>
         </motion.div>
       </div>

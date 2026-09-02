@@ -53,6 +53,43 @@ export const skText: Record<TextKey, string> = {
   "settings.gameVariant.slovak": "Slovenčina",
   "settings.gameVariant.czech": "Čeština",
   "settings.gameVariant.polish": "Poľština",
+  "settings.rival.title": "Tvoj súper",
+  "settings.rival.description": "Súpera pre nové partie vyberá správca.",
+  "nav.settings": "Nastavenia",
+  "nav.account": "Účet",
+  "play.title": "Vyber si ďalšiu partiu",
+  "play.lead":
+    "Spusti prémiový duel proti AI, skoč do živého frontu alebo si otvor niektorú z uložených partií.",
+  "play.ai.eyebrow": "AI partia",
+  "play.ai.title": "Hraj proti AI",
+  "play.ai.body":
+    "Zahraj si proti aktuálnemu súperovi aj s animovaným ťahom o poradie.",
+  "play.ai.preparing": "Pripravujem partiu...",
+  "play.rival.unavailable": "Žiadny súper nie je dostupný",
+  "play.humanQueue.eyebrow": "Front hráčov",
+  "play.humanQueue.title": "Nájdi živého súpera",
+  "play.humanQueue.body":
+    "Pripoj sa k prvému čakajúcemu hráčovi. Ak tam nikto nie je, tvoja partia počká v čakárni.",
+  "play.humanQueue.joining": "Pripájam sa do frontu...",
+  "play.saved.eyebrow": "Uložené partie",
+  "play.saved.title": "Pokračuj tam, kde si skončil",
+  "play.saved.note":
+    "Partie proti AI aj proti ľuďom majú jednu spoločnú históriu.",
+  "play.error.catalogEmpty":
+    "Katalóg súperov je prázdny. Naplň katalóg, aby sa dali hrať partie proti AI.",
+  "play.error.variantUnavailable":
+    "Nie je dostupný žiadny hrateľný variant hry. Nová partia sa nedá vytvoriť, kým sa nejaký nenačíta.",
+  "play.error.startAi": "Partiu proti AI sa nepodarilo spustiť.",
+  "play.error.joinQueue": "Do frontu hráčov sa nepodarilo pripojiť.",
+  "play.error.loadGames": "Tvoje partie sa nepodarilo načítať.",
+  "queue.title": "Čakám na súpera",
+  "queue.body":
+    "Tvoja partia je pripravená. Začne, len čo sa pripojí ďalší hráč.",
+  "queue.leave": "Opustiť front",
+  "queue.leaving": "Opúšťam front...",
+  "queue.error.dropped": "Realtime spojenie sa prerušilo.",
+  "queue.error.enter": "Do čakárne sa nepodarilo vstúpiť.",
+  "queue.error.leave": "Front sa nepodarilo opustiť.",
   "draw.eyebrow": "Ťah o poradie",
   "draw.title": "Kto začína partiu",
   "draw.subtitle":
@@ -170,4 +207,6 @@ export const skFn: { [K in FnKey]: (typeof enFn)[K] } = {
     `Volanie AI zlyhalo (${p.status}) ešte pred začiatkom streamu.`,
   "game.ai.routeFailedWithPreview": (p) =>
     `Volanie AI zlyhalo (${p.status}): ${p.preview}`,
+  "play.humanQueue.queueFor": (p) => `Front: ${p.variant}`,
+  "queue.room": (p) => `Miestnosť ${p.code}`,
 };

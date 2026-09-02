@@ -51,6 +51,44 @@ export const enText = {
   "settings.gameVariant.slovak": "Slovak",
   "settings.gameVariant.czech": "Czech",
   "settings.gameVariant.polish": "Polish",
+  "settings.rival.title": "Your rival",
+  "settings.rival.description":
+    "The administrator picks the rival for new games.",
+  "nav.settings": "Settings",
+  "nav.account": "Account",
+  "play.title": "Choose the next board",
+  "play.lead":
+    "Start a premium AI duel, jump into the live queue, or reopen one of your saved boards.",
+  "play.ai.eyebrow": "AI Match",
+  "play.ai.title": "Play the house",
+  "play.ai.body":
+    "Use the current AI rival and keep the animated opening draw.",
+  "play.ai.preparing": "Preparing game...",
+  "play.rival.unavailable": "No rival available",
+  "play.humanQueue.eyebrow": "Human Queue",
+  "play.humanQueue.title": "Find a live opponent",
+  "play.humanQueue.body":
+    "Join the first waiting player. If nobody is there, your board waits in the room.",
+  "play.humanQueue.joining": "Joining queue...",
+  "play.saved.eyebrow": "Saved boards",
+  "play.saved.title": "Resume where you left off",
+  "play.saved.note":
+    "AI and human games share one premium history surface.",
+  "play.error.catalogEmpty":
+    "The rival catalog is empty. Seed the free catalog to play AI matches.",
+  "play.error.variantUnavailable":
+    "No playable game variant is available. Game creation is blocked until a playable variant can be loaded.",
+  "play.error.startAi": "Could not start an AI game.",
+  "play.error.joinQueue": "Could not join the human queue.",
+  "play.error.loadGames": "Unable to load your games.",
+  "queue.title": "Waiting for an opponent",
+  "queue.body":
+    "Your board is ready. The match starts as soon as another player joins.",
+  "queue.leave": "Leave queue",
+  "queue.leaving": "Leaving queue...",
+  "queue.error.dropped": "Realtime connection dropped.",
+  "queue.error.enter": "Could not enter the waiting room.",
+  "queue.error.leave": "Could not leave the queue.",
   "draw.eyebrow": "Starting draw",
   "draw.title": "Who opens the board",
   "draw.subtitle": "Whoever draws the tile closer to A starts. A blank always wins.",
@@ -171,6 +209,8 @@ export const enFn = {
     `AI route failed (${p.status}) before the stream started.`,
   "game.ai.routeFailedWithPreview": (p: { status: number; preview: string }) =>
     `AI route failed (${p.status}): ${p.preview}`,
+  "play.humanQueue.queueFor": (p: { variant: string }) => `${p.variant} queue`,
+  "queue.room": (p: { code: string }) => `Room ${p.code}`,
 } as const;
 
 export type TextKey = keyof typeof enText;

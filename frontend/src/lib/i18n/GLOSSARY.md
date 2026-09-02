@@ -128,6 +128,8 @@ Login 401 must not distinguish an unknown user from a wrong password.
 | settings.gameVariant.description | Tiles, bag, and lexicon. Applies to NEW games only and never changes a running game. This is not the interface language. | Písmená, vrecko a lexikón. Platí pre NOVÉ partie a nemení prebiehajúcu partiu. Toto nie je jazyk rozhrania. |
 | settings.gameVariant.english | English | Angličtina |
 | settings.gameVariant.slovak | Slovak | Slovenčina |
+| settings.rival.title | Your rival | Tvoj súper |
+| settings.rival.description | The administrator picks the rival for new games. | Súpera pre nové partie vyberá správca. |
 | draw.eyebrow | Starting draw | Ťah o poradie |
 | draw.title | Who opens the board | Kto začína partiu |
 | draw.subtitle | Whoever draws the tile closer to A starts. A blank always wins. | Začína ten, kto vytiahne písmeno bližšie k A. Žolík vyhráva vždy. |
@@ -141,6 +143,46 @@ Login 401 must not distinguish an unknown user from a wrong password.
 | draw.reason.blankAi | The AI drew the blank. | Žolíka vytiahlo AI. |
 | draw.reason.bothBlank | Both tiles are blanks, so you start. | Obidve písmená sú žolíky, takže začínaš ty. |
 | draw.reason.closer (fn) | {winner} is closer to A than {loser}. | {winner} je bližšie k A ako {loser}. |
+
+## Lobby and waiting room
+
+`play.humanQueue.queueFor` receives a resolved variant DISPLAY NAME from
+`variantDisplayName(...)` (for example `Slovenčina` / `Čeština`) and never a
+slug. That is the `uii-01-F14` fix: a two-value english/slovak ternary cannot
+come back when a fifth variant is added.
+
+| Key | English | Slovak |
+|---|---|---|
+| nav.settings | Settings | Nastavenia |
+| nav.account | Account | Účet |
+| play.title | Choose the next board | Vyber si ďalšiu partiu |
+| play.lead | Start a premium AI duel, jump into the live queue, or reopen one of your saved boards. | Spusti prémiový duel proti AI, skoč do živého frontu alebo si otvor niektorú z uložených partií. |
+| play.ai.eyebrow | AI Match | AI partia |
+| play.ai.title | Play the house | Hraj proti AI |
+| play.ai.body | Use the current AI rival and keep the animated opening draw. | Zahraj si proti aktuálnemu súperovi aj s animovaným ťahom o poradie. |
+| play.ai.preparing | Preparing game... | Pripravujem partiu... |
+| play.rival.unavailable | No rival available | Žiadny súper nie je dostupný |
+| play.humanQueue.eyebrow | Human Queue | Front hráčov |
+| play.humanQueue.title | Find a live opponent | Nájdi živého súpera |
+| play.humanQueue.body | Join the first waiting player. If nobody is there, your board waits in the room. | Pripoj sa k prvému čakajúcemu hráčovi. Ak tam nikto nie je, tvoja partia počká v čakárni. |
+| play.humanQueue.joining | Joining queue... | Pripájam sa do frontu... |
+| play.humanQueue.queueFor (fn) | {variant} queue | Front: {variant} |
+| play.saved.eyebrow | Saved boards | Uložené partie |
+| play.saved.title | Resume where you left off | Pokračuj tam, kde si skončil |
+| play.saved.note | AI and human games share one premium history surface. | Partie proti AI aj proti ľuďom majú jednu spoločnú históriu. |
+| play.error.catalogEmpty | The rival catalog is empty. Seed the free catalog to play AI matches. | Katalóg súperov je prázdny. Naplň katalóg, aby sa dali hrať partie proti AI. |
+| play.error.variantUnavailable | No playable game variant is available. Game creation is blocked until a playable variant can be loaded. | Nie je dostupný žiadny hrateľný variant hry. Nová partia sa nedá vytvoriť, kým sa nejaký nenačíta. |
+| play.error.startAi | Could not start an AI game. | Partiu proti AI sa nepodarilo spustiť. |
+| play.error.joinQueue | Could not join the human queue. | Do frontu hráčov sa nepodarilo pripojiť. |
+| play.error.loadGames | Unable to load your games. | Tvoje partie sa nepodarilo načítať. |
+| queue.title | Waiting for an opponent | Čakám na súpera |
+| queue.body | Your board is ready. The match starts as soon as another player joins. | Tvoja partia je pripravená. Začne, len čo sa pripojí ďalší hráč. |
+| queue.leave | Leave queue | Opustiť front |
+| queue.leaving | Leaving queue... | Opúšťam front... |
+| queue.error.dropped | Realtime connection dropped. | Realtime spojenie sa prerušilo. |
+| queue.error.enter | Could not enter the waiting room. | Do čakárne sa nepodarilo vstúpiť. |
+| queue.error.leave | Could not leave the queue. | Front sa nepodarilo opustiť. |
+| queue.room (fn) | Room {code} | Miestnosť {code} |
 
 ## Turn chrome
 

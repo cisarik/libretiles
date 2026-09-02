@@ -366,6 +366,7 @@ function InterfaceLanguagePanel() {
 
 export default function SettingsPage() {
   const router = useRouter();
+  const { t } = useT();
   const token = useGameStore((s) => s.token);
   const selectedModelId = useGameStore((s) => s.selectedModelId);
   const setSelectedModelId = useGameStore((s) => s.setSelectedModelId);
@@ -619,8 +620,8 @@ export default function SettingsPage() {
           <div className="flex min-h-0 flex-col gap-4">
             <section ref={rivalSectionRef} className="min-h-0">
               <SettingsPanel
-                title="Choose the rival"
-                description="Provider-diverse free rivals from the live catalog, newest first."
+                title={t("settings.rival.title")}
+                description={t("settings.rival.description")}
               >
                 {loading ? (
                   <div className="min-h-[48px] animate-pulse rounded-[1.15rem] border border-white/8 bg-black/12" />

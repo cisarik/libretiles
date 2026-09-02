@@ -54,6 +54,44 @@ export const plText: Record<TextKey, string> = {
   "settings.gameVariant.slovak": "Słowacki",
   "settings.gameVariant.czech": "Czeski",
   "settings.gameVariant.polish": "Polski",
+  "settings.rival.title": "Twój rywal",
+  "settings.rival.description":
+    "Rywala do nowych partii wybiera administrator.",
+  "nav.settings": "Ustawienia",
+  "nav.account": "Konto",
+  "play.title": "Wybierz następną partię",
+  "play.lead":
+    "Rozpocznij premium duel z AI, wskocz do kolejki na żywo albo otwórz jedną z zapisanych partii.",
+  "play.ai.eyebrow": "Partia z AI",
+  "play.ai.title": "Zagraj z AI",
+  "play.ai.body":
+    "Zagraj z aktualnym rywalem razem z animowanym losowaniem o początek.",
+  "play.ai.preparing": "Przygotowuję partię...",
+  "play.rival.unavailable": "Brak dostępnego rywala",
+  "play.humanQueue.eyebrow": "Kolejka graczy",
+  "play.humanQueue.title": "Znajdź żywego rywala",
+  "play.humanQueue.body":
+    "Dołącz do pierwszego czekającego gracza. Jeśli nikogo nie ma, twoja partia poczeka w pokoju.",
+  "play.humanQueue.joining": "Dołączam do kolejki...",
+  "play.saved.eyebrow": "Zapisane partie",
+  "play.saved.title": "Wróć tam, gdzie skończyłeś",
+  "play.saved.note":
+    "Partie z AI i z ludźmi mają jedną wspólną historię.",
+  "play.error.catalogEmpty":
+    "Katalog rywali jest pusty. Wypełnij katalog, aby grać partie z AI.",
+  "play.error.variantUnavailable":
+    "Brak dostępnego grywalnego wariantu gry. Nie można utworzyć partii, dopóki jakiś się nie wczyta.",
+  "play.error.startAi": "Nie udało się rozpocząć partii z AI.",
+  "play.error.joinQueue": "Nie udało się dołączyć do kolejki graczy.",
+  "play.error.loadGames": "Nie udało się wczytać twoich partii.",
+  "queue.title": "Czekam na rywala",
+  "queue.body":
+    "Twoja partia jest gotowa. Zacznie się, gdy dołączy kolejny gracz.",
+  "queue.leave": "Opuść kolejkę",
+  "queue.leaving": "Opuszczam kolejkę...",
+  "queue.error.dropped": "Połączenie realtime zostało przerwane.",
+  "queue.error.enter": "Nie udało się wejść do pokoju oczekiwania.",
+  "queue.error.leave": "Nie udało się opuścić kolejki.",
   "draw.eyebrow": "Losowanie o początek",
   "draw.title": "Kto zaczyna partię",
   "draw.subtitle":
@@ -171,4 +209,6 @@ export const plFn: { [K in FnKey]: (typeof enFn)[K] } = {
     `Wywołanie AI nie udało się (${p.status}) przed rozpoczęciem streamu.`,
   "game.ai.routeFailedWithPreview": (p) =>
     `Wywołanie AI nie udało się (${p.status}): ${p.preview}`,
+  "play.humanQueue.queueFor": (p) => `Kolejka: ${p.variant}`,
+  "queue.room": (p) => `Pokój ${p.code}`,
 };

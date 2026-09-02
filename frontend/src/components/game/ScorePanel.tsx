@@ -257,10 +257,8 @@ function HeaderMiniButton({
 
 interface ScorePanelProps {
   opponentLabel: string;
-  showRivalPicker?: boolean;
   frameBorderColor?: string;
   onBack: () => void;
-  onOpenRivalPicker: () => void;
   onNewGame: () => void;
   onGiveUp: () => void;
   onOpenGames: () => void;
@@ -275,10 +273,8 @@ interface ScorePanelProps {
 
 export function ScorePanel({
   opponentLabel,
-  showRivalPicker = false,
   frameBorderColor,
   onBack,
-  onOpenRivalPicker,
   onNewGame,
   onGiveUp,
   onOpenGames,
@@ -395,20 +391,7 @@ export function ScorePanel({
               scoreClassName="translate-x-[5px]"
               label={(
                 <div className="relative inline-flex items-center justify-center gap-2 leading-none">
-                  {showRivalPicker ? (
-                    <button
-                      type="button"
-                      onClick={onOpenRivalPicker}
-                      className="group inline-flex max-w-[8.5rem] translate-y-[5px] overflow-hidden whitespace-nowrap text-left leading-none transition-[opacity,filter] hover:opacity-92 hover:brightness-110 sm:max-w-[10.5rem] md:max-w-[12rem] lg:max-w-[15rem]"
-                      title={opponentLabel}
-                    >
-                      <LuxeHoverText className="max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-[1.22rem] font-black leading-none tracking-[-0.05em] sm:text-[1.48rem]">
-                        {opponentLabel}
-                      </LuxeHoverText>
-                    </button>
-                  ) : (
-                    <span className="shrink-0 uppercase text-white">{opponentLabel}</span>
-                  )}
+                  <span className="shrink-0 uppercase text-white">{opponentLabel}</span>
                 </div>
               )}
             />

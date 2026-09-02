@@ -842,7 +842,13 @@ export default function GamePage() {
     clearAICandidates();
     clearAIFallbackProgress();
     setAIThinking(true);
-    setAIStatusMessage(tf("game.ai.exploring", { model: preferenceModelId }));
+    const exploringModelName =
+      (preferenceModelId === (gameState.ai_model_id ?? "")
+        ? gameState.ai_model_display_name
+        : null)
+      ?? humanizeModelId(preferenceModelId)
+      ?? preferenceModelId;
+    setAIStatusMessage(tf("game.ai.exploring", { model: exploringModelName }));
     setAiError(null);
     setAIBlockerModal(null);
     startCountdown(aiTimeout);
@@ -1516,10 +1522,8 @@ export default function GamePage() {
         <div className="mx-auto flex max-w-[960px] flex-col gap-2 px-4 py-3 sm:px-5 sm:py-4">
           <ScorePanel
             opponentLabel={activeHeaderModelName}
-            showRivalPicker={gameState?.game_mode === "vs_ai"}
             frameBorderColor={frameBorderColor}
             onBack={() => router.push("/play")}
-            onOpenRivalPicker={() => router.push("/settings?focus=rival")}
             onNewGame={() => void handleNewGame()}
             onGiveUp={() => void handleGiveUp()}
             onOpenGames={handleOpenGamesModal}
