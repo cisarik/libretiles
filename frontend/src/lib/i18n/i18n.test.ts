@@ -649,3 +649,151 @@ describe("AC-QUEUE-ROOM-4 queue.room interpolates the code", () => {
     expect(tf("pl", "queue.room", { code: "abcd1234" })).not.toContain("Room");
   });
 });
+
+const HEADER_KEYS = [
+  "header.giveUp",
+  "header.givingUp",
+  "header.giveUpTooltip",
+  "header.logout",
+  "header.loggingOut",
+  "header.backToBoards",
+  "header.profile",
+  "header.games",
+] as const;
+
+const HEADER_EXPECTED: Record<(typeof HEADER_KEYS)[number], Record<(typeof LOCALES)[number], string>> = {
+  "header.giveUp": {
+    en: "Give up",
+    sk: "Vzdať sa",
+    cs: "Vzdát se",
+    pl: "Poddaj się",
+  },
+  "header.givingUp": {
+    en: "Giving up...",
+    sk: "Vzdávam sa...",
+    cs: "Vzdávám se...",
+    pl: "Poddaję się...",
+  },
+  "header.giveUpTooltip": {
+    en: "Give up current game",
+    sk: "Vzdať túto partiu",
+    cs: "Vzdát tuto partii",
+    pl: "Poddaj tę partię",
+  },
+  "header.logout": {
+    en: "Logout",
+    sk: "Odhlásiť sa",
+    cs: "Odhlásit se",
+    pl: "Wyloguj się",
+  },
+  "header.loggingOut": {
+    en: "Logging out...",
+    sk: "Odhlasujem...",
+    cs: "Odhlašuji...",
+    pl: "Wylogowuję...",
+  },
+  "header.backToBoards": {
+    en: "Back to boards",
+    sk: "Späť na partie",
+    cs: "Zpět na partie",
+    pl: "Powrót do partii",
+  },
+  "header.profile": {
+    en: "Profile",
+    sk: "Profil",
+    cs: "Profil",
+    pl: "Profil",
+  },
+  "header.games": {
+    en: "Games",
+    sk: "Partie",
+    cs: "Partie",
+    pl: "Partie",
+  },
+};
+
+describe("AC-HEADER-4 header.* keys", () => {
+  it("renders the eight header keys as the authored string in all four locales", () => {
+    for (const key of HEADER_KEYS) {
+      for (const locale of LOCALES) {
+        expect(t(locale, key)).toBe(HEADER_EXPECTED[key][locale]);
+      }
+    }
+  });
+});
+
+const OVERLAY_KEYS = [
+  "overlay.aiThinking",
+  "overlay.searching",
+  "overlay.best",
+  "overlay.bestBadge",
+  "overlay.filtering",
+] as const;
+
+const OVERLAY_EXPECTED: Record<(typeof OVERLAY_KEYS)[number], Record<(typeof LOCALES)[number], string>> = {
+  "overlay.aiThinking": {
+    en: "AI Thinking",
+    sk: "AI premýšľa",
+    cs: "AI přemýšlí",
+    pl: "AI myśli",
+  },
+  "overlay.searching": {
+    en: "Searching for moves...",
+    sk: "Hľadám ťahy...",
+    cs: "Hledám tahy...",
+    pl: "Szukam ruchów...",
+  },
+  "overlay.best": {
+    en: "Best",
+    sk: "Najlepší",
+    cs: "Nejlepší",
+    pl: "Najlepszy",
+  },
+  "overlay.bestBadge": {
+    en: "BEST",
+    sk: "NAJLEPŠÍ",
+    cs: "NEJLEPŠÍ",
+    pl: "NAJLEPSZY",
+  },
+  "overlay.filtering": {
+    en: "Filtering weak or invalid lines before showing a serious move...",
+    sk: "Odfiltrúvam slabé a neplatné ťahy, kým nenájdem vážny ťah...",
+    cs: "Odfiltrovávám slabé a neplatné tahy, dokud nenajdu vážný tah...",
+    pl: "Odfiltrowuję słabe i nieprawidłowe ruchy, aż znajdę poważny ruch...",
+  },
+};
+
+describe("AC-OVERLAY-4 overlay.* keys", () => {
+  it("renders the five overlay keys as the authored string in all four locales", () => {
+    for (const key of OVERLAY_KEYS) {
+      for (const locale of LOCALES) {
+        expect(t(locale, key)).toBe(OVERLAY_EXPECTED[key][locale]);
+      }
+    }
+  });
+});
+
+describe("AC-BADGE-CASE overlay.bestBadge is catalog-uppercase", () => {
+  it("equals its own uppercase form in every locale, and overlay.best does not in sk/cs/pl", () => {
+    for (const locale of LOCALES) {
+      const badge = t(locale, "overlay.bestBadge");
+      expect(badge).toBe(badge.toUpperCase());
+    }
+    for (const locale of ["sk", "cs", "pl"] as const) {
+      const best = t(locale, "overlay.best");
+      expect(best).not.toBe(best.toUpperCase());
+    }
+  });
+});
+
+describe("AC-NO-TELEMETRY-KEY en catalog excludes overlay telemetry prose", () => {
+  it("contains none of the telemetry fragments providers exhausted, dead rack, or legal rescue", () => {
+    const fragments = ["providers exhausted", "dead rack", "legal rescue"];
+    for (const value of Object.values(enText)) {
+      const lower = value.toLowerCase();
+      for (const fragment of fragments) {
+        expect(lower).not.toContain(fragment);
+      }
+    }
+  });
+});

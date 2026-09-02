@@ -188,6 +188,20 @@ export const plText: Record<TextKey, string> = {
     "To połączenie realtime jest nieprawidłowe. Odśwież stronę, aby połączyć się ponownie.",
   "game.ws.unavailable": "Usługa realtime jest niedostępna. Spróbuj ponownie.",
   "board.zoomNoun": "zoomu",
+  "header.giveUp": "Poddaj się",
+  "header.givingUp": "Poddaję się...",
+  "header.giveUpTooltip": "Poddaj tę partię",
+  "header.logout": "Wyloguj się",
+  "header.loggingOut": "Wylogowuję...",
+  "header.backToBoards": "Powrót do partii",
+  "header.profile": "Profil",
+  "header.games": "Partie",
+  "overlay.aiThinking": "AI myśli",
+  "overlay.searching": "Szukam ruchów...",
+  "overlay.best": "Najlepszy",
+  "overlay.bestBadge": "NAJLEPSZY",
+  "overlay.filtering":
+    "Odfiltrowuję słabe i nieprawidłowe ruchy, aż znajdę poważny ruch...",
 };
 
 export const plFn: { [K in FnKey]: (typeof enFn)[K] } = {

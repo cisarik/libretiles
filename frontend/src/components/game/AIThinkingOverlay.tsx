@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { useGameStore } from "@/hooks/useGameStore";
+import { useT } from "@/lib/i18n";
 import { providerBadgeLabel } from "@/lib/ai-fallback";
 import {
   PREMIUM_PING_PONG_TILE_STYLE,
@@ -67,6 +68,7 @@ function WordCandidate({
   rank: number;
   tilePoints?: Record<string, number>;
 }) {
+  const { t } = useT();
   const letters = word.toUpperCase().split("");
 
   return (
@@ -108,7 +110,7 @@ function WordCandidate({
         <span className={`text-[10px] font-medium ${
           isBest ? "text-amber-400/70" : "text-stone-500"
         }`}>
-          pts
+          {t("board.pts")}
         </span>
       </div>
 
@@ -120,7 +122,7 @@ function WordCandidate({
           transition={{ type: "spring", stiffness: 500 }}
           className="text-[10px] font-black text-amber-900 bg-amber-400 rounded-full px-1.5 py-0.5 shrink-0"
         >
-          BEST
+          {t("overlay.bestBadge")}
         </motion.div>
       )}
     </motion.div>
@@ -242,6 +244,7 @@ export function FallbackAttemptProgress() {
 }
 
 export function AIThinkingOverlay() {
+  const { t } = useT();
   const aiThinking = useGameStore((s) => s.aiThinking);
   const aiCountdown = useGameStore((s) => s.aiCountdown);
   const aiCandidates = useGameStore((s) => s.aiCandidates);
@@ -288,7 +291,7 @@ export function AIThinkingOverlay() {
               <HourglassSimple urgent={urgent} />
               <div className="flex-1">
                 <div className="text-stone-400 text-[10px] uppercase tracking-[0.2em] font-medium">
-                  AI Thinking
+                  {t("overlay.aiThinking")}
                 </div>
                 {aiCountdown > 0 && (
                   <div className={`text-xl font-bold tabular-nums font-mono leading-tight ${
@@ -305,9 +308,9 @@ export function AIThinkingOverlay() {
               </div>
               {bestCandidate && (
                 <div className="text-right">
-                  <div className="text-[10px] text-stone-500 uppercase tracking-wider">Best</div>
+                  <div className="text-[10px] text-stone-500 uppercase tracking-wider">{t("overlay.best")}</div>
                   <div className="text-amber-300 font-black text-lg leading-tight">
-                    {bestCandidate.score} pts
+                    {bestCandidate.score} {t("board.pts")}
                   </div>
                 </div>
               )}
@@ -334,7 +337,7 @@ export function AIThinkingOverlay() {
                 ))}
                 {validSorted.length === 0 && rejectedCount > 0 && (
                   <div className="rounded-xl border border-white/6 bg-stone-800/28 px-3 py-3 text-center text-xs text-stone-500">
-                    Filtering weak or invalid lines before showing a serious move...
+                    {t("overlay.filtering")}
                   </div>
                 )}
                 <div ref={feedEndRef} />
@@ -356,7 +359,7 @@ export function AIThinkingOverlay() {
                   ))}
                 </div>
                 <span className="text-stone-500 text-xs">
-                  Searching for moves...
+                  {t("overlay.searching")}
                 </span>
               </div>
             )}

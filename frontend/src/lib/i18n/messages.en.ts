@@ -186,6 +186,20 @@ export const enText = {
   "game.ws.unavailable":
     "The realtime service is unavailable. Please try again.",
   "board.zoomNoun": "zoom",
+  "header.giveUp": "Give up",
+  "header.givingUp": "Giving up...",
+  "header.giveUpTooltip": "Give up current game",
+  "header.logout": "Logout",
+  "header.loggingOut": "Logging out...",
+  "header.backToBoards": "Back to boards",
+  "header.profile": "Profile",
+  "header.games": "Games",
+  "overlay.aiThinking": "AI Thinking",
+  "overlay.searching": "Searching for moves...",
+  "overlay.best": "Best",
+  "overlay.bestBadge": "BEST",
+  "overlay.filtering":
+    "Filtering weak or invalid lines before showing a serious move...",
 } as const;
 
 export const enFn = {

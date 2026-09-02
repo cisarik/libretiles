@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useGameStore } from "@/hooks/useGameStore";
+import { useT } from "@/lib/i18n";
 import { LuxeHoverText } from "@/components/game/LuxeHoverText";
 import {
   PREMIUM_GOLD_TEXT_SHADOW_CLASS,
@@ -152,6 +153,7 @@ function SettingsButton({
   textClassName?: string;
   iconOnly?: boolean;
 }) {
+  const { t } = useT();
   return (
     <button
       onClick={onClick}
@@ -174,7 +176,7 @@ function SettingsButton({
             <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
             <circle cx="12" cy="12" r="3" />
           </svg>
-          <IconTooltip label="Settings" />
+          <IconTooltip label={t("nav.settings")} />
         </>
       ) : (
         <>
@@ -194,7 +196,7 @@ function SettingsButton({
             <circle cx="12" cy="12" r="3" />
           </svg>
           <LuxeHoverText className={textClassName ?? "text-[1.12rem] font-black leading-none sm:text-[1.32rem]"}>
-            Settings
+            {t("nav.settings")}
           </LuxeHoverText>
         </>
       )}
@@ -286,6 +288,7 @@ export function ScorePanel({
   disableGiveUp = false,
   loggingOut = false,
 }: ScorePanelProps) {
+  const { t } = useT();
   const gameState = useGameStore((s) => s.gameState);
   const premiumLookEnabled = useGameStore((s) => s.premiumLookEnabled);
 
@@ -329,16 +332,16 @@ export function ScorePanel({
       <div className="absolute right-[-1px] top-[-1px] z-[25] hidden items-center gap-[1px] xl:flex">
         <HeaderMiniButton
           onClick={onGiveUp}
-          label={givingUp ? "Giving up..." : "Give up"}
+          label={givingUp ? t("header.givingUp") : t("header.giveUp")}
           tone="danger"
           disabled={disableGiveUp}
           textClassName={`text-[0.94rem] font-black leading-none sm:text-[1rem] ${premiumTitleClass}`}
-          tooltipLabel="Give up current game"
+          tooltipLabel={t("header.giveUpTooltip")}
           tooltipAlign="right"
         />
         <HeaderMiniButton
           onClick={onLogout}
-          label={loggingOut ? "Logging out..." : "Logout"}
+          label={loggingOut ? t("header.loggingOut") : t("header.logout")}
           tone="danger"
           disabled={loggingOut}
           textClassName={`text-[0.94rem] font-black leading-none sm:text-[1rem] ${premiumTitleClass}`}
@@ -353,11 +356,11 @@ export function ScorePanel({
               className="group relative inline-flex h-[2.86rem] w-[3.08rem] shrink-0 items-center justify-center rounded-[1.08rem] rounded-bl-[1.45rem] border border-rose-400/24 bg-[linear-gradient(145deg,rgba(96,25,46,0.62),rgba(42,14,23,0.7))] px-0 py-0 text-center shadow-[0_16px_34px_rgba(0,0,0,0.24)] transition-all duration-200 active:scale-[0.97] hover:border-rose-100/40 hover:bg-[linear-gradient(145deg,rgba(123,33,59,0.76),rgba(53,16,29,0.82))] hover:shadow-[0_18px_38px_rgba(0,0,0,0.28),0_0_26px_rgba(244,114,182,0.10)] disabled:cursor-not-allowed disabled:opacity-45"
             >
               <span className={`text-[1.2rem] leading-none ${premiumTitleClass}`}>↩</span>
-              <IconTooltip label="Back to boards" align="left" />
+              <IconTooltip label={t("header.backToBoards")} align="left" />
             </button>
             <HeaderMiniButton
               onClick={onOpenProfile}
-              label="Profile"
+              label={t("header.profile")}
               leading="👤"
               iconOnly
               tooltipAlign="right"
@@ -369,7 +372,7 @@ export function ScorePanel({
           <div className="grid grid-cols-[minmax(4.8rem,max-content)_auto_minmax(4.8rem,max-content)] items-end justify-center gap-3 sm:grid-cols-[minmax(5.1rem,max-content)_auto_minmax(5.1rem,max-content)] sm:gap-4">
             <AnimatedScore
               score={mySlot?.score ?? 0}
-              label={mySlot?.username ?? "You"}
+              label={mySlot?.username ?? t("chat.you")}
               delta={myLastGain}
               deltaTone="friendly"
               deltaSide="left"
@@ -412,7 +415,7 @@ export function ScorePanel({
             />
             <HeaderMiniButton
               onClick={onOpenGames}
-              label="Games"
+              label={t("header.games")}
               leading="🗂️"
               className="hidden xl:inline-flex"
               textClassName={`text-[1rem] font-black leading-none sm:text-[1.16rem] ${premiumTitleClass}`}
@@ -423,7 +426,7 @@ export function ScorePanel({
               className="group inline-flex h-[2.5rem] shrink-0 items-center justify-center whitespace-nowrap rounded-[1.1rem] rounded-br-[1.45rem] border border-amber-200/40 bg-[linear-gradient(135deg,rgba(251,191,36,0.18),rgba(245,158,11,0.08))] px-3.5 py-2 text-center shadow-[0_14px_30px_rgba(251,191,36,0.12),0_0_28px_rgba(251,191,36,0.12)] transition-all duration-200 active:scale-[0.97] hover:border-white/48 hover:bg-[linear-gradient(135deg,rgba(255,248,220,0.18),rgba(251,191,36,0.18),rgba(245,158,11,0.12))] hover:shadow-[0_16px_32px_rgba(255,255,255,0.06),0_0_34px_rgba(255,255,255,0.06)] disabled:cursor-not-allowed disabled:opacity-50 sm:h-auto sm:px-4 sm:py-2.5"
             >
               <LuxeHoverText className={`text-[1.12rem] font-black leading-none sm:text-[1.32rem] ${premiumTitleClass}`}>
-                {startingNewGame ? "Starting..." : "New game"}
+                {startingNewGame ? t("game.starting") : t("game.newGame")}
               </LuxeHoverText>
             </button>
           </div>

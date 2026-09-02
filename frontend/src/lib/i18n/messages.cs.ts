@@ -186,6 +186,20 @@ export const csText: Record<TextKey, string> = {
     "Toto realtime spojení není platné. Obnov stránku a připoj se znovu.",
   "game.ws.unavailable": "Realtime služba je nedostupná. Zkus to znovu.",
   "board.zoomNoun": "zoomu",
+  "header.giveUp": "Vzdát se",
+  "header.givingUp": "Vzdávám se...",
+  "header.giveUpTooltip": "Vzdát tuto partii",
+  "header.logout": "Odhlásit se",
+  "header.loggingOut": "Odhlašuji...",
+  "header.backToBoards": "Zpět na partie",
+  "header.profile": "Profil",
+  "header.games": "Partie",
+  "overlay.aiThinking": "AI přemýšlí",
+  "overlay.searching": "Hledám tahy...",
+  "overlay.best": "Nejlepší",
+  "overlay.bestBadge": "NEJLEPŠÍ",
+  "overlay.filtering":
+    "Odfiltrovávám slabé a neplatné tahy, dokud nenajdu vážný tah...",
 };
 
 export const csFn: { [K in FnKey]: (typeof enFn)[K] } = {

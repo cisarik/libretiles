@@ -284,3 +284,29 @@ independent axes; this is the first key family that depends on the other one.
 | game.ai.attempt (fn) | Attempt {index}/{total} · {label} | Pokus {index}/{total} · {label} |
 | game.toast.aiPlayedWord (fn) | AI played {word} | AI zahralo {word} |
 | game.status.opponentPlaying (fn) | {name} is playing | {name} je na ťahu |
+
+## Header cluster and AI overlay
+
+`overlay.bestBadge` exists separately from `overlay.best` because the badge
+carries its own uppercased value; Slavic diacritics are not reliably uppercased
+by a CSS `uppercase` class across these fonts.
+
+`{humanState}` in the AI overlay is deliberately not localized pending the
+enum-keyed telemetry slice. Those English states are produced in the locked
+AI move route and re-derived by `describeAiTurnTelemetry`.
+
+| Key | English | Slovak |
+|---|---|---|
+| header.giveUp | Give up | Vzdať sa |
+| header.givingUp | Giving up... | Vzdávam sa... |
+| header.giveUpTooltip | Give up current game | Vzdať túto partiu |
+| header.logout | Logout | Odhlásiť sa |
+| header.loggingOut | Logging out... | Odhlasujem... |
+| header.backToBoards | Back to boards | Späť na partie |
+| header.profile | Profile | Profil |
+| header.games | Games | Partie |
+| overlay.aiThinking | AI Thinking | AI premýšľa |
+| overlay.searching | Searching for moves... | Hľadám ťahy... |
+| overlay.best | Best | Najlepší |
+| overlay.bestBadge | BEST | NAJLEPŠÍ |
+| overlay.filtering | Filtering weak or invalid lines before showing a serious move... | Odfiltrúvam slabé a neplatné ťahy, kým nenájdem vážny ťah... |

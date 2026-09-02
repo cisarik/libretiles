@@ -186,6 +186,20 @@ export const skText: Record<TextKey, string> = {
     "Toto realtime spojenie nie je platné. Obnov stránku a pripoj sa znova.",
   "game.ws.unavailable": "Realtime služba je nedostupná. Skús to znova.",
   "board.zoomNoun": "zoomu",
+  "header.giveUp": "Vzdať sa",
+  "header.givingUp": "Vzdávam sa...",
+  "header.giveUpTooltip": "Vzdať túto partiu",
+  "header.logout": "Odhlásiť sa",
+  "header.loggingOut": "Odhlasujem...",
+  "header.backToBoards": "Späť na partie",
+  "header.profile": "Profil",
+  "header.games": "Partie",
+  "overlay.aiThinking": "AI premýšľa",
+  "overlay.searching": "Hľadám ťahy...",
+  "overlay.best": "Najlepší",
+  "overlay.bestBadge": "NAJLEPŠÍ",
+  "overlay.filtering":
+    "Odfiltrúvam slabé a neplatné ťahy, kým nenájdem vážny ťah...",
 };
 
 export const skFn: { [K in FnKey]: (typeof enFn)[K] } = {
