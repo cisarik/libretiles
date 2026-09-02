@@ -74,9 +74,10 @@ Slovak, Czech, and Polish thousands separator is a non-breaking space (U+00A0):
 
 ## Accessibility
 
-Real overlays that require action use dialog semantics, while transient toast,
-turn, and AI-progress announcements use polite status regions and never move
-focus. A full keyboard focus trap is deliberately out of scope; dialogs provide
+Real overlays that require action use dialog semantics. Toast, turn, and
+AI-progress chrome stay visual: one persistent polite live region announces
+toast or turn-status text, and the AI overlay is a named group, not a live
+region. A full keyboard focus trap is deliberately out of scope; dialogs provide
 Escape dismissal, initial focus, and `aria-modal` instead.
 
 | Key | English | Slovak | Czech | Polish |

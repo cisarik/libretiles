@@ -268,8 +268,7 @@ export function AIThinkingOverlay() {
     <AnimatePresence>
       {aiThinking && (
         <motion.div
-          role="status"
-          aria-live="polite"
+          role="group"
           aria-label={t("a11y.status.aiThinking")}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}

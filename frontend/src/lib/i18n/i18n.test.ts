@@ -1,4 +1,7 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { DndContext } from "@dnd-kit/core";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
@@ -9,10 +12,15 @@ import { BlankPicker } from "@/components/game/BlankPicker";
 import { GameHistoryModal } from "@/components/game/GameHistoryModal";
 import { formatUpdatedAt } from "@/components/game/GameHistoryPanel";
 import {
+  composeAnnouncement,
+  LiveAnnouncer,
+} from "@/components/game/LiveAnnouncer";
+import {
   formatJoinedDate,
   ProfileModal,
 } from "@/components/game/ProfileModal";
 import { variantDisplayName } from "@/components/settings/GameLanguagePanel";
+import { TileRack } from "@/components/tiles/TileRack";
 import { useGameStore } from "@/hooks/useGameStore";
 import type { VariantSummary } from "@/lib/types";
 
@@ -338,28 +346,106 @@ describe("AC-DIALOG-PRESENT dialog markup", () => {
   });
 });
 
-describe("AC-STATUS-NOT-DIALOG status markup", () => {
-  it("string-renders AI progress as one polite status region, never a dialog", () => {
+describe("AC-ANNOUNCE-PURE composeAnnouncement", () => {
+  it("lets a present toast win, otherwise uses turn status, and treats blank values as absent", () => {
+    expect(
+      composeAnnouncement({
+        toastMessage: "Word rejected",
+        turnStatusText: "Your turn",
+      }),
+    ).toBe("Word rejected");
+    expect(
+      composeAnnouncement({
+        toastMessage: null,
+        turnStatusText: "Your turn",
+      }),
+    ).toBe("Your turn");
+    expect(
+      composeAnnouncement({
+        toastMessage: undefined,
+        turnStatusText: "Your turn",
+      }),
+    ).toBe("Your turn");
+    expect(
+      composeAnnouncement({
+        toastMessage: "",
+        turnStatusText: "Your turn",
+      }),
+    ).toBe("Your turn");
+    expect(
+      composeAnnouncement({
+        toastMessage: "   ",
+        turnStatusText: "Your turn",
+      }),
+    ).toBe("Your turn");
+    expect(
+      composeAnnouncement({
+        toastMessage: "Word rejected",
+        turnStatusText: "",
+      }),
+    ).toBe("Word rejected");
+    expect(
+      composeAnnouncement({
+        toastMessage: "",
+        turnStatusText: "   ",
+      }),
+    ).toBe("");
+    expect(
+      composeAnnouncement({
+        toastMessage: null,
+        turnStatusText: null,
+      }),
+    ).toBe("");
+    expect(composeAnnouncement({})).toBe("");
+  });
+});
+
+describe("AC-ANNOUNCE-ONE LiveAnnouncer markup", () => {
+  it("string-renders exactly one polite atomic status region with the message text", () => {
+    const markup = renderToStaticMarkup(
+      createElement(LiveAnnouncer, { message: "Your turn" }),
+    );
+    expect(markup.match(/role="status"/g)?.length).toBe(1);
+    expect(markup.match(/aria-live="polite"/g)?.length).toBe(1);
+    expect(markup).toContain('aria-atomic="true"');
+    expect(markup).toContain("Your turn");
+  });
+});
+
+describe("AC-NO-OVERLAY-LIVE AI overlay is a labelled group", () => {
+  it("string-renders AI progress as a group with no live region, including timer and telemetry", () => {
     Object.assign(useGameStore.getInitialState(), {
       aiThinking: true,
       aiCandidates: [],
       aiStatusMessage: null,
       aiCountdown: 30,
-      aiFallbackAttempts: [],
-      aiFallbackActiveIndex: null,
-      aiTurnTelemetry: null,
+      aiFallbackAttempts: [
+        {
+          provider: "openrouter",
+          modelId: "google/gemma-4-31b-it:free",
+          status: "active",
+        },
+      ],
+      aiFallbackActiveIndex: 0,
+      aiTurnTelemetry: {
+        humanState: "backend found a legal rescue; repairing",
+      },
     });
     const markup = renderToStaticMarkup(createElement(AIThinkingOverlay));
     Object.assign(useGameStore.getInitialState(), { aiThinking: false });
-    expect(markup).toContain('role="status"');
-    expect(markup).toContain('aria-live="polite"');
+    expect(markup.match(/aria-live=/g)?.length ?? 0).toBe(0);
+    expect(markup.match(/role="status"/g)?.length ?? 0).toBe(0);
+    expect(markup).toContain('role="group"');
     expect(markup).toContain('aria-label="AI progress"');
-    expect(markup.match(/aria-live=/g)?.length).toBe(1);
+    expect(markup).toContain("0:30");
+    expect(markup).toContain("backend found a legal rescue; repairing");
     expect(markup).not.toContain('role="dialog"');
     expect(markup).not.toContain("aria-modal");
   });
+});
 
-  it("source-checks every non-exported toast branch as polite status, never dialog", () => {
+describe("AC-NO-TOAST-LIVE toast overlay is not a live region", () => {
+  it("source-checks every non-exported toast branch as neither live nor dialog", () => {
     const source = readFileSync(
       new URL("../../app/game/[id]/page.tsx", import.meta.url),
       "utf8",
@@ -368,10 +454,84 @@ describe("AC-STATUS-NOT-DIALOG status markup", () => {
       source.indexOf("function ToastOverlay"),
       source.indexOf("function AIBlockerOverlay"),
     );
-    expect(toast.match(/role="status"/g)?.length).toBe(6);
-    expect(toast.match(/aria-live="polite"/g)?.length).toBe(6);
+    expect(toast.match(/role="status"/g)?.length ?? 0).toBe(0);
+    expect(toast.match(/aria-live="polite"/g)?.length ?? 0).toBe(0);
     expect(toast).not.toContain('role="dialog"');
     expect(toast).not.toContain("aria-modal");
+  });
+});
+
+function collectProductSource(dir: string, acc: string[] = []): string[] {
+  for (const name of readdirSync(dir)) {
+    const path = join(dir, name);
+    if (statSync(path).isDirectory()) {
+      collectProductSource(path, acc);
+      continue;
+    }
+    if (!/\.(ts|tsx)$/.test(name) || /\.test\.(ts|tsx)$/.test(name)) continue;
+    acc.push(path);
+  }
+  return acc;
+}
+
+describe("AC-ONE-LIVE-REGION one persistent announcer in product source", () => {
+  it("finds aria-live and role=status exactly once across frontend/src excluding tests", () => {
+    const srcRoot = fileURLToPath(new URL("../../", import.meta.url));
+    let live = 0;
+    let status = 0;
+    for (const path of collectProductSource(srcRoot)) {
+      const text = readFileSync(path, "utf8");
+      live += text.match(/aria-live/g)?.length ?? 0;
+      status += text.match(/role="status"/g)?.length ?? 0;
+    }
+    expect(live).toBe(1);
+    expect(status).toBe(1);
+  });
+});
+
+describe("AC-RACK-ROLE draggable rack tile keeps a role with its name", () => {
+  function renderRack(extra: Record<string, unknown>) {
+    Object.assign(useGameStore.getInitialState(), {
+      startingRack: ["A"],
+      pendingTiles: [],
+      exchangeMode: false,
+      exchangeSelected: new Set(),
+      ...extra,
+    });
+    const tile = createElement(TileRack, { dragEnabled: true });
+    try {
+      return renderToStaticMarkup(tile);
+    } catch {
+      return renderToStaticMarkup(createElement(DndContext, null, tile));
+    }
+  }
+
+  it("emits a role alongside aria-label in exchange mode and when interaction is disabled", () => {
+    let markup: string;
+    try {
+      markup = renderRack({ exchangeMode: true });
+    } catch (error) {
+      const source = readFileSync(
+        new URL("../../components/tiles/TileRack.tsx", import.meta.url),
+        "utf8",
+      );
+      const draggable = source.slice(
+        source.indexOf("function DraggableTile"),
+        source.indexOf("function TapSelectableTile"),
+      );
+      expect(draggable).toContain("{...attributes}");
+      expect(draggable).toContain("tabIndex={selectEnabled ? 0 : -1}");
+      expect(String(error)).toMatch(/./);
+      return;
+    }
+    expect(markup).toContain("aria-label=");
+    expect(markup).toMatch(/role="/);
+    markup = renderRack({
+      exchangeMode: false,
+      gameState: null,
+    });
+    expect(markup).toContain("aria-label=");
+    expect(markup).toMatch(/role="/);
   });
 });
 

@@ -43,7 +43,9 @@ function DraggableTile({
   return (
     <motion.div
       ref={setNodeRef}
-      {...(isExchangeMode || interactionDisabled || !dragEnabled ? {} : { ...listeners, ...attributes })}
+      {...attributes}
+      {...(isExchangeMode || interactionDisabled || !dragEnabled ? {} : listeners)}
+      tabIndex={selectEnabled ? 0 : -1}
       layout="position"
       initial={{ scale: 0, y: 20 }}
       animate={{ scale: 1, y: 0 }}

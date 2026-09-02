@@ -28,6 +28,7 @@ import { ChatPanel } from "@/components/game/ChatPanel";
 import { ProfileModal } from "@/components/game/ProfileModal";
 import { GameHistoryModal } from "@/components/game/GameHistoryModal";
 import { TurnStatusNotice } from "@/components/game/TurnStatusNotice";
+import { composeAnnouncement, LiveAnnouncer } from "@/components/game/LiveAnnouncer";
 import { useGameStore, type BoardTheme } from "@/hooks/useGameStore";
 import { useIsCoarsePointer } from "@/hooks/useIsCoarsePointer";
 import {
@@ -192,8 +193,6 @@ function ToastOverlay({ toast, onDone }: { toast: Toast; onDone: () => void }) {
   if (toast.type === "invalid_word") {
     return (
       <motion.div
-        role="status"
-        aria-live="polite"
         aria-label={t("a11y.status.turn")}
         initial={{ opacity: 0, scale: 0.7, y: 40 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -247,8 +246,6 @@ function ToastOverlay({ toast, onDone }: { toast: Toast; onDone: () => void }) {
   if (toast.type === "placement_error") {
     return (
       <motion.div
-        role="status"
-        aria-live="polite"
         aria-label={t("a11y.status.turn")}
         initial={{ opacity: 0, scale: 0.7, y: 40 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -285,8 +282,6 @@ function ToastOverlay({ toast, onDone }: { toast: Toast; onDone: () => void }) {
   if (toast.type === "ai_pass") {
     return (
       <motion.div
-        role="status"
-        aria-live="polite"
         aria-label={t("a11y.status.turn")}
         initial={{ opacity: 0, scale: 0.7 }}
         animate={{ opacity: 1, scale: 1 }}
@@ -324,8 +319,6 @@ function ToastOverlay({ toast, onDone }: { toast: Toast; onDone: () => void }) {
   if (toast.type === "ai_played") {
     return (
       <motion.div
-        role="status"
-        aria-live="polite"
         aria-label={t("a11y.status.turn")}
         initial={{ opacity: 0, y: 30, scale: 0.9 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -366,8 +359,6 @@ function ToastOverlay({ toast, onDone }: { toast: Toast; onDone: () => void }) {
   if (toast.type === "success") {
     return (
       <motion.div
-        role="status"
-        aria-live="polite"
         aria-label={t("a11y.status.turn")}
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -381,8 +372,6 @@ function ToastOverlay({ toast, onDone }: { toast: Toast; onDone: () => void }) {
 
   return (
     <motion.div
-      role="status"
-      aria-live="polite"
       aria-label={t("a11y.status.turn")}
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
@@ -1476,6 +1465,14 @@ export default function GamePage() {
     }
     return { text: t("game.status.waitingForAi"), tone: "waiting" as const };
   }, [aiThinking, exchangeMode, gameState, isMyTurn, opponentSlotInfo?.username, showAIPrompt, t, tf]);
+  const announcement = useMemo(
+    () =>
+      composeAnnouncement({
+        toastMessage: toast?.message,
+        turnStatusText: turnStatus.text,
+      }),
+    [toast?.message, turnStatus.text],
+  );
   const frameBorderColor = THEME_FRAME_BORDER[boardTheme];
   const activeHeaderModelName = useMemo(() => {
     if (gameState?.game_mode === "vs_human") {
@@ -1689,6 +1686,7 @@ export default function GamePage() {
 
       {gameState?.game_mode === "vs_ai" && <AIThinkingOverlay />}
       <BlankPicker onSelect={handleBlankSelect} />
+      <LiveAnnouncer message={announcement} />
       <DragOverlay
         adjustScale={false}
         dropAnimation={{
