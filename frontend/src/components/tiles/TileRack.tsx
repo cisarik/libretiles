@@ -5,6 +5,7 @@ import { useDraggable } from "@dnd-kit/core";
 import { motion, AnimatePresence } from "framer-motion";
 import { Tile } from "./Tile";
 import { useGameStore } from "@/hooks/useGameStore";
+import { useT } from "@/lib/i18n";
 import { isPlausibleRack } from "@/lib/rack";
 
 const MOBILE_TAP_MOVE_TOLERANCE = 10;
@@ -177,6 +178,7 @@ export function TileRack({
   const exchangeSelected = useGameStore((s) => s.exchangeSelected);
   const toggleExchangeSelection = useGameStore((s) => s.toggleExchangeSelection);
   const pendingTiles = useGameStore((s) => s.pendingTiles);
+  const { t } = useT();
 
   const fullRack = useMemo(() => {
     const alphabet = gameState?.alphabet;
@@ -252,7 +254,7 @@ export function TileRack({
         ))}
       </AnimatePresence>
       {visibleRack.length === 0 && (
-        <span className="text-stone-500 text-sm italic">No tiles on rack</span>
+        <span className="text-stone-500 text-sm italic">{t("rack.empty")}</span>
       )}
     </div>
   );

@@ -141,3 +141,27 @@ Login 401 must not distinguish an unknown user from a wrong password.
 | draw.reason.blankAi | The AI drew the blank. | Žolíka vytiahlo AI. |
 | draw.reason.bothBlank | Both tiles are blanks, so you start. | Obidve písmená sú žolíky, takže začínaš ty. |
 | draw.reason.closer (fn) | {winner} is closer to A than {loser}. | {winner} je bližšie k A ako {loser}. |
+
+## Turn chrome
+
+| Key | English | Slovak |
+|---|---|---|
+| controls.play | Play | Zahrať |
+| controls.pass | Pass | Vynechať |
+| controls.exchange | Exchange | Vymeniť |
+| controls.confirmExchange | Confirm exchange | Potvrdiť výmenu |
+| controls.cancel | Cancel | Zrušiť |
+| controls.tilesSelected (fn) | {n} tile(s) selected | Výber: {n} písmeno/písmená/písmen |
+| board.pts | PTS | b. |
+| board.pinchToZoom | Pinch to zoom | Zoom dvoma prstami |
+| board.dragToPan | Drag to pan | Posuň ťahaním |
+| board.hide | Hide | Skryť |
+| board.reset | Reset | Reset |
+| rack.empty | No tiles on rack | Zásobník je prázdny |
+| blank.chooseLetter | Choose a letter for blank tile | Vyber písmeno pre žolíka |
+| chat.title | Game Chat | Chat partie |
+| chat.empty | No messages yet. | Ešte žiadne správy. |
+| chat.you | You | Ty |
+| chat.unavailable | Chat unavailable | Chat je nedostupný |
+| chat.placeholder | Say something | Napíš niečo |
+| chat.send | Send | Poslať |

@@ -66,6 +66,24 @@ export const skText: Record<TextKey, string> = {
   "draw.reason.blankYou": "Tvoj žolík vyhráva ťah o poradie.",
   "draw.reason.blankAi": "Žolíka vytiahlo AI.",
   "draw.reason.bothBlank": "Obidve písmená sú žolíky, takže začínaš ty.",
+  "controls.play": "Zahrať",
+  "controls.pass": "Vynechať",
+  "controls.exchange": "Vymeniť",
+  "controls.confirmExchange": "Potvrdiť výmenu",
+  "controls.cancel": "Zrušiť",
+  "board.pts": "b.",
+  "board.pinchToZoom": "Zoom dvoma prstami",
+  "board.dragToPan": "Posuň ťahaním",
+  "board.hide": "Skryť",
+  "board.reset": "Reset",
+  "rack.empty": "Zásobník je prázdny",
+  "blank.chooseLetter": "Vyber písmeno pre žolíka",
+  "chat.title": "Chat partie",
+  "chat.empty": "Ešte žiadne správy.",
+  "chat.you": "Ty",
+  "chat.unavailable": "Chat je nedostupný",
+  "chat.placeholder": "Napíš niečo",
+  "chat.send": "Poslať",
 };
 
 export const skFn: { [K in FnKey]: (typeof enFn)[K] } = {
@@ -74,4 +92,6 @@ export const skFn: { [K in FnKey]: (typeof enFn)[K] } = {
     pluralSk(p.minutes, "minútu", "minúty", "minút") +
     ".",
   "draw.reason.closer": (p) => `${p.winner} je bližšie k A ako ${p.loser}.`,
+  "controls.tilesSelected": (p) =>
+    `Výber: ${p.count} ` + pluralSk(p.count, "písmeno", "písmená", "písmen"),
 };

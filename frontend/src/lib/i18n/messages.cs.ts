@@ -66,6 +66,24 @@ export const csText: Record<TextKey, string> = {
   "draw.reason.blankYou": "Tvůj žolík vyhrává losování.",
   "draw.reason.blankAi": "Žolíka vytáhlo AI.",
   "draw.reason.bothBlank": "Oba kameny jsou žolíci, takže začínáš ty.",
+  "controls.play": "Zahrát",
+  "controls.pass": "Vzdát tah",
+  "controls.exchange": "Vyměnit",
+  "controls.confirmExchange": "Potvrdit výměnu",
+  "controls.cancel": "Zrušit",
+  "board.pts": "b.",
+  "board.pinchToZoom": "Zoom dvěma prsty",
+  "board.dragToPan": "Posuň tažením",
+  "board.hide": "Skrýt",
+  "board.reset": "Reset",
+  "rack.empty": "Zásobník je prázdný",
+  "blank.chooseLetter": "Vyber písmeno pro žolíka",
+  "chat.title": "Chat partie",
+  "chat.empty": "Zatím žádné zprávy.",
+  "chat.you": "Ty",
+  "chat.unavailable": "Chat je nedostupný",
+  "chat.placeholder": "Napiš něco",
+  "chat.send": "Poslat",
 };
 
 export const csFn: { [K in FnKey]: (typeof enFn)[K] } = {
@@ -74,4 +92,6 @@ export const csFn: { [K in FnKey]: (typeof enFn)[K] } = {
     pluralCs(p.minutes, "minutu", "minuty", "minut") +
     ".",
   "draw.reason.closer": (p) => `${p.winner} je blíž k A než ${p.loser}.`,
+  "controls.tilesSelected": (p) =>
+    `Výběr: ${p.count} ` + pluralCs(p.count, "kámen", "kameny", "kamenů"),
 };

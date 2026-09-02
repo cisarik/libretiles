@@ -2,6 +2,7 @@
 
 import { LuxeHoverText } from "@/components/game/LuxeHoverText";
 import { useGameStore } from "@/hooks/useGameStore";
+import { useT } from "@/lib/i18n";
 import { PREMIUM_GOLD_TEXT_SHADOW_CLASS } from "@/lib/premiumSurface";
 
 interface GameControlsProps {
@@ -18,6 +19,7 @@ export function GameControls({ onPlay, onExchange, onPass, disabled }: GameContr
   const setExchangeMode = useGameStore((s) => s.setExchangeMode);
   const aiThinking = useGameStore((s) => s.aiThinking);
   const premiumLookEnabled = useGameStore((s) => s.premiumLookEnabled);
+  const { t, tf } = useT();
 
   const isDisabled = disabled || aiThinking;
   const hasPending = pendingTiles.length > 0;
@@ -42,7 +44,7 @@ export function GameControls({ onPlay, onExchange, onPass, disabled }: GameContr
             className={`${buttonBase} ${actionButtonBase} border-amber-300/22 bg-[linear-gradient(135deg,rgba(251,191,36,0.15),rgba(112,66,10,0.08))] shadow-[0_14px_30px_rgba(251,191,36,0.08)] hover:border-white/42 hover:bg-[linear-gradient(135deg,rgba(255,248,220,0.16),rgba(251,191,36,0.16),rgba(133,76,11,0.12))] hover:shadow-[0_16px_32px_rgba(255,255,255,0.06),0_0_24px_rgba(255,255,255,0.05)]`}
           >
             <LuxeHoverText className={`text-[1rem] font-black leading-none sm:text-[1.42rem] ${premiumTitleClass}`}>
-              Confirm exchange
+              {t("controls.confirmExchange")}
             </LuxeHoverText>
           </button>
           <button
@@ -50,7 +52,7 @@ export function GameControls({ onPlay, onExchange, onPass, disabled }: GameContr
             className={`${buttonBase} ${actionButtonBase} border-white/12 bg-white/6 hover:border-white/42 hover:bg-[linear-gradient(135deg,rgba(255,255,255,0.12),rgba(255,255,255,0.06))] hover:shadow-[0_16px_32px_rgba(255,255,255,0.06),0_0_24px_rgba(255,255,255,0.04)]`}
           >
             <LuxeHoverText className={`text-[1rem] font-black leading-none sm:text-[1.42rem] ${premiumTitleClass}`}>
-              Cancel
+              {t("controls.cancel")}
             </LuxeHoverText>
           </button>
         </div>
@@ -62,7 +64,7 @@ export function GameControls({ onPlay, onExchange, onPass, disabled }: GameContr
             className={`${buttonBase} ${actionButtonBase} border-amber-300/22 bg-[linear-gradient(135deg,rgba(251,191,36,0.15),rgba(112,66,10,0.08))] shadow-[0_14px_30px_rgba(251,191,36,0.08)] hover:border-white/42 hover:bg-[linear-gradient(135deg,rgba(255,248,220,0.16),rgba(251,191,36,0.16),rgba(133,76,11,0.12))] hover:shadow-[0_16px_32px_rgba(255,255,255,0.06),0_0_24px_rgba(255,255,255,0.05)]`}
           >
             <LuxeHoverText className={`text-[1.38rem] font-black leading-none sm:text-[1.46rem] ${premiumTitleClass}`}>
-              Confirm exchange
+              {t("controls.confirmExchange")}
             </LuxeHoverText>
           </button>
           <button
@@ -70,13 +72,13 @@ export function GameControls({ onPlay, onExchange, onPass, disabled }: GameContr
             className={`${buttonBase} ${actionButtonBase} border-white/12 bg-white/6 hover:border-white/42 hover:bg-[linear-gradient(135deg,rgba(255,255,255,0.12),rgba(255,255,255,0.06))] hover:shadow-[0_16px_32px_rgba(255,255,255,0.06),0_0_24px_rgba(255,255,255,0.04)]`}
           >
             <LuxeHoverText className={`text-[1.34rem] font-black leading-none sm:text-[1.42rem] ${premiumTitleClass}`}>
-              Cancel
+              {t("controls.cancel")}
             </LuxeHoverText>
           </button>
         </div>
 
         <div className="order-4 w-full text-center text-sm uppercase tracking-[0.16em] text-stone-400 lg:col-start-2 lg:row-start-3 lg:order-2 lg:self-center">
-          {exchangeSelected.size} tile{exchangeSelected.size !== 1 ? "s" : ""} selected
+          {tf("controls.tilesSelected", { count: exchangeSelected.size })}
         </div>
       </>
     );
@@ -91,7 +93,7 @@ export function GameControls({ onPlay, onExchange, onPass, disabled }: GameContr
           className={`${buttonBase} ${actionButtonBase} w-full border-amber-300/22 bg-[linear-gradient(135deg,rgba(251,191,36,0.15),rgba(112,66,10,0.08))] shadow-[0_14px_30px_rgba(251,191,36,0.08)] hover:border-white/42 hover:bg-[linear-gradient(135deg,rgba(255,248,220,0.16),rgba(251,191,36,0.16),rgba(133,76,11,0.12))] hover:shadow-[0_16px_32px_rgba(255,255,255,0.06),0_0_24px_rgba(255,255,255,0.05)]`}
         >
           <LuxeHoverText className={`text-[1.1rem] font-black leading-none sm:text-[1.48rem] ${premiumTitleClass}`}>
-            Exchange
+            {t("controls.exchange")}
           </LuxeHoverText>
         </button>
         <button
@@ -100,7 +102,7 @@ export function GameControls({ onPlay, onExchange, onPass, disabled }: GameContr
           className={`${buttonBase} ${actionButtonBase} w-full border-white/12 bg-white/6 hover:border-white/42 hover:bg-[linear-gradient(135deg,rgba(255,255,255,0.12),rgba(255,255,255,0.06))] hover:shadow-[0_16px_32px_rgba(255,255,255,0.06),0_0_24px_rgba(255,255,255,0.04)]`}
         >
           <LuxeHoverText className={`text-[1.1rem] font-black leading-none sm:text-[1.48rem] ${premiumTitleClass}`}>
-            Pass
+            {t("controls.pass")}
           </LuxeHoverText>
         </button>
         <div className={playShell}>
@@ -110,7 +112,7 @@ export function GameControls({ onPlay, onExchange, onPass, disabled }: GameContr
             className={`${playButton} w-full min-w-[5rem]`}
           >
             <span className={`text-[1.12rem] font-black leading-none tracking-[0.01em] text-white [text-shadow:0_2px_0_rgba(0,0,0,0.55)] sm:text-[1.52rem] ${premiumTitleClass}`}>
-              Play
+              {t("controls.play")}
             </span>
           </button>
         </div>
@@ -123,7 +125,7 @@ export function GameControls({ onPlay, onExchange, onPass, disabled }: GameContr
           className={`${buttonBase} ${actionButtonBase} border-amber-300/22 bg-[linear-gradient(135deg,rgba(251,191,36,0.15),rgba(112,66,10,0.08))] shadow-[0_14px_30px_rgba(251,191,36,0.08)] hover:border-white/42 hover:bg-[linear-gradient(135deg,rgba(255,248,220,0.16),rgba(251,191,36,0.16),rgba(133,76,11,0.12))] hover:shadow-[0_16px_32px_rgba(255,255,255,0.06),0_0_24px_rgba(255,255,255,0.05)]`}
         >
           <LuxeHoverText className={`text-[1.18rem] font-black leading-none sm:text-[1.48rem] ${premiumTitleClass}`}>
-            Exchange
+            {t("controls.exchange")}
           </LuxeHoverText>
         </button>
         <button
@@ -132,7 +134,7 @@ export function GameControls({ onPlay, onExchange, onPass, disabled }: GameContr
           className={`${buttonBase} ${actionButtonBase} border-white/12 bg-white/6 hover:border-white/42 hover:bg-[linear-gradient(135deg,rgba(255,255,255,0.12),rgba(255,255,255,0.06))] hover:shadow-[0_16px_32px_rgba(255,255,255,0.06),0_0_24px_rgba(255,255,255,0.04)]`}
         >
           <LuxeHoverText className={`text-[1.18rem] font-black leading-none sm:text-[1.48rem] ${premiumTitleClass}`}>
-            Pass
+            {t("controls.pass")}
           </LuxeHoverText>
         </button>
       </div>
@@ -145,7 +147,7 @@ export function GameControls({ onPlay, onExchange, onPass, disabled }: GameContr
             className={`${playButton} min-w-[5.8rem]`}
           >
             <span className={`text-[1.34rem] font-black leading-none tracking-[0.01em] text-white [text-shadow:0_2px_0_rgba(0,0,0,0.58)] sm:text-[1.52rem] ${premiumTitleClass}`}>
-              Play
+              {t("controls.play")}
             </span>
           </button>
         </div>

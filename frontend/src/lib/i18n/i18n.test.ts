@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { tf } from "./index";
+import { t, tf } from "./index";
 import {
   detectBrowserLocale,
   isLocale,
@@ -258,5 +258,103 @@ describe("AC-SEC message catalogs", () => {
     expect(plText["error.sessionExpired"]).not.toBe(
       plText["error.invalidCredentials"],
     );
+  });
+});
+
+describe("AC-TILES-4 controls.tilesSelected counted tile noun", () => {
+  const COUNTS = [0, 1, 2, 4, 5, 22, 25] as const;
+
+  it("renders English with a literal s suffix", () => {
+    const expected: Record<(typeof COUNTS)[number], string> = {
+      0: "0 tiles selected",
+      1: "1 tile selected",
+      2: "2 tiles selected",
+      4: "4 tiles selected",
+      5: "5 tiles selected",
+      22: "22 tiles selected",
+      25: "25 tiles selected",
+    };
+    for (const count of COUNTS) {
+      expect(tf("en", "controls.tilesSelected", { count })).toBe(expected[count]);
+    }
+  });
+
+  it("renders Slovak colon-label plus pluralSk tile noun", () => {
+    const expected: Record<(typeof COUNTS)[number], string> = {
+      0: "Výber: 0 písmen",
+      1: "Výber: 1 písmeno",
+      2: "Výber: 2 písmená",
+      4: "Výber: 4 písmená",
+      5: "Výber: 5 písmen",
+      22: "Výber: 22 písmen",
+      25: "Výber: 25 písmen",
+    };
+    for (const count of COUNTS) {
+      expect(tf("sk", "controls.tilesSelected", { count })).toBe(expected[count]);
+    }
+  });
+
+  it("renders Czech colon-label plus pluralCs kámen forms", () => {
+    const expected: Record<(typeof COUNTS)[number], string> = {
+      0: "Výběr: 0 kamenů",
+      1: "Výběr: 1 kámen",
+      2: "Výběr: 2 kameny",
+      4: "Výběr: 4 kameny",
+      5: "Výběr: 5 kamenů",
+      22: "Výběr: 22 kamenů",
+      25: "Výběr: 25 kamenů",
+    };
+    for (const count of COUNTS) {
+      expect(tf("cs", "controls.tilesSelected", { count })).toBe(expected[count]);
+    }
+  });
+
+  it("renders Polish colon-label plus pluralPl płytka forms", () => {
+    const expected: Record<(typeof COUNTS)[number], string> = {
+      0: "Wybrane: 0 płytek",
+      1: "Wybrane: 1 płytka",
+      2: "Wybrane: 2 płytki",
+      4: "Wybrane: 4 płytki",
+      5: "Wybrane: 5 płytek",
+      22: "Wybrane: 22 płytki",
+      25: "Wybrane: 25 płytek",
+    };
+    for (const count of COUNTS) {
+      expect(tf("pl", "controls.tilesSelected", { count })).toBe(expected[count]);
+    }
+  });
+});
+
+describe("AC-TILES-PL22 Polish 22 uses few, not Slovak many", () => {
+  it("diverges from pluralSk at count 22 in the same assertion", () => {
+    const sk22 = tf("sk", "controls.tilesSelected", { count: 22 });
+    const cs22 = tf("cs", "controls.tilesSelected", { count: 22 });
+    const pl22 = tf("pl", "controls.tilesSelected", { count: 22 });
+    expect(sk22).toBe("Výber: 22 písmen");
+    expect(cs22).toBe("Výběr: 22 kamenů");
+    expect(pl22).toBe("Wybrane: 22 płytki");
+    const pluralSkWouldHaveProduced = `Wybrane: 22 ${pluralSk(22, "płytka", "płytki", "płytek")}`;
+    expect(pluralSkWouldHaveProduced).toBe("Wybrane: 22 płytek");
+    expect(pl22).not.toBe(pluralSkWouldHaveProduced);
+  });
+});
+
+describe("AC-TERM-4 Czech tile vs letter and Polish płytk/literę", () => {
+  it("keeps Czech kámen on the counted tile and písmeno on the blank letter", () => {
+    for (const count of [0, 1, 2, 4, 5, 22, 25]) {
+      const rendered = tf("cs", "controls.tilesSelected", { count });
+      expect(rendered).toMatch(/kámen|kameny|kamenů/);
+      expect(rendered).not.toContain("písmeno");
+    }
+    expect(t("cs", "blank.chooseLetter")).toContain("písmeno");
+  });
+
+  it("keeps Polish płytk* on the counted tile and literę on the blank letter", () => {
+    for (const count of [0, 1, 2, 4, 5, 22, 25]) {
+      expect(tf("pl", "controls.tilesSelected", { count })).toMatch(
+        /płytka|płytki|płytek/,
+      );
+    }
+    expect(t("pl", "blank.chooseLetter")).toContain("literę");
   });
 });

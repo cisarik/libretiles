@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useT } from "@/lib/i18n";
 import type { ChatMessage } from "@/lib/types";
 
 interface ChatPanelProps {
@@ -11,6 +12,7 @@ interface ChatPanelProps {
 
 export function ChatPanel({ messages, disabled = false, onSend }: ChatPanelProps) {
   const [draft, setDraft] = useState("");
+  const { t } = useT();
 
   function submit() {
     const body = draft.trim();
@@ -22,12 +24,12 @@ export function ChatPanel({ messages, disabled = false, onSend }: ChatPanelProps
   return (
     <div className="rounded-[1.55rem] border border-white/8 bg-black p-4 shadow-[0_22px_52px_rgba(0,0,0,0.28)]">
       <div className="mb-3 text-[0.74rem] uppercase tracking-[0.34em] text-stone-500">
-        Game Chat
+        {t("chat.title")}
       </div>
       <div className="flex h-52 flex-col gap-2 overflow-y-auto rounded-[1.2rem] border border-white/8 bg-white/[0.03] p-3">
         {messages.length === 0 ? (
           <div className="flex h-full items-center justify-center text-sm text-stone-500">
-            No messages yet.
+            {t("chat.empty")}
           </div>
         ) : (
           messages.map((message) => (
@@ -40,7 +42,7 @@ export function ChatPanel({ messages, disabled = false, onSend }: ChatPanelProps
               }`}
             >
               <div className="mb-1 text-[0.68rem] uppercase tracking-[0.22em] text-stone-400">
-                {message.mine ? "You" : message.author_username}
+                {message.mine ? t("chat.you") : message.author_username}
               </div>
               <div>{message.body}</div>
             </div>
@@ -57,7 +59,7 @@ export function ChatPanel({ messages, disabled = false, onSend }: ChatPanelProps
               submit();
             }
           }}
-          placeholder={disabled ? "Chat unavailable" : "Say something"}
+          placeholder={disabled ? t("chat.unavailable") : t("chat.placeholder")}
           disabled={disabled}
           className="min-w-0 flex-1 rounded-full border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-stone-100 outline-none transition-colors placeholder:text-stone-500 focus:border-white/26 disabled:cursor-not-allowed disabled:opacity-50"
         />
@@ -66,7 +68,7 @@ export function ChatPanel({ messages, disabled = false, onSend }: ChatPanelProps
           disabled={disabled || draft.trim().length === 0}
           className="rounded-full border border-sky-300/28 bg-sky-500/12 px-4 py-3 text-sm font-semibold text-sky-100 transition-colors hover:border-white/36 hover:text-white disabled:cursor-not-allowed disabled:opacity-45"
         >
-          Send
+          {t("chat.send")}
         </button>
       </div>
     </div>

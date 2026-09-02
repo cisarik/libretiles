@@ -6,6 +6,7 @@ import { Cell } from "./Cell";
 import { useGameStore } from "@/hooks/useGameStore";
 import { useIsCoarsePointer } from "@/hooks/useIsCoarsePointer";
 import { usePremiumBoardLighting } from "@/hooks/usePremiumBoardLighting";
+import { useT } from "@/lib/i18n";
 
 interface BoardDragPreview {
   row: number;
@@ -111,6 +112,7 @@ export function Board({
   const [revealedMoveKey, setRevealedMoveKey] = useState<string | null>(null);
   const [zoomActive, setZoomActive] = useState(false);
   const [showZoomHint, setShowZoomHint] = useState(false);
+  const { t } = useT();
 
   usePremiumBoardLighting(boardRef, isDraggingTile || !boardShineEnabled || isCoarsePointer);
 
@@ -644,7 +646,7 @@ export function Board({
                       +{selectedPoints}
                     </span>
                     <span className="text-[0.96rem] font-black uppercase leading-none tracking-[0.12em] text-white sm:text-[1rem]">
-                      PTS
+                      {t("board.pts")}
                     </span>
                   </div>
                 </div>
@@ -660,15 +662,15 @@ export function Board({
         }`}
       >
         <div className="pointer-events-auto inline-flex max-w-full items-center gap-2 rounded-full border border-sky-300/18 bg-[linear-gradient(135deg,rgba(12,21,31,0.96),rgba(7,12,20,0.98))] px-3 py-1.5 text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-sky-100/84 shadow-[0_18px_34px_rgba(14,165,233,0.10)] backdrop-blur-sm">
-          <span>Pinch to zoom</span>
+          <span>{t("board.pinchToZoom")}</span>
           <span className="text-sky-100/30">•</span>
-          <span>Drag to pan</span>
+          <span>{t("board.dragToPan")}</span>
           <button
             type="button"
             onClick={dismissZoomHint}
             className="rounded-full border border-white/10 px-2 py-0.5 text-[0.62rem] tracking-[0.14em] text-sky-50/82 transition-colors hover:border-white/20 hover:text-white"
           >
-            Hide
+            {t("board.hide")}
           </button>
         </div>
       </div>
@@ -683,7 +685,7 @@ export function Board({
           onClick={resetBoardZoom}
           className="inline-flex items-center gap-2 rounded-full border border-amber-200/26 bg-[linear-gradient(135deg,rgba(17,20,23,0.96),rgba(8,10,12,0.98))] px-3 py-2 text-[0.74rem] font-black uppercase tracking-[0.18em] text-amber-100 shadow-[0_18px_38px_rgba(0,0,0,0.28)] backdrop-blur-sm transition-all hover:border-amber-100/38 hover:text-white"
         >
-          <span className="font-gold-shiny leading-none">Reset</span>
+          <span className="font-gold-shiny leading-none">{t("board.reset")}</span>
           <span className="text-white/34">zoom</span>
         </button>
       </div>

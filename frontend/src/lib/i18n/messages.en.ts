@@ -63,6 +63,24 @@ export const enText = {
   "draw.reason.blankYou": "Your blank wins the draw.",
   "draw.reason.blankAi": "The AI drew the blank.",
   "draw.reason.bothBlank": "Both tiles are blanks, so you start.",
+  "controls.play": "Play",
+  "controls.pass": "Pass",
+  "controls.exchange": "Exchange",
+  "controls.confirmExchange": "Confirm exchange",
+  "controls.cancel": "Cancel",
+  "board.pts": "PTS",
+  "board.pinchToZoom": "Pinch to zoom",
+  "board.dragToPan": "Drag to pan",
+  "board.hide": "Hide",
+  "board.reset": "Reset",
+  "rack.empty": "No tiles on rack",
+  "blank.chooseLetter": "Choose a letter for blank tile",
+  "chat.title": "Game Chat",
+  "chat.empty": "No messages yet.",
+  "chat.you": "You",
+  "chat.unavailable": "Chat unavailable",
+  "chat.placeholder": "Say something",
+  "chat.send": "Send",
 } as const;
 
 export const enFn = {
@@ -70,6 +88,8 @@ export const enFn = {
     `Too many requests. Try again in about ${p.minutes} minutes.`,
   "draw.reason.closer": (p: { winner: string; loser: string }) =>
     `${p.winner} is closer to A than ${p.loser}.`,
+  "controls.tilesSelected": (p: { count: number }) =>
+    `${p.count} tile${p.count !== 1 ? "s" : ""} selected`,
 } as const;
 
 export type TextKey = keyof typeof enText;

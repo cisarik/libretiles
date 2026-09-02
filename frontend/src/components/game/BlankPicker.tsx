@@ -2,6 +2,7 @@
 
 import { motion, AnimatePresence } from "framer-motion";
 import { useGameStore } from "@/hooks/useGameStore";
+import { useT } from "@/lib/i18n";
 
 const ENGLISH_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
 
@@ -13,6 +14,7 @@ export function BlankPicker({ onSelect }: BlankPickerProps) {
   const isOpen = useGameStore((s) => s.blankPickerOpen);
   const closeBlankPicker = useGameStore((s) => s.closeBlankPicker);
   const alphabet = useGameStore((s) => s.gameState?.alphabet);
+  const { t } = useT();
   const letters =
     alphabet && alphabet.length > 0
       ? alphabet.filter((letter) => letter !== "?")
@@ -37,7 +39,7 @@ export function BlankPicker({ onSelect }: BlankPickerProps) {
             className="max-w-[min(92vw,28rem)] bg-stone-800/95 backdrop-blur-md rounded-2xl p-6 shadow-2xl shadow-black/50 border border-stone-700/50"
           >
             <h3 className="text-center text-stone-300 font-semibold mb-4">
-              Choose a letter for blank tile
+              {t("blank.chooseLetter")}
             </h3>
             <div className="grid grid-cols-7 gap-1.5 sm:gap-2">
               {letters.map((letter) => (

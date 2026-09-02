@@ -67,6 +67,24 @@ export const plText: Record<TextKey, string> = {
   "draw.reason.blankYou": "Twój blank wygrywa losowanie.",
   "draw.reason.blankAi": "Blanka ma AI.",
   "draw.reason.bothBlank": "Obie płytki to blanki, więc zaczynasz ty.",
+  "controls.play": "Zagraj",
+  "controls.pass": "Pauza",
+  "controls.exchange": "Wymiana",
+  "controls.confirmExchange": "Potwierdź wymianę",
+  "controls.cancel": "Anuluj",
+  "board.pts": "pkt",
+  "board.pinchToZoom": "Zoom dwoma palcami",
+  "board.dragToPan": "Przesuń palcem",
+  "board.hide": "Ukryj",
+  "board.reset": "Reset",
+  "rack.empty": "Stojak jest pusty",
+  "blank.chooseLetter": "Wybierz literę dla blanka",
+  "chat.title": "Chat partii",
+  "chat.empty": "Jeszcze brak wiadomości.",
+  "chat.you": "Ty",
+  "chat.unavailable": "Chat niedostępny",
+  "chat.placeholder": "Napisz coś",
+  "chat.send": "Wyślij",
 };
 
 export const plFn: { [K in FnKey]: (typeof enFn)[K] } = {
@@ -75,4 +93,6 @@ export const plFn: { [K in FnKey]: (typeof enFn)[K] } = {
     pluralPl(p.minutes, "minutę", "minuty", "minut") +
     ".",
   "draw.reason.closer": (p) => `${p.winner} jest bliżej A niż ${p.loser}.`,
+  "controls.tilesSelected": (p) =>
+    `Wybrane: ${p.count} ` + pluralPl(p.count, "płytka", "płytki", "płytek"),
 };
