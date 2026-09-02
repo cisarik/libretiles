@@ -1,16 +1,12 @@
-import { useEffect } from "react";
-import {
-  adoptBrowserLocaleIfUnset,
-  useGameStore,
-} from "@/hooks/useGameStore";
+import { useGameStore } from "@/hooks/useGameStore";
+import { useServerLocale } from "./LocaleProvider";
 import {
   DEFAULT_LOCALE,
-  detectBrowserLocale,
   isLocale,
   type Locale,
 } from "./locales";
-import { enFn, enText, type FnKey, type TextKey } from "./messages.en";
-import { skFn, skText } from "./messages.sk";
+import { enFn, type FnKey, type TextKey } from "./messages.en";
+import { t, tf } from "./translate";
 
 export type { FnKey, TextKey } from "./messages.en";
 export type { Locale } from "./locales";
@@ -21,56 +17,17 @@ export {
   LOCALE_COOKIE_NAME,
   LOCALES,
   localeFromCookieValue,
+  localeSyncDecision,
+  writeLocaleCookie,
 } from "./locales";
-export { pluralEn, pluralSk } from "./plural";
-
-function browserLanguages(): readonly string[] {
-  if (typeof navigator === "undefined") return [];
-  if (navigator.languages && navigator.languages.length > 0) {
-    return Array.from(navigator.languages);
-  }
-  return navigator.language ? [navigator.language] : [];
-}
-
-export function t(locale: Locale, key: TextKey): string {
-  return (locale === "sk" ? skText : enText)[key];
-}
-
-export function tf<K extends FnKey>(
-  locale: Locale,
-  key: K,
-  params: Parameters<(typeof enFn)[K]>[0],
-): string {
-  // The PUBLIC signature above is what gives callers exact per-key parameter
-  // checking, and it must not be weakened. Inside, indexing a table of
-  // differently-parameterised functions by a generic key yields a UNION of
-  // function types, and calling a union requires the INTERSECTION of its
-  // parameter types. That is unsatisfiable once two keys take different
-  // parameters. The variance is confined to this one cast; `skFn` is already
-  // pinned to `enFn`'s exact signatures by its mapped type in messages.sk.ts,
-  // so the cast cannot hide a genuine mismatch between the two catalogs.
-  const table = locale === "sk" ? skFn : enFn;
-  const fn = table[key] as (p: Parameters<(typeof enFn)[K]>[0]) => string;
-  return fn(params);
-}
+export { t, tf } from "./translate";
+export { pluralCs, pluralEn, pluralPl, pluralSk } from "./plural";
 
 export function useLocale(): Locale {
+  const server = useServerLocale();
   const stored = useGameStore((s) => s.uiLocale);
-
-  useEffect(() => {
-    const apply = () => {
-      adoptBrowserLocaleIfUnset(browserLanguages());
-    };
-    if (useGameStore.persist.hasHydrated()) {
-      apply();
-      return;
-    }
-    return useGameStore.persist.onFinishHydration(apply);
-  }, []);
-
-  if (isLocale(stored)) return stored;
-  if (typeof navigator === "undefined") return DEFAULT_LOCALE;
-  return detectBrowserLocale(browserLanguages());
+  if (server) return server;
+  return isLocale(stored) ? stored : DEFAULT_LOCALE;
 }
 
 export function useT(): {

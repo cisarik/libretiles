@@ -3,7 +3,7 @@ import { persist, createJSONStorage } from "zustand/middleware";
 import {
   detectBrowserLocale,
   isLocale,
-  LOCALE_COOKIE_NAME,
+  writeLocaleCookie,
   type Locale,
 } from "@/lib/i18n/locales";
 import type {
@@ -147,9 +147,7 @@ export const useGameStore = create<GameStore>()(
 
       uiLocale: null,
       setUiLocale: (locale) => {
-        if (typeof document !== "undefined") {
-          document.cookie = `${LOCALE_COOKIE_NAME}=${locale}; Path=/; Max-Age=31536000; SameSite=Lax`;
-        }
+        writeLocaleCookie(locale);
         set({ uiLocale: locale });
       },
 

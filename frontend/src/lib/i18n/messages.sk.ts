@@ -42,8 +42,10 @@ export const skText: Record<TextKey, string> = {
   "settings.uiLanguage.title": "Jazyk rozhrania",
   "settings.uiLanguage.description":
     "Menu, tlačidlá a správy. Zmena platí okamžite a len na tomto zariadení.",
-  "settings.uiLanguage.en": "Angličtina",
+  "settings.uiLanguage.en": "English",
   "settings.uiLanguage.sk": "Slovenčina",
+  "settings.uiLanguage.cs": "Čeština",
+  "settings.uiLanguage.pl": "Polski",
   "settings.gameVariant.title": "Variant hry",
   "settings.gameVariant.description":
     "Písmená, vrecko a lexikón. Platí pre NOVÉ partie a nemení prebiehajúcu partiu. Toto nie je jazyk rozhrania.",

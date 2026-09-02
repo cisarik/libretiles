@@ -1,12 +1,19 @@
 # Libre Tiles interface-language glossary
 
 Project rules for later localization slices. English is the default locale and
-the shape-defining catalog. No new runtime i18n dependency: missing Slovak keys
-are TypeScript errors.
+the shape-defining catalog. No new runtime i18n dependency: a missing key in
+any of `en` / `sk` / `cs` / `pl` is a TypeScript error.
 
-## D2 — Informal Slovak register
+Interface-language names (`settings.uiLanguage.*`) are **endonyms**, identical
+in every catalog (`English`, `Slovenčina`, `Čeština`, `Polski`), so a user who
+cannot read the current UI can still find their own language. Game-variant
+names remain translated exonyms.
 
-Slovak copy uses informal **ty** (tykanie), never **vy**.
+## D2 — Informal Slavic register
+
+Slovak, Czech, and Polish copy uses informal 2nd person singular (`ty` /
+tykanie; Czech `ty`; Polish 2nd person singular). Never `Vy` / `Pan` /
+`Państwo`.
 
 - Correct: `Tvoj ťah`, `Prihlás sa znova`, `Skús to znova.`
 - Incorrect: `Váš ťah`, `Prihláste sa znova.`
@@ -15,30 +22,51 @@ This applies to error messages as well as chrome.
 
 ## D6 — Fixed game terminology
 
-| English | Slovak | Notes |
-|---|---|---|
-| tile | písmeno | Never kameň, never dlaždica |
-| rack | zásobník | |
-| blank | žolík | |
+Czech deliberately differs from Slovak on the tile: Czech uses `kámen` for the
+tile and reserves `písmeno` for the letter, per the Česká asociace Scrabble
+rules. Do not harmonize Czech to Slovak.
 
-Do not translate these terms; keep them in English in both catalogs:
+| | tile | letter | rack | blank | bag | board | pass | points |
+|---|---|---|---|---|---|---|---|---|
+| en | tile | letter | rack | blank | bag | board | Pass | pts |
+| sk | písmeno | písmeno | zásobník | žolík | vrecko | hracia plocha | Vynechať | b. |
+| cs | kámen | písmeno | zásobník | žolík | sáček | hrací deska | Vzdát tah | b. |
+| pl | płytka | litera | stojak | blank | woreczek | plansza | Pauza | pkt |
+
+Polish `pass` is `Pauza`. The word `pas` does not appear in the Polska
+Federacja Scrabble regulations at all.
+
+Sources, retrieved 2026-09-02:
+
+- Polska Federacja Scrabble regulations: https://pfs.org.pl/regulaminy.php
+- Česká asociace Scrabble rules: https://scrabble.hrejsi.cz/pravidla
+
+Do not translate these terms; keep them in English in every catalog:
 
 `provider`, `model`, `prompt`, `fallback`, `token`, `chat`, `API`
 
 ## D7 — Counted nouns
 
-Slovak has three plural forms. This codebase must not use a one-character `s`
-suffix for counts. Every counted noun goes through `pluralSk`:
+Slovak and Czech share the integer rule `1 / 2..4 / otherwise`. Polish keys on
+the last digit with a 12–14 exception, so `pluralSk` is wrong for Polish at
+22, 23, 24, 122, 123, 124. Named helpers: `pluralEn`, `pluralSk`, `pluralCs`
+(= `pluralSk`, deliberately), `pluralPl`. Do not fold them into one
+table-driven function.
 
-| Form | Rule | Example (`minúta`) |
-|---|---|---|
-| one | `\|trunc(n)\| === 1` | minútu |
-| few | `\|trunc(n)\|` in 2..4 | minúty |
-| many | otherwise, including 0 | minút |
+| n | sk | cs | pl |
+|---|---|---|---|
+| 1 | minútu | minutu | minutę |
+| 2, 3, 4 | minúty | minuty | minuty |
+| 5 .. 21 | minút | minut | minut |
+| 22, 23, 24 | minút | minut | minuty |
+| 122 .. 124 | minút | minut | minuty |
+
+This codebase must not use a one-character `s` suffix for counts.
 
 English counted nouns use `pluralEn` (`one` / `other`).
 
-Slovak thousands separator is a non-breaking space (U+00A0): `279 496`.
+Slovak, Czech, and Polish thousands separator is a non-breaking space (U+00A0):
+`279 496`.
 
 ## Landing and auth
 
@@ -92,8 +120,10 @@ Login 401 must not distinguish an unknown user from a wrong password.
 |---|---|---|
 | settings.uiLanguage.title | Interface language | Jazyk rozhrania |
 | settings.uiLanguage.description | Menus, buttons, and messages. Changes immediately, on this device only. | Menu, tlačidlá a správy. Zmena platí okamžite a len na tomto zariadení. |
-| settings.uiLanguage.en | English | Angličtina |
-| settings.uiLanguage.sk | Slovak | Slovenčina |
+| settings.uiLanguage.en | English | English |
+| settings.uiLanguage.sk | Slovenčina | Slovenčina |
+| settings.uiLanguage.cs | Čeština | Čeština |
+| settings.uiLanguage.pl | Polski | Polski |
 | settings.gameVariant.title | Game variant | Variant hry |
 | settings.gameVariant.description | Tiles, bag, and lexicon. Applies to NEW games only and never changes a running game. This is not the interface language. | Písmená, vrecko a lexikón. Platí pre NOVÉ partie a nemení prebiehajúcu partiu. Toto nie je jazyk rozhrania. |
 | settings.gameVariant.english | English | Angličtina |

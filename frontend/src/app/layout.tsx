@@ -5,8 +5,8 @@ import {
   localeFromCookieValue,
   type Locale,
 } from "@/lib/i18n/locales";
-import { enText } from "@/lib/i18n/messages.en";
-import { skText } from "@/lib/i18n/messages.sk";
+import { LocaleProvider } from "@/lib/i18n/LocaleProvider";
+import { t } from "@/lib/i18n/translate";
 import "./globals.css";
 
 async function readUiLocale(): Promise<Locale> {
@@ -14,16 +14,11 @@ async function readUiLocale(): Promise<Locale> {
   return localeFromCookieValue(cookieStore.get(LOCALE_COOKIE_NAME)?.value);
 }
 
-function textFor(locale: Locale) {
-  return locale === "sk" ? skText : enText;
-}
-
 export async function generateMetadata(): Promise<Metadata> {
   const locale = await readUiLocale();
-  const text = textFor(locale);
   return {
-    title: text["meta.title"],
-    description: text["meta.description"],
+    title: t(locale, "meta.title"),
+    description: t(locale, "meta.description"),
   };
 }
 
@@ -36,7 +31,7 @@ export default async function RootLayout({
   return (
     <html lang={locale} className="dark">
       <body className="antialiased">
-        {children}
+        <LocaleProvider value={locale}>{children}</LocaleProvider>
       </body>
     </html>
   );

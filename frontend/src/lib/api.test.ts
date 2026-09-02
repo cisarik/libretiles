@@ -160,7 +160,12 @@ describe("api.logout", () => {
 const ENUMERATION_FRAGMENTS = [
   "neexistuje",
   "nenájden",
+  "nenalezen",
+  "nie istnieje",
+  "nie znaleziono",
   "nesprávne heslo",
+  "nesprávné heslo",
+  "błędne hasło",
   "wrong password",
   "unknown user",
 ];
@@ -170,8 +175,14 @@ describe("AC-SEC localized 401 messages", () => {
     useGameStore.setState(useGameStore.getInitialState(), true);
   });
 
-  it("AC-SEC-1: tokenless 401 is identical whether or not the username exists, in both locales", async () => {
-    for (const locale of ["en", "sk"] as const) {
+  it("AC-SEC-1: tokenless 401 is identical whether or not the username exists, in all four locales", async () => {
+    const loginByLocale = {
+      en: "Invalid username or password",
+      sk: "Nesprávne používateľské meno alebo heslo",
+      cs: "Nesprávné uživatelské jméno nebo heslo",
+      pl: "Nieprawidłowa nazwa użytkownika lub hasło",
+    } as const;
+    for (const locale of ["en", "sk", "cs", "pl"] as const) {
       useGameStore.setState({ uiLocale: locale });
       const bodies = [
         { detail: "No active account found." },
@@ -192,27 +203,27 @@ describe("AC-SEC localized 401 messages", () => {
         }
       }
       expect(messages[0]).toBe(messages[1]);
-      if (locale === "en") {
-        expect(messages[0]).toBe("Invalid username or password");
-      } else {
-        expect(messages[0]).toBe("Nesprávne používateľské meno alebo heslo");
-        for (const fragment of ENUMERATION_FRAGMENTS) {
-          expect(messages[0].toLowerCase()).not.toContain(fragment);
-        }
+      expect(messages[0]).toBe(loginByLocale[locale]);
+      for (const fragment of ENUMERATION_FRAGMENTS) {
+        expect(messages[0].toLowerCase()).not.toContain(fragment);
       }
     }
   });
 
-  it("AC-SEC-2: token-bearing 401 is session-expired wording in both locales", async () => {
-    const loginByLocale: Record<"en" | "sk", string> = {
+  it("AC-SEC-2: token-bearing 401 is session-expired wording in all four locales", async () => {
+    const loginByLocale = {
       en: "Invalid username or password",
       sk: "Nesprávne používateľské meno alebo heslo",
-    };
-    const expiredByLocale: Record<"en" | "sk", string> = {
+      cs: "Nesprávné uživatelské jméno nebo heslo",
+      pl: "Nieprawidłowa nazwa użytkownika lub hasło",
+    } as const;
+    const expiredByLocale = {
       en: "Your session expired. Please sign in again.",
       sk: "Prihlásenie vypršalo. Prihlás sa znova.",
-    };
-    for (const locale of ["en", "sk"] as const) {
+      cs: "Přihlášení vypršelo. Přihlas se znovu.",
+      pl: "Sesja wygasła. Zaloguj się ponownie.",
+    } as const;
+    for (const locale of ["en", "sk", "cs", "pl"] as const) {
       useGameStore.setState({ uiLocale: locale });
       vi.stubGlobal(
         "fetch",

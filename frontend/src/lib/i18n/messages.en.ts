@@ -37,8 +37,13 @@ export const enText = {
   "settings.uiLanguage.title": "Interface language",
   "settings.uiLanguage.description":
     "Menus, buttons, and messages. Changes immediately, on this device only.",
+  // Interface-language names are endonyms, identical in every catalog, so a
+  // user who accidentally selected a language they cannot read can still find
+  // their own language. Do not translate these four strings back into exonyms.
   "settings.uiLanguage.en": "English",
-  "settings.uiLanguage.sk": "Slovak",
+  "settings.uiLanguage.sk": "Slovenčina",
+  "settings.uiLanguage.cs": "Čeština",
+  "settings.uiLanguage.pl": "Polski",
   "settings.gameVariant.title": "Game variant",
   "settings.gameVariant.description":
     "Tiles, bag, and lexicon. Applies to NEW games only and never changes a running game. This is not the interface language.",

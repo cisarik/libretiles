@@ -320,12 +320,15 @@ function InterfaceLanguagePanel() {
   const { t } = useT();
   const locale = useLocale();
   const setUiLocale = useGameStore((s) => s.setUiLocale);
+  const router = useRouter();
   const choices: Array<{
     value: Locale;
     label: string;
   }> = [
     { value: "en", label: t("settings.uiLanguage.en") },
     { value: "sk", label: t("settings.uiLanguage.sk") },
+    { value: "cs", label: t("settings.uiLanguage.cs") },
+    { value: "pl", label: t("settings.uiLanguage.pl") },
   ];
 
   return (
@@ -344,7 +347,10 @@ function InterfaceLanguagePanel() {
               whileHover={{ y: -1.5, scale: 1.01 }}
               whileTap={{ scale: 0.985 }}
               aria-pressed={isSelected}
-              onClick={() => setUiLocale(choice.value)}
+              onClick={() => {
+                setUiLocale(choice.value);
+                router.refresh();
+              }}
               className={`min-h-[96px] rounded-[1.15rem] border px-4 py-4 text-left transition-[border-color,box-shadow,background-color,transform] duration-300 ${
                 isSelected
                   ? "border-amber-300/45 bg-amber-400/10 shadow-[0_12px_30px_rgba(251,191,36,0.10)]"
