@@ -193,7 +193,6 @@ function ToastOverlay({ toast, onDone }: { toast: Toast; onDone: () => void }) {
   if (toast.type === "invalid_word") {
     return (
       <motion.div
-        aria-label={t("a11y.status.turn")}
         initial={{ opacity: 0, scale: 0.7, y: 40 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.8, y: -20 }}
@@ -246,7 +245,6 @@ function ToastOverlay({ toast, onDone }: { toast: Toast; onDone: () => void }) {
   if (toast.type === "placement_error") {
     return (
       <motion.div
-        aria-label={t("a11y.status.turn")}
         initial={{ opacity: 0, scale: 0.7, y: 40 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.8, y: -20 }}
@@ -282,7 +280,6 @@ function ToastOverlay({ toast, onDone }: { toast: Toast; onDone: () => void }) {
   if (toast.type === "ai_pass") {
     return (
       <motion.div
-        aria-label={t("a11y.status.turn")}
         initial={{ opacity: 0, scale: 0.7 }}
         animate={{ opacity: 1, scale: 1 }}
         exit={{ opacity: 0, scale: 0.7 }}
@@ -319,7 +316,6 @@ function ToastOverlay({ toast, onDone }: { toast: Toast; onDone: () => void }) {
   if (toast.type === "ai_played") {
     return (
       <motion.div
-        aria-label={t("a11y.status.turn")}
         initial={{ opacity: 0, y: 30, scale: 0.9 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         exit={{ opacity: 0, y: -20 }}
@@ -359,7 +355,6 @@ function ToastOverlay({ toast, onDone }: { toast: Toast; onDone: () => void }) {
   if (toast.type === "success") {
     return (
       <motion.div
-        aria-label={t("a11y.status.turn")}
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0, y: -20 }}
@@ -372,7 +367,6 @@ function ToastOverlay({ toast, onDone }: { toast: Toast; onDone: () => void }) {
 
   return (
     <motion.div
-      aria-label={t("a11y.status.turn")}
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -20 }}

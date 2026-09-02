@@ -445,7 +445,7 @@ describe("AC-NO-OVERLAY-LIVE AI overlay is a labelled group", () => {
 });
 
 describe("AC-NO-TOAST-LIVE toast overlay is not a live region", () => {
-  it("source-checks every non-exported toast branch as neither live nor dialog", () => {
+  it("source-checks every non-exported toast branch as neither live nor dialog nor labelled", () => {
     const source = readFileSync(
       new URL("../../app/game/[id]/page.tsx", import.meta.url),
       "utf8",
@@ -458,6 +458,10 @@ describe("AC-NO-TOAST-LIVE toast overlay is not a live region", () => {
     expect(toast.match(/aria-live="polite"/g)?.length ?? 0).toBe(0);
     expect(toast).not.toContain('role="dialog"');
     expect(toast).not.toContain("aria-modal");
+    // uii-01-F23: an aria-label on a role-less generic element is not permitted and is
+    // ignored. The toast containers carry no role, so they must carry no name either;
+    // LiveAnnouncer owns a11y.status.turn.
+    expect(toast.match(/aria-label/g)?.length ?? 0).toBe(0);
   });
 });
 
@@ -506,32 +510,50 @@ describe("AC-RACK-ROLE draggable rack tile keeps a role with its name", () => {
     }
   }
 
-  it("emits a role alongside aria-label in exchange mode and when interaction is disabled", () => {
-    let markup: string;
-    try {
-      markup = renderRack({ exchangeMode: true });
-    } catch (error) {
-      const source = readFileSync(
-        new URL("../../components/tiles/TileRack.tsx", import.meta.url),
-        "utf8",
-      );
-      const draggable = source.slice(
-        source.indexOf("function DraggableTile"),
-        source.indexOf("function TapSelectableTile"),
-      );
-      expect(draggable).toContain("{...attributes}");
-      expect(draggable).toContain("tabIndex={selectEnabled ? 0 : -1}");
-      expect(String(error)).toMatch(/./);
-      return;
-    }
-    expect(markup).toContain("aria-label=");
-    expect(markup).toMatch(/role="/);
+  it("emits role=button and a focusable tabindex alongside aria-label in exchange mode and when interaction is disabled", () => {
+    let markup = renderRack({ exchangeMode: true });
+    expect(markup).toContain('aria-label="Tile A, 1 point"');
+    expect(markup).toContain('role="button"');
+    expect(markup).toContain('tabindex="0"');
     markup = renderRack({
       exchangeMode: false,
       gameState: null,
     });
     expect(markup).toContain("aria-label=");
-    expect(markup).toMatch(/role="/);
+    expect(markup).toContain('role="button"');
+  });
+});
+
+describe("AC-RACK-KEYBOARD the focusable rack tile can be activated by keyboard", () => {
+  // uii-01-F24. React does not serialize event handlers into static markup, so the
+  // activation path can only be asserted from source. That is the honest ceiling here:
+  // this proves the handler EXISTS and matches TapSelectableTile's, not that a browser
+  // dispatches it.
+  const source = readFileSync(
+    new URL("../../components/tiles/TileRack.tsx", import.meta.url),
+    "utf8",
+  );
+  const draggable = source.slice(
+    source.indexOf("function DraggableTile"),
+    source.indexOf("function TapSelectableTile"),
+  );
+
+  it("gives DraggableTile an Enter/Space handler, because role=button does not synthesize a click", () => {
+    expect(draggable).toContain("{...attributes}");
+    expect(draggable).toContain("tabIndex={selectEnabled ? 0 : -1}");
+    expect(draggable).toContain("onKeyDown");
+    expect(draggable).toContain('event.key !== "Enter"');
+    expect(draggable).toContain('event.key !== " "');
+    expect(draggable).toContain("onSelect()");
+  });
+
+  it("declares onKeyDown before the listeners spread so a future KeyboardSensor would win", () => {
+    const handlerAt = draggable.indexOf("onKeyDown");
+    const listenersAt = draggable.indexOf("? {} : listeners)");
+    const tabIndexAt = draggable.indexOf("tabIndex={selectEnabled");
+    expect(handlerAt).toBeGreaterThan(-1);
+    expect(listenersAt).toBeGreaterThan(handlerAt);
+    expect(tabIndexAt).toBeGreaterThan(listenersAt);
   });
 });
 

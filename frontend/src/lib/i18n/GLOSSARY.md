@@ -80,6 +80,13 @@ toast or turn-status text, and the AI overlay is a named group, not a live
 region. A full keyboard focus trap is deliberately out of scope; dialogs provide
 Escape dismissal, initial focus, and `aria-modal` instead.
 
+A named control must also be an operable one. Rack tiles take dnd-kit's
+`role="button"`, so they carry an explicit Enter/Space handler: a
+`div[role=button]` does not synthesize a click the way a native `<button>` does,
+and a focusable control that no key activates is worse than one that is not
+focusable at all. Toast containers carry no role, so they carry no `aria-label`
+either — `a11y.status.turn` belongs to the announcer.
+
 | Key | English | Slovak | Czech | Polish |
 |---|---|---|---|---|
 | a11y.chatInput | Chat message | Správa do chatu | Zpráva do chatu | Wiadomość na chat |

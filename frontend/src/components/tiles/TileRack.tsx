@@ -44,6 +44,16 @@ function DraggableTile({
     <motion.div
       ref={setNodeRef}
       {...attributes}
+      // `attributes` supplies role="button", so Enter and Space must activate it: a
+      // div[role=button] does not synthesize a click the way a native <button> does.
+      // Declared BEFORE the listeners spread so that if a KeyboardSensor is ever added
+      // to the DndContext, dnd-kit's own key handling wins on a draggable turn while this
+      // one still serves exchange mode, where listeners are not spread at all.
+      onKeyDown={selectEnabled ? (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        onSelect();
+      } : undefined}
       {...(isExchangeMode || interactionDisabled || !dragEnabled ? {} : listeners)}
       tabIndex={selectEnabled ? 0 : -1}
       layout="position"
