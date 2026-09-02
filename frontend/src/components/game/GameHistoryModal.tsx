@@ -6,6 +6,7 @@ import {
   handlePremiumSurfacePointer,
 } from "@/lib/premiumSurface";
 import { useGameStore } from "@/hooks/useGameStore";
+import { useT } from "@/lib/i18n";
 import { GameHistoryPanel } from "@/components/game/GameHistoryPanel";
 import type {
   GameHistoryFilter,
@@ -48,6 +49,7 @@ export function GameHistoryModal({
   onSortChange: (value: GameHistorySort) => void;
   onOpenGame: (item: GameHistoryItem) => void;
 }) {
+  const { t } = useT();
   const premiumLookEnabled = useGameStore((s) => s.premiumLookEnabled);
 
   return (
@@ -79,10 +81,10 @@ export function GameHistoryModal({
                 <span className="text-[1.8rem] leading-none sm:text-[2rem]">🗂️</span>
                 <div>
                   <div className="font-gold-shiny text-3xl font-black tracking-tight sm:text-[2.6rem]">
-                    Games
+                    {t("header.games")}
                   </div>
                   <div className="mt-1 text-sm text-stone-300">
-                    Review past boards, switch between AI and human games, and jump back in fast.
+                    {t("history.modal.subtitle")}
                   </div>
                 </div>
               </div>
@@ -96,7 +98,7 @@ export function GameHistoryModal({
               className="rounded-full border border-white/10 bg-white/6 px-4 py-2.5 shadow-[0_10px_24px_rgba(0,0,0,0.18)] transition-[border-color,box-shadow,background-color,transform] duration-300 hover:border-white/18 hover:bg-white/8"
             >
               <span className="font-gold-shiny text-[1rem] font-black leading-none sm:text-[1.08rem]">
-                Close
+                {t("game.blocker.close")}
               </span>
             </motion.button>
           </div>

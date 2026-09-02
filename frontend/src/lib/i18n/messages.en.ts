@@ -121,6 +121,41 @@ export const enText = {
   "play.error.startAi": "Could not start an AI game.",
   "play.error.joinQueue": "Could not join the human queue.",
   "play.error.loadGames": "Unable to load your games.",
+  "history.filter.ai": "AI",
+  "history.filter.human": "Human",
+  "history.filter.all": "All",
+  "history.sort.recent": "Recent",
+  "history.refresh": "Refresh",
+  "history.loading": "Loading games",
+  "history.empty.title": "No games in this filter yet",
+  "history.empty.body":
+    "Start a new board and it will show up here with premium paging, result badges, and quick resume links.",
+  "history.noneYet": "No saved boards yet",
+  "history.unknownDate": "Unknown",
+  "history.col.rival": "Rival",
+  "history.col.mode": "Mode",
+  "history.col.result": "Result",
+  "history.col.score": "Score",
+  "history.col.moves": "Moves",
+  "history.col.updated": "Updated",
+  "history.outcome.waiting": "Waiting",
+  "history.outcome.active": "In progress",
+  "history.outcome.won": "Won",
+  "history.outcome.lost": "Lost",
+  "history.outcome.draw": "Draw",
+  "history.outcome.gaveUp": "Gave up",
+  "history.outcome.abandoned": "Abandoned",
+  "history.outcome.unknown": "Unknown",
+  "history.mode.ai": "AI duel",
+  "history.mode.human": "Human duel",
+  "history.hint.waitingRoom": "Waiting room",
+  "history.hint.boardReady": "Board ready",
+  "history.open": "Open",
+  "history.current": "Current",
+  "history.prev": "Previous",
+  "history.next": "Next",
+  "history.modal.subtitle":
+    "Review past boards, switch between AI and human games, and jump back in fast.",
   "queue.title": "Waiting for an opponent",
   "queue.body":
     "Your board is ready. The match starts as soon as another player joins.",
@@ -268,6 +303,10 @@ export const enFn = {
     `AI route failed (${p.status}): ${p.preview}`,
   "play.humanQueue.queueFor": (p: { variant: string }) => `${p.variant} queue`,
   "queue.room": (p: { code: string }) => `Room ${p.code}`,
+  "history.pageOf": (p: { page: number; total: number }) =>
+    `Page ${p.page} of ${p.total}`,
+  "history.showing": (p: { from: number; to: number; total: number }) =>
+    `Showing ${p.from}-${p.to} of ${p.total} games`,
 } as const;
 
 export type TextKey = keyof typeof enText;

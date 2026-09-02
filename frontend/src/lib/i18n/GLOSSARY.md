@@ -219,6 +219,53 @@ come back when a fifth variant is added.
 | queue.error.leave | Could not leave the queue. | Front sa nepodarilo opustiť. |
 | queue.room (fn) | Room {code} | Miestnosť {code} |
 
+## Saved-board history
+
+`history.pageOf` and `history.showing` deliberately omit the counted noun in
+the Slovak, Czech, and Polish catalogs because a fixed genitive-plural noun
+would be wrong for variable counts of 2–4.
+
+`item.game_end_reason` remains an unlocalized backend enum; localizing it needs
+a separate keyed mapping.
+
+| Key | English | Slovak |
+|---|---|---|
+| history.filter.ai | AI | AI |
+| history.filter.human | Human | Ľudia |
+| history.filter.all | All | Všetko |
+| history.sort.recent | Recent | Najnovšie |
+| history.refresh | Refresh | Obnoviť |
+| history.loading | Loading games | Načítavam partie |
+| history.empty.title | No games in this filter yet | V tomto filtri ešte nie sú žiadne partie |
+| history.empty.body | Start a new board and it will show up here with premium paging, result badges, and quick resume links. | Spusti novú partiu a objaví sa tu s prémiovým stránkovaním, odznakmi výsledku a rýchlym pokračovaním. |
+| history.noneYet | No saved boards yet | Žiadne uložené partie |
+| history.unknownDate | Unknown | Neznáme |
+| history.col.rival | Rival | Súper |
+| history.col.mode | Mode | Režim |
+| history.col.result | Result | Výsledok |
+| history.col.score | Score | Skóre |
+| history.col.moves | Moves | Ťahy |
+| history.col.updated | Updated | Zmenené |
+| history.outcome.waiting | Waiting | Čaká sa |
+| history.outcome.active | In progress | Prebieha |
+| history.outcome.won | Won | Vyhral si |
+| history.outcome.lost | Lost | Prehral si |
+| history.outcome.draw | Draw | Remíza |
+| history.outcome.gaveUp | Gave up | Vzdal si sa |
+| history.outcome.abandoned | Abandoned | Opustená |
+| history.outcome.unknown | Unknown | Neznámy |
+| history.mode.ai | AI duel | AI duel |
+| history.mode.human | Human duel | Duel s človekom |
+| history.hint.waitingRoom | Waiting room | Čakárňa |
+| history.hint.boardReady | Board ready | Partia je pripravená |
+| history.open | Open | Otvoriť |
+| history.current | Current | Aktuálna |
+| history.pageOf (fn) | Page {page} of {total} | Strana {page} z {total} |
+| history.showing (fn) | Showing {from}-{to} of {total} games | Zobrazené {from}-{to} z {total} |
+| history.prev | Previous | Predošlá |
+| history.next | Next | Ďalšia |
+| history.modal.subtitle | Review past boards, switch between AI and human games, and jump back in fast. | Prezri si staré partie, prepínaj medzi AI a ľuďmi a rýchlo sa vráť do hry. |
+
 ## Turn chrome
 
 | Key | English | Slovak |

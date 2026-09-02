@@ -4,6 +4,13 @@ import { motion } from "framer-motion";
 import { useMemo } from "react";
 import { useGameStore } from "@/hooks/useGameStore";
 import {
+  t as translate,
+  useLocale,
+  useT,
+  type Locale,
+  type TextKey,
+} from "@/lib/i18n";
+import {
   PREMIUM_GOLD_TEXT_SHADOW_CLASS,
   PREMIUM_MODAL_CARD_STYLE,
   handlePremiumSurfacePointer,
@@ -18,59 +25,61 @@ import type {
 
 const FILTER_OPTIONS: Array<{
   value: GameHistoryFilter;
-  label: string;
+  labelKey: TextKey;
   emoji: string;
 }> = [
-  { value: "vs_ai", label: "AI", emoji: "🤖" },
-  { value: "vs_human", label: "Human", emoji: "🤝" },
-  { value: "all", label: "All", emoji: "🗂️" },
+  { value: "vs_ai", labelKey: "history.filter.ai", emoji: "🤖" },
+  { value: "vs_human", labelKey: "history.filter.human", emoji: "🤝" },
+  { value: "all", labelKey: "history.filter.all", emoji: "🗂️" },
 ];
 
 const OUTCOME_META: Record<
   GameHistoryOutcome,
-  { emoji: string; label: string; className: string }
+  { emoji: string; labelKey: TextKey; className: string }
 > = {
   waiting: {
     emoji: "⏳",
-    label: "Waiting",
+    labelKey: "history.outcome.waiting",
     className: "border-sky-300/18 bg-sky-400/10 text-sky-100",
   },
   in_progress: {
     emoji: "🎮",
-    label: "In progress",
+    labelKey: "history.outcome.active",
     className: "border-emerald-300/18 bg-emerald-400/10 text-emerald-100",
   },
   won: {
     emoji: "🏆",
-    label: "Won",
+    labelKey: "history.outcome.won",
     className: "border-amber-300/20 bg-amber-300/12 text-amber-100",
   },
   lost: {
     emoji: "📉",
-    label: "Lost",
+    labelKey: "history.outcome.lost",
     className: "border-white/10 bg-white/6 text-stone-200",
   },
   draw: {
     emoji: "🤝",
-    label: "Draw",
+    labelKey: "history.outcome.draw",
     className: "border-sky-300/18 bg-sky-400/10 text-sky-100",
   },
   gave_up: {
     emoji: "🚪",
-    label: "Gave up",
+    labelKey: "history.outcome.gaveUp",
     className: "border-rose-300/20 bg-rose-500/10 text-rose-100",
   },
   abandoned: {
     emoji: "🪫",
-    label: "Abandoned",
+    labelKey: "history.outcome.abandoned",
     className: "border-stone-400/14 bg-stone-400/10 text-stone-200",
   },
 };
 
-function formatUpdatedAt(value: string): string {
+export function formatUpdatedAt(value: string, locale: Locale): string {
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "Unknown";
-  return new Intl.DateTimeFormat("en-US", {
+  if (Number.isNaN(date.getTime())) {
+    return translate(locale, "history.unknownDate");
+  }
+  return new Intl.DateTimeFormat(locale === "en" ? "en-US" : locale, {
     month: "short",
     day: "numeric",
     hour: "numeric",
@@ -78,18 +87,15 @@ function formatUpdatedAt(value: string): string {
   }).format(date);
 }
 
-function formatMode(mode: GameHistoryItem["game_mode"]): string {
-  return mode === "vs_ai" ? "AI duel" : "Human duel";
-}
-
 function OutcomeBadge({ outcome }: { outcome: GameHistoryOutcome }) {
+  const { t } = useT();
   const meta = OUTCOME_META[outcome];
   return (
     <span
       className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[0.78rem] font-semibold leading-none shadow-[0_10px_24px_rgba(0,0,0,0.14)] ${meta.className}`}
     >
       <span className="text-[0.92rem] leading-none" aria-hidden="true">{meta.emoji}</span>
-      <span>{meta.label}</span>
+      <span>{t(meta.labelKey)}</span>
     </span>
   );
 }
@@ -101,6 +107,7 @@ function OpenButton({
   onClick: () => void;
   current: boolean;
 }) {
+  const { t } = useT();
   return (
     <button
       type="button"
@@ -112,7 +119,7 @@ function OpenButton({
       }`}
     >
       <span className={`font-gold-shiny text-[0.95rem] font-black leading-none ${PREMIUM_GOLD_TEXT_SHADOW_CLASS}`}>
-        {current ? "Current" : "Open"}
+        {current ? t("history.current") : t("history.open")}
       </span>
     </button>
   );
@@ -147,15 +154,17 @@ export function GameHistoryPanel({
   onOpenGame: (item: GameHistoryItem) => void;
   className?: string;
 }) {
+  const locale = useLocale();
+  const { t, tf } = useT();
   const premiumLookEnabled = useGameStore((s) => s.premiumLookEnabled);
   const premiumTitleClass = premiumLookEnabled ? PREMIUM_GOLD_TEXT_SHADOW_CLASS : "";
 
   const pageSummary = useMemo(() => {
-    if (!data || data.total === 0) return "No saved boards yet";
+    if (!data || data.total === 0) return t("history.noneYet");
     const from = (data.page - 1) * data.page_size + 1;
     const to = Math.min(data.total, from + data.items.length - 1);
-    return `Showing ${from}-${to} of ${data.total} games`;
-  }, [data]);
+    return tf("history.showing", { from, to, total: data.total });
+  }, [data, t, tf]);
 
   return (
     <div className={`relative overflow-hidden rounded-[1.8rem] border border-white/8 bg-[linear-gradient(180deg,rgba(17,14,11,0.76),rgba(11,9,8,0.82))] p-3 shadow-[0_18px_45px_rgba(0,0,0,0.24)] sm:p-4 ${className ?? ""}`}
@@ -180,7 +189,7 @@ export function GameHistoryPanel({
             >
               <span className="text-[1rem] leading-none" aria-hidden="true">{option.emoji}</span>
               <span className={`font-gold-shiny text-[0.98rem] font-black leading-none ${premiumTitleClass}`}>
-                {option.label}
+                {t(option.labelKey)}
               </span>
             </button>
           );
@@ -191,12 +200,12 @@ export function GameHistoryPanel({
           className="ml-auto group inline-flex h-[2.35rem] items-center gap-2 rounded-full border border-amber-300/24 bg-[linear-gradient(135deg,rgba(251,191,36,0.10),rgba(255,255,255,0.04))] px-3.5 py-2 shadow-[0_10px_22px_rgba(0,0,0,0.14)] transition-all duration-200 hover:border-white/42 hover:bg-[linear-gradient(135deg,rgba(255,248,220,0.14),rgba(251,191,36,0.14),rgba(245,158,11,0.08))]"
         >
           <span className={`font-gold-shiny text-[0.96rem] font-black leading-none ${premiumTitleClass}`}>
-            Refresh
+            {t("history.refresh")}
           </span>
         </button>
         <div className="flex items-center gap-2 rounded-full border border-white/8 bg-black/18 px-2 py-1 shadow-[0_10px_22px_rgba(0,0,0,0.12)]">
           {[
-            { value: "updated", label: "Recent" },
+            { value: "updated", labelKey: "history.sort.recent" as const },
           ].map((option) => {
             const active = sort === option.value;
             return (
@@ -210,7 +219,7 @@ export function GameHistoryPanel({
                     : "text-stone-400 hover:text-stone-200"
                 }`}
               >
-                {option.label}
+                {t(option.labelKey)}
               </button>
             );
           })}
@@ -232,7 +241,7 @@ export function GameHistoryPanel({
           <div className="text-center">
             <div className="text-[2rem] leading-none">⌛</div>
             <div className="mt-3 font-gold-shiny text-[1.16rem] font-black">
-              Loading games
+              {t("history.loading")}
             </div>
           </div>
         </div>
@@ -245,10 +254,10 @@ export function GameHistoryPanel({
               {filter === "vs_human" ? "🤝" : filter === "all" ? "🗂️" : "🧠"}
             </div>
             <div className="mt-3 font-gold-shiny text-[1.2rem] font-black">
-              No games in this filter yet
+              {t("history.empty.title")}
             </div>
             <div className="mt-2 text-sm text-stone-300">
-              Start a new board and it will show up here with premium paging, result badges, and quick resume links.
+              {t("history.empty.body")}
             </div>
           </div>
         </div>
@@ -260,13 +269,13 @@ export function GameHistoryPanel({
             <table className="min-w-full divide-y divide-white/8">
               <thead className="bg-white/[0.04]">
                 <tr className="text-left text-[0.72rem] uppercase tracking-[0.22em] text-stone-400">
-                  <th className="px-4 py-3">Rival</th>
-                  <th className="px-4 py-3">Mode</th>
-                  <th className="px-4 py-3">Result</th>
-                  <th className="px-4 py-3">Score</th>
-                  <th className="px-4 py-3">Moves</th>
-                  <th className="px-4 py-3">Updated</th>
-                  <th className="px-4 py-3 text-right">Open</th>
+                  <th className="px-4 py-3">{t("history.col.rival")}</th>
+                  <th className="px-4 py-3">{t("history.col.mode")}</th>
+                  <th className="px-4 py-3">{t("history.col.result")}</th>
+                  <th className="px-4 py-3">{t("history.col.score")}</th>
+                  <th className="px-4 py-3">{t("history.col.moves")}</th>
+                  <th className="px-4 py-3">{t("history.col.updated")}</th>
+                  <th className="px-4 py-3 text-right">{t("history.open")}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/6">
@@ -277,11 +286,19 @@ export function GameHistoryPanel({
                         {item.opponent_label}
                       </div>
                       <div className="mt-1 text-xs text-stone-400">
-                        {item.is_my_turn ? "Your turn" : item.status === "waiting" ? "Waiting room" : item.game_end_reason || "Board ready"}
+                        {item.is_my_turn
+                          ? t("game.status.yourTurn")
+                          : item.status === "waiting"
+                            ? t("history.hint.waitingRoom")
+                            : item.game_end_reason || t("history.hint.boardReady")}
                       </div>
                     </td>
                     <td className="px-4 py-3.5 text-sm text-stone-200">
-                      {formatMode(item.game_mode)}
+                      {t(
+                        item.game_mode === "vs_ai"
+                          ? "history.mode.ai"
+                          : "history.mode.human",
+                      )}
                     </td>
                     <td className="px-4 py-3.5">
                       <OutcomeBadge outcome={item.outcome} />
@@ -297,7 +314,7 @@ export function GameHistoryPanel({
                       {item.move_count}
                     </td>
                     <td className="px-4 py-3.5 text-sm text-stone-300">
-                      {formatUpdatedAt(item.updated_at)}
+                      {formatUpdatedAt(item.updated_at, locale)}
                     </td>
                     <td className="px-4 py-3.5 text-right">
                       <OpenButton
@@ -323,7 +340,11 @@ export function GameHistoryPanel({
                       {item.opponent_label}
                     </div>
                     <div className="mt-1 text-xs uppercase tracking-[0.18em] text-stone-400">
-                      {formatMode(item.game_mode)}
+                      {t(
+                        item.game_mode === "vs_ai"
+                          ? "history.mode.ai"
+                          : "history.mode.human",
+                      )}
                     </div>
                   </div>
                   <OutcomeBadge outcome={item.outcome} />
@@ -331,7 +352,9 @@ export function GameHistoryPanel({
 
                 <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
                   <div>
-                    <div className="text-[0.68rem] uppercase tracking-[0.2em] text-stone-500">Score</div>
+                    <div className="text-[0.68rem] uppercase tracking-[0.2em] text-stone-500">
+                      {t("history.col.score")}
+                    </div>
                     <div className="mt-1 font-gold-shiny text-[1.08rem] font-black leading-none">
                       {item.my_score}
                       <span className="px-1 text-white/56">:</span>
@@ -339,13 +362,15 @@ export function GameHistoryPanel({
                     </div>
                   </div>
                   <div>
-                    <div className="text-[0.68rem] uppercase tracking-[0.2em] text-stone-500">Moves</div>
+                    <div className="text-[0.68rem] uppercase tracking-[0.2em] text-stone-500">
+                      {t("history.col.moves")}
+                    </div>
                     <div className="mt-1 text-stone-200">{item.move_count}</div>
                   </div>
                 </div>
 
                 <div className="mt-2 text-sm text-stone-400">
-                  {formatUpdatedAt(item.updated_at)}
+                  {formatUpdatedAt(item.updated_at, locale)}
                 </div>
 
                 <div className="mt-3 flex justify-end">
@@ -362,7 +387,9 @@ export function GameHistoryPanel({
 
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-white/8 pt-4">
         <div className="text-sm text-stone-300">
-          {data ? `Page ${data.page} of ${data.total_pages}` : "Page 1"}
+          {data
+            ? tf("history.pageOf", { page: data.page, total: data.total_pages })
+            : tf("history.pageOf", { page: 1, total: 1 })}
         </div>
         <div className="flex items-center gap-2">
           <motion.button
@@ -374,7 +401,7 @@ export function GameHistoryPanel({
             className="rounded-full border border-white/10 bg-white/6 px-4 py-2.5 shadow-[0_10px_24px_rgba(0,0,0,0.18)] transition-[border-color,box-shadow,background-color,transform] duration-300 hover:border-white/18 hover:bg-white/8 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <span className={`font-gold-shiny text-[1rem] font-black leading-none ${premiumTitleClass}`}>
-              Previous
+              {t("history.prev")}
             </span>
           </motion.button>
           <motion.button
@@ -386,7 +413,7 @@ export function GameHistoryPanel({
             className="rounded-full border border-amber-300/26 bg-[linear-gradient(135deg,rgba(251,191,36,0.12),rgba(255,255,255,0.04))] px-4 py-2.5 shadow-[0_10px_24px_rgba(0,0,0,0.18),0_0_24px_rgba(251,191,36,0.08)] transition-[border-color,box-shadow,background-color,transform] duration-300 hover:border-amber-200/50 hover:bg-[linear-gradient(135deg,rgba(251,191,36,0.18),rgba(255,255,255,0.06))] hover:shadow-[0_14px_30px_rgba(0,0,0,0.24),0_0_30px_rgba(251,191,36,0.14)] disabled:cursor-not-allowed disabled:opacity-50"
           >
             <span className={`font-gold-shiny text-[1rem] font-black leading-none ${premiumTitleClass}`}>
-              Next
+              {t("history.next")}
             </span>
           </motion.button>
         </div>

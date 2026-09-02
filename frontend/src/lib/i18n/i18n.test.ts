@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import SettingsPage from "@/app/settings/page";
+import { formatUpdatedAt } from "@/components/game/GameHistoryPanel";
 import { variantDisplayName } from "@/components/settings/GameLanguagePanel";
 import type { VariantSummary } from "@/lib/types";
 
@@ -802,6 +803,128 @@ describe("AC-NO-TELEMETRY-KEY en catalog excludes overlay telemetry prose", () =
         expect(lower).not.toContain(fragment);
       }
     }
+  });
+});
+
+describe("AC-DATE-LOCALE saved-board dates follow the interface locale", () => {
+  it("keeps en-US output pinned and uses 24-hour localized output for sk/cs/pl", () => {
+    const timestamp = "2026-09-02T16:35:00";
+    const english = formatUpdatedAt(timestamp, "en");
+
+    expect(english).toBe("Sep 2, 4:35 PM");
+    for (const locale of ["sk", "cs", "pl"] as const) {
+      const localized = formatUpdatedAt(timestamp, locale);
+      expect(localized).not.toBe(english);
+      expect(localized).not.toMatch(/\b(?:AM|PM)\b/);
+    }
+
+    expect(formatUpdatedAt("not-a-date", "en")).toBe("Unknown");
+    expect(formatUpdatedAt("not-a-date", "sk")).toBe("Neznáme");
+    expect(formatUpdatedAt("not-a-date", "cs")).toBe("Neznámé");
+    expect(formatUpdatedAt("not-a-date", "pl")).toBe("Nieznane");
+  });
+});
+
+const HISTORY_EXPECTED = {
+  "history.col.rival": { en: "Rival", sk: "Súper", cs: "Soupeř", pl: "Rywal" },
+  "history.col.mode": { en: "Mode", sk: "Režim", cs: "Režim", pl: "Tryb" },
+  "history.col.result": {
+    en: "Result",
+    sk: "Výsledok",
+    cs: "Výsledek",
+    pl: "Wynik",
+  },
+  "history.col.score": { en: "Score", sk: "Skóre", cs: "Skóre", pl: "Wynik" },
+  "history.col.moves": { en: "Moves", sk: "Ťahy", cs: "Tahy", pl: "Ruchy" },
+  "history.col.updated": {
+    en: "Updated",
+    sk: "Zmenené",
+    cs: "Změněno",
+    pl: "Zmienione",
+  },
+  "history.outcome.waiting": {
+    en: "Waiting",
+    sk: "Čaká sa",
+    cs: "Čeká se",
+    pl: "Oczekiwanie",
+  },
+  "history.outcome.active": {
+    en: "In progress",
+    sk: "Prebieha",
+    cs: "Probíhá",
+    pl: "W toku",
+  },
+  "history.outcome.won": {
+    en: "Won",
+    sk: "Vyhral si",
+    cs: "Vyhrál jsi",
+    pl: "Wygrałeś",
+  },
+  "history.outcome.lost": {
+    en: "Lost",
+    sk: "Prehral si",
+    cs: "Prohrál jsi",
+    pl: "Przegrałeś",
+  },
+  "history.outcome.draw": { en: "Draw", sk: "Remíza", cs: "Remíza", pl: "Remis" },
+  "history.outcome.gaveUp": {
+    en: "Gave up",
+    sk: "Vzdal si sa",
+    cs: "Vzdal jsi se",
+    pl: "Poddałeś się",
+  },
+  "history.outcome.abandoned": {
+    en: "Abandoned",
+    sk: "Opustená",
+    cs: "Opuštěná",
+    pl: "Porzucona",
+  },
+  "history.outcome.unknown": {
+    en: "Unknown",
+    sk: "Neznámy",
+    cs: "Neznámý",
+    pl: "Nieznany",
+  },
+} as const;
+
+describe("AC-HISTORY-4 history columns and outcomes", () => {
+  it("renders every authored column and outcome string in all four locales", () => {
+    for (const [key, expected] of Object.entries(HISTORY_EXPECTED)) {
+      for (const locale of LOCALES) {
+        expect(t(locale, key as keyof typeof enText)).toBe(expected[locale]);
+      }
+    }
+  });
+});
+
+describe("AC-PAGING-4 saved-board pagination", () => {
+  it("interpolates both summaries in all four locales without games in Slavic showing copy", () => {
+    const expected = {
+      en: { pageOf: "Page 2 of 7", showing: "Showing 11-20 of 63 games" },
+      sk: { pageOf: "Strana 2 z 7", showing: "Zobrazené 11-20 z 63" },
+      cs: { pageOf: "Strana 2 z 7", showing: "Zobrazeno 11-20 z 63" },
+      pl: { pageOf: "Strona 2 z 7", showing: "Pokazane 11-20 z 63" },
+    } as const;
+
+    for (const locale of LOCALES) {
+      expect(tf(locale, "history.pageOf", { page: 2, total: 7 })).toBe(
+        expected[locale].pageOf,
+      );
+      const showing = tf(locale, "history.showing", {
+        from: 11,
+        to: 20,
+        total: 63,
+      });
+      expect(showing).toBe(expected[locale].showing);
+      if (locale !== "en") expect(showing).not.toContain("games");
+    }
+  });
+});
+
+describe("AC-POLISH-DUP history result and score headings", () => {
+  it("deliberately uses Wynik for both Polish columns", () => {
+    expect(t("pl", "history.col.result")).toBe("Wynik");
+    expect(t("pl", "history.col.score")).toBe("Wynik");
   });
 });
 
