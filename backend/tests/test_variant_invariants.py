@@ -43,6 +43,7 @@ from gamecore.variant_store import (
     canonicalize_tile_token,
     list_installed_variants,
     load_two_tile_words,
+    load_variant,
     slugify,
     validate_dictionary_file,
 )
@@ -76,6 +77,26 @@ _A_ENTRY: dict[str, Any] = {"letter": "A", "count": 98, "points": 1}
 def _variants_dir() -> Path:
     """Derive the manifest directory the way the loader does, never hardcoded."""
     return get_assets_path() / "variants"
+
+
+# The manifest PATHS, for the invariants that are about files rather than about loaded
+# variants. An empty list here cannot pass unnoticed: G1 requires the loaded set to
+# contain the four shipped slugs and G9 ties the loaded count to this file count, so
+# either would fail loudly before a vacuous parameterization could hide.
+_MANIFEST_PATHS = sorted(_variants_dir().glob("*.json"))
+_MANIFEST_STEMS = [path.stem for path in _MANIFEST_PATHS]
+
+# Keys that duplicate a DERIVED property of VariantDefinition and must therefore never
+# be declared in a manifest. Each name below was confirmed to be a ``property`` on
+# VariantDefinition, with no declared counterpart:
+#   total_tiles       variant_store.py:75-77    sum of letter counts
+#   distribution      variant_store.py:67-69    {token: count}
+#   tile_points       variant_store.py:71-73    {token: points}
+#   playable_letters  variant_store.py:95-106   tile set ordered by alphabet index
+# dictionary_file and two_tile_words_file are deliberately absent from this tuple: they
+# are legitimate declared INPUTS whose derived twins are dictionary_path and
+# two_tile_words_path.
+_FORBIDDEN_DERIVED_KEYS = ("total_tiles", "distribution", "tile_points", "playable_letters")
 
 
 def _declared_tokens(variant: VariantDefinition) -> list[str]:
@@ -291,7 +312,20 @@ def test_g13_metadata_shape_tolerates_the_declared_asymmetry(variant: VariantDef
     assert variant.source
     if variant.fetched_at is not None:
         assert isinstance(variant.fetched_at, str)
-        datetime.fromisoformat(variant.fetched_at)
+        # A real calendar date at minimum. datetime.fromisoformat ALONE is too weak: on
+        # this interpreter it accepts ISO basic format ("20260901") and ISO week dates
+        # ("2026-W36-4"), neither of which is a reviewable YYYY-MM-DD. A timezone is
+        # deliberately NOT required — the four shipped values are naive timestamps.
+        assert len(variant.fetched_at) >= 10, (
+            f"{variant.slug}: fetched_at {variant.fetched_at!r} is too short to carry a "
+            "YYYY-MM-DD calendar date"
+        )
+        parsed = datetime.fromisoformat(variant.fetched_at)
+        stamp = f"{parsed.year:04d}-{parsed.month:02d}-{parsed.day:02d}"
+        assert variant.fetched_at[:10] == stamp, (
+            f"{variant.slug}: fetched_at {variant.fetched_at!r} does not begin with the "
+            f"calendar date it parses to ({stamp})"
+        )
     # english.json declares NEITHER language_code NOR source_url; None must pass.
     if variant.language_code is not None:
         assert variant.language_code == variant.language_code.strip()
@@ -320,6 +354,85 @@ def test_g14_inflected_form_membership_probe(variant: VariantDefinition) -> None
         assert contains(word) is True, f"{variant.slug}: expected {word!r} in the lexicon"
     for word in absent:
         assert contains(word) is False, f"{variant.slug}: {word!r} must not be in the lexicon"
+
+
+# --- Manifest-file invariants: stem/slug agreement and no declared derived key ----------
+
+
+@pytest.mark.parametrize("manifest_path", _MANIFEST_PATHS, ids=_MANIFEST_STEMS)
+def test_g26a_manifest_stem_equals_declared_slug(manifest_path: Path) -> None:
+    """The ``{stem: slug}`` pair of every installed manifest must be equal.
+
+    ``load_variant(slug)`` resolves a FILENAME — ``_variant_path`` at
+    ``variant_store.py:178-179`` builds ``f"{slugify(slug)}.json"`` — while
+    ``list_installed_variants`` advertises the DECLARED ``slug`` key
+    (``variant_store.py:324``). When the two diverge, a variant is selectable and
+    unloadable at the same time, and ``G9``'s count comparison cannot see it. ``G26b``
+    pins that divergence as measured behaviour.
+    """
+    stem = manifest_path.stem
+    pair = {stem: _load_variant_from_path(manifest_path).slug}
+    assert pair[stem] == stem, (
+        f"manifest {manifest_path.name} declares slug {pair[stem]!r} but its filename "
+        f"stem is {stem!r}; list_installed_variants() would advertise {pair[stem]!r} as "
+        f"selectable while load_variant({pair[stem]!r}) raises FileNotFoundError"
+    )
+
+
+def test_g26b_a_stem_slug_divergence_is_reachable_today(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CHARACTERIZATION ONLY. This documents current behaviour; it requests no change.
+
+    A manifest named ``de.json`` declaring ``"slug": "german"`` is advertised as
+    selectable under ``german`` and cannot be loaded under it. The divergence is
+    reachable from the product because every incoming ``variant_slug`` is validated
+    against ``list_installed_variants()`` at ``game/serializers.py:180``,
+    ``game/serializers.py:215`` and ``game/services.py:173``, while every later load goes
+    through ``load_variant``.
+
+    Whether the LOADER should also change is a separate Orchestrator decision. Do not
+    alter ``load_variant``, ``list_installed_variants``, or any serializer to satisfy
+    this test; ``G26a`` is what keeps a divergent manifest out of the repository.
+    """
+    _write_manifest(tmp_path, "de", _synthetic("german"))
+    monkeypatch.setattr("gamecore.variant_store._variants_dir", lambda: tmp_path)
+    files = sorted(tmp_path.glob("*.json"))
+
+    listed = list_installed_variants()
+    assert [item.slug for item in listed] == ["german"]
+
+    # G9 is blind to this: one manifest file really does produce one variant.
+    assert len(listed) == len(files)
+
+    # The G26a invariant is VIOLATED for this directory.
+    pairs = {path.stem: _load_variant_from_path(path).slug for path in files}
+    assert pairs == {"de": "german"}
+    assert any(slug != stem for stem, slug in pairs.items())
+
+    with pytest.raises(FileNotFoundError):
+        load_variant("german")
+    assert load_variant("de").slug == "german"
+
+
+@pytest.mark.parametrize("manifest_path", _MANIFEST_PATHS, ids=_MANIFEST_STEMS)
+def test_g27_no_manifest_declares_a_derived_property(manifest_path: Path) -> None:
+    """Read as RAW JSON, because the loader silently ignores unknown keys.
+
+    ``total_tiles`` is DERIVED at ``variant_store.py:75-77`` as the sum of letter counts,
+    so a declared value could disagree with the real tile set: it would read as
+    authoritative to a human reviewer while being completely ignored by the code. The
+    same reasoning applies to every other manifest key that duplicates a derived
+    property of ``VariantDefinition``.
+    """
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert isinstance(data, dict)
+    declared = sorted(key for key in _FORBIDDEN_DERIVED_KEYS if key in data)
+    assert not declared, (
+        f"manifest {manifest_path.name} declares derived key(s) {declared}; each is a "
+        "computed property of VariantDefinition, so a declared value is silently ignored "
+        "by the loader while looking authoritative to a reader"
+    )
 
 
 # --- Negative tests: a malformed manifest must fail with its exact code -----------------
