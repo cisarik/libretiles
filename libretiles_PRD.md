@@ -32,7 +32,7 @@ Libre Tiles is an open-source web-based Libre Tiles game with an eye-candy anima
 
 ### FR-01: Game Core (English Variant)
 - Standard 15x15 board with premium squares (TW, DW, TL, DL).
-- English tile distribution (100 tiles, SOWPODS dictionary with 172,823 words).
+- English tile distribution (100 tiles, Collins Scrabble Words 2019 dictionary with 279,496 words).
 - Full move validation: placement rules, word formation, scoring with premiums, bingo (+50).
 - Tile exchange, pass, endgame detection, and final scoring.
 - Status: **Implemented** (gamecore/).
@@ -62,8 +62,8 @@ Libre Tiles is an open-source web-based Libre Tiles game with an eye-candy anima
 - Status: **Implemented** (frontend/src/app/api/ai/, frontend/src/lib/prompts.ts, openrouter.ts, nvidia-nim.ts, ai-runtimes.ts, ai-fallback.ts, model-catalog.ts, AIThinkingOverlay.tsx).
 
 ### FR-05: 3-Tier Word Validation
-- Tier 1: Local SOWPODS dictionary (in-memory frozenset, O(1) lookup).
-- Tier 2: Online dictionary API for words not in SOWPODS (optional, SOWPODS is comprehensive).
+- Tier 1: Local Collins 2019 dictionary (in-memory frozenset, O(1) lookup).
+- Tier 2: Online dictionary API for words not in the Collins 2019 list (optional; the local list is comprehensive).
 - Tier 3: AI Judge via the shared free-rival fallback queue (up to three attempts; HTTP 503 on exhaustion).
 - Status: **Tier 1 + 3 implemented**, Tier 2 optional.
 
@@ -124,7 +124,7 @@ Libre Tiles is an open-source web-based Libre Tiles game with an eye-candy anima
 
 ### NFR-02: Performance
 - Game state reconstruction from DB: < 5ms per move.
-- SOWPODS dictionary lookup: O(1) via frozenset.
+- Collins 2019 dictionary lookup: O(1) via frozenset.
 - AI move timeout: configurable via AI_MOVE_TIMEOUT_SECONDS.
 
 ### NFR-03: Responsive Design
@@ -147,7 +147,7 @@ Libre Tiles is an open-source web-based Libre Tiles game with an eye-candy anima
 ## 8. Known Gaps
 
 - Human vs human multiplayer deferred to v2.
-- Online dictionary API (Tier 2) may not be needed if SOWPODS is sufficient.
+- Online dictionary API (Tier 2) may not be needed if the local Collins 2019 list is sufficient.
 - Starting draw animation not yet eye-candy (basic flow implemented).
 - Move history timeline UI not yet implemented.
 - Mobile bottom-sheet rack and pinch-zoom not yet implemented.
