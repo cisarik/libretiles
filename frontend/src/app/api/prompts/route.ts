@@ -9,12 +9,18 @@ export async function GET() {
     });
 
     if (!res.ok) {
-      return NextResponse.json([], { status: 200 });
+      return NextResponse.json(
+        { error: "catalog_unavailable", upstream_status: res.status },
+        { status: res.status },
+      );
     }
 
     const prompts = await res.json();
     return NextResponse.json(prompts);
   } catch {
-    return NextResponse.json([], { status: 200 });
+    return NextResponse.json(
+      { error: "catalog_unreachable" },
+      { status: 502 },
+    );
   }
 }

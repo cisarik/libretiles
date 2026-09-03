@@ -150,6 +150,8 @@ export const plText: Record<TextKey, string> = {
     "Partie z AI i z ludźmi mają jedną wspólną historię.",
   "play.error.catalogEmpty":
     "Katalog rywali jest pusty. Wypełnij katalog, aby grać partie z AI.",
+  "play.error.catalogUnavailable":
+    "Katalog rywali jest chwilowo niedostępny. Spróbuj za chwilę.",
   "play.error.variantUnavailable":
     "Brak dostępnego grywalnego wariantu gry. Nie można utworzyć partii, dopóki jakiś się nie wczyta.",
   "play.error.startAi": "Nie udało się rozpocząć partii z AI.",

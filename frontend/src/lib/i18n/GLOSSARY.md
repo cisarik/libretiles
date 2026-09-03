@@ -237,6 +237,7 @@ come back when a fifth variant is added.
 | play.saved.title | Resume where you left off | Pokračuj tam, kde si skončil |
 | play.saved.note | AI and human games share one premium history surface. | Partie proti AI aj proti ľuďom majú jednu spoločnú históriu. |
 | play.error.catalogEmpty | The rival catalog is empty. Seed the free catalog to play AI matches. | Katalóg súperov je prázdny. Naplň katalóg, aby sa dali hrať partie proti AI. |
+| play.error.catalogUnavailable | The rival catalog is temporarily unavailable. Try again in a moment. | Katalóg súperov je práve nedostupný. Skús to za chvíľu. |
 | play.error.variantUnavailable | No playable game variant is available. Game creation is blocked until a playable variant can be loaded. | Nie je dostupný žiadny hrateľný variant hry. Nová partia sa nedá vytvoriť, kým sa nejaký nenačíta. |
 | play.error.startAi | Could not start an AI game. | Partiu proti AI sa nepodarilo spustiť. |
 | play.error.joinQueue | Could not join the human queue. | Do frontu hráčov sa nepodarilo pripojiť. |
@@ -249,6 +250,8 @@ come back when a fifth variant is added.
 | queue.error.enter | Could not enter the waiting room. | Do čakárne sa nepodarilo vstúpiť. |
 | queue.error.leave | Could not leave the queue. | Front sa nepodarilo opustiť. |
 | queue.room (fn) | Room {code} | Miestnosť {code} |
+
+A reachable-but-empty catalog (`play.error.catalogEmpty`) and an unreachable catalog (`play.error.catalogUnavailable`) are two different messages.
 
 ## Saved-board history
 

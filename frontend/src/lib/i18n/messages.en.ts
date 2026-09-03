@@ -148,6 +148,8 @@ export const enText = {
     "AI and human games share one premium history surface.",
   "play.error.catalogEmpty":
     "The rival catalog is empty. Seed the free catalog to play AI matches.",
+  "play.error.catalogUnavailable":
+    "The rival catalog is temporarily unavailable. Try again in a moment.",
   "play.error.variantUnavailable":
     "No playable game variant is available. Game creation is blocked until a playable variant can be loaded.",
   "play.error.startAi": "Could not start an AI game.",

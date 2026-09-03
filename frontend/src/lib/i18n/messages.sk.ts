@@ -147,6 +147,8 @@ export const skText: Record<TextKey, string> = {
     "Partie proti AI aj proti ľuďom majú jednu spoločnú históriu.",
   "play.error.catalogEmpty":
     "Katalóg súperov je prázdny. Naplň katalóg, aby sa dali hrať partie proti AI.",
+  "play.error.catalogUnavailable":
+    "Katalóg súperov je práve nedostupný. Skús to za chvíľu.",
   "play.error.variantUnavailable":
     "Nie je dostupný žiadny hrateľný variant hry. Nová partia sa nedá vytvoriť, kým sa nejaký nenačíta.",
   "play.error.startAi": "Partiu proti AI sa nepodarilo spustiť.",

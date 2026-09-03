@@ -97,13 +97,20 @@ export default function PlayPage() {
     }
   }, [historyFilter, historySort, locale, token]);
 
-  const reconcileRival = useCallback(async (): Promise<string | null> => {
-    if (!token) return null;
+  const reconcileRival = useCallback(async (): Promise<{
+    modelId: string | null;
+    catalogReachable: boolean;
+  }> => {
+    if (!token) return { modelId: null, catalogReachable: true };
 
-    const [catalog, profile] = await Promise.all([
-      api.getModels().catch((): AIModel[] => []),
+    const [catalogResult, profile] = await Promise.all([
+      api.getModels().then(
+        (catalog) => ({ ok: true as const, catalog }),
+        () => ({ ok: false as const, catalog: [] as AIModel[] }),
+      ),
       api.me(token).catch(() => null),
     ]);
+    const catalog = catalogResult.catalog;
     setCatalogModels(catalog);
 
     const eligibleIds = catalog.map((model) => model.model_id);
@@ -111,7 +118,7 @@ export default function PlayPage() {
     const preferredId = profile?.preferred_ai_model_id ?? "";
     const resolved = resolveEligibleModelId(eligibleIds, preferredId, storedId);
 
-    if (!resolved) return null;
+    if (!resolved) return { modelId: null, catalogReachable: catalogResult.ok };
 
     if (resolved !== storedId) {
       setSelectedModelId(resolved);
@@ -125,7 +132,7 @@ export default function PlayPage() {
       }
     }
 
-    return resolved;
+    return { modelId: resolved, catalogReachable: catalogResult.ok };
   }, [token, setSelectedModelId]);
 
   useEffect(() => {
@@ -140,11 +147,18 @@ export default function PlayPage() {
     if (!token) return;
     let cancelled = false;
     void (async () => {
-      const resolved = await reconcileRival();
+      const { modelId, catalogReachable } = await reconcileRival();
       if (cancelled) return;
       setCatalogReady(true);
-      if (!resolved) {
-        setError(translate(locale, "play.error.catalogEmpty"));
+      if (!modelId) {
+        setError(
+          translate(
+            locale,
+            catalogReachable
+              ? "play.error.catalogEmpty"
+              : "play.error.catalogUnavailable",
+          ),
+        );
       }
     })();
     return () => {
@@ -158,10 +172,16 @@ export default function PlayPage() {
     setStartingAI(true);
     setError(null);
     try {
-      const resolved = await reconcileRival();
+      const { modelId, catalogReachable } = await reconcileRival();
       setCatalogReady(true);
-      if (!resolved) {
-        setError(t("play.error.catalogEmpty"));
+      if (!modelId) {
+        setError(
+          t(
+            catalogReachable
+              ? "play.error.catalogEmpty"
+              : "play.error.catalogUnavailable",
+          ),
+        );
         return;
       }
 
@@ -184,7 +204,7 @@ export default function PlayPage() {
 
       const result = (await api.createGame(token, {
         game_mode: "vs_ai",
-        ai_model_model_id: resolved,
+        ai_model_model_id: modelId,
         variant_slug: variantSlug,
       })) as CreateGameResponse;
       resetGameUi();

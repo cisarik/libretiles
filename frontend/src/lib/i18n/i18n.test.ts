@@ -156,6 +156,7 @@ describe("AC-EXHAUST catalogs share one key set", () => {
     expect(Object.keys(skFn).sort()).toEqual(fnKeys);
     expect(Object.keys(csFn).sort()).toEqual(fnKeys);
     expect(Object.keys(plFn).sort()).toEqual(fnKeys);
+    expect(textKeys.length + fnKeys.length).toBe(300);
   });
 });
 
@@ -1049,6 +1050,22 @@ describe("AC-QUEUE-UNKNOWN unrecognised slug uses display_name", () => {
     expect(label).not.toContain("Poľština");
     expect(label).not.toBe("English queue");
     expect(label).not.toBe("Slovak queue");
+  });
+});
+
+describe("AC-CATALOG-COPY-4 unreachable catalog copy", () => {
+  it("renders play.error.catalogUnavailable in all four locales and differs from catalogEmpty", () => {
+    const expected = {
+      en: "The rival catalog is temporarily unavailable. Try again in a moment.",
+      sk: "Katalóg súperov je práve nedostupný. Skús to za chvíľu.",
+      cs: "Katalog soupeřů je právě nedostupný. Zkus to za chvíli.",
+      pl: "Katalog rywali jest chwilowo niedostępny. Spróbuj za chwilę.",
+    } as const;
+    const key = "play.error.catalogUnavailable" as keyof typeof enText;
+    for (const locale of LOCALES) {
+      expect(t(locale, key)).toBe(expected[locale]);
+      expect(t(locale, key)).not.toBe(t(locale, "play.error.catalogEmpty"));
+    }
   });
 });
 

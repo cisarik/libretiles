@@ -147,6 +147,8 @@ export const csText: Record<TextKey, string> = {
     "Partie proti AI i proti lidem mají jednu společnou historii.",
   "play.error.catalogEmpty":
     "Katalog soupeřů je prázdný. Naplň katalog, aby se daly hrát partie proti AI.",
+  "play.error.catalogUnavailable":
+    "Katalog soupeřů je právě nedostupný. Zkus to za chvíli.",
   "play.error.variantUnavailable":
     "Není dostupná žádná hratelná varianta hry. Novou partii nelze vytvořit, dokud se nějaká nenačte.",
   "play.error.startAi": "Partii proti AI se nepodařilo spustit.",

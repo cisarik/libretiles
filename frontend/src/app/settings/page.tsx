@@ -474,7 +474,9 @@ function SettingsPage() {
         if (!resolved) {
           setNotice({
             tone: "warning",
-            textKey: "play.error.catalogEmpty",
+            textKey: catalogResult.ok
+              ? "play.error.catalogEmpty"
+              : "play.error.catalogUnavailable",
           });
           return;
         }
