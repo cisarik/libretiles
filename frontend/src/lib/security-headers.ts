@@ -67,9 +67,19 @@ function httpAndWsOrigins(apiBase: string): {
   }
 }
 
+const NONCE_GRAMMAR = /^[A-Za-z0-9+/_-]+={0,2}$/;
+
+function assertNonceGrammar(nonce: string): void {
+  if (!NONCE_GRAMMAR.test(nonce)) {
+    throw new Error("CSP nonce does not match the Next.js nonce grammar");
+  }
+}
+
 export function buildContentSecurityPolicy(
   context: SecurityHeaderContext,
+  nonce: string,
 ): string {
+  assertNonceGrammar(nonce);
   const apiBase = resolveConnectApiBase(
     context.configuredApiUrl,
     context.requestHostname,
@@ -77,7 +87,8 @@ export function buildContentSecurityPolicy(
   const { httpOrigin, wsOrigin } = httpAndWsOrigins(apiBase);
   const scriptSrc = [
     "'self'",
-    "'unsafe-inline'",
+    `'nonce-${nonce}'`,
+    "'strict-dynamic'",
     ...(context.isDevelopment ? ["'unsafe-eval'"] : []),
   ].join(" ");
 
@@ -101,9 +112,10 @@ export function buildContentSecurityPolicy(
 
 export function buildSecurityHeaders(
   context: SecurityHeaderContext,
+  nonce: string,
 ): Record<string, string> {
   const headers: Record<string, string> = {
-    "Content-Security-Policy": buildContentSecurityPolicy(context),
+    "Content-Security-Policy": buildContentSecurityPolicy(context, nonce),
     ...REQUIRED_RESPONSE_HEADERS,
   };
   if (!context.isDevelopment) {

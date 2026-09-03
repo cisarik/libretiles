@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { buildSecurityHeaders } from "./security-headers";
 
+const TEST_NONCE = "test-nonce";
+
 const REQUIRED_HEADER_NAMES = [
   "Content-Security-Policy",
   "X-Content-Type-Options",
@@ -31,7 +33,7 @@ describe("buildSecurityHeaders", () => {
       isDevelopment: true,
       configuredApiUrl: undefined,
       requestHostname: "localhost",
-    });
+    }, TEST_NONCE);
     for (const name of REQUIRED_HEADER_NAMES) {
       expect(headers[name], `missing header ${name}`).toBeTruthy();
     }
@@ -43,7 +45,7 @@ describe("buildSecurityHeaders", () => {
         isDevelopment: true,
         configuredApiUrl: undefined,
         requestHostname: "localhost",
-      }),
+      }, TEST_NONCE),
     );
     expect(directiveSources(csp, "default-src")).toEqual(["'self'"]);
     expect(directiveSources(csp, "frame-ancestors")).toEqual(["'none'"]);
@@ -58,7 +60,7 @@ describe("buildSecurityHeaders", () => {
         isDevelopment: false,
         configuredApiUrl: "https://api.libretiles.example",
         requestHostname: "play.libretiles.example",
-      }),
+      }, TEST_NONCE),
     );
     const connectSrc = directiveSources(csp, "connect-src");
     expect(connectSrc).toContain("'self'");
@@ -72,7 +74,7 @@ describe("buildSecurityHeaders", () => {
         isDevelopment: true,
         configuredApiUrl: undefined,
         requestHostname: "localhost",
-      }),
+      }, TEST_NONCE),
     );
     const connectSrc = directiveSources(csp, "connect-src");
     expect(connectSrc).toContain("http://localhost:8000");
@@ -85,7 +87,7 @@ describe("buildSecurityHeaders", () => {
         isDevelopment: true,
         configuredApiUrl: "http://localhost:8000",
         requestHostname: "192.168.10.25",
-      }),
+      }, TEST_NONCE),
     );
     const connectSrc = directiveSources(csp, "connect-src");
     expect(connectSrc).toContain("http://192.168.10.25:8000");
@@ -97,12 +99,12 @@ describe("buildSecurityHeaders", () => {
       isDevelopment: true,
       configuredApiUrl: undefined,
       requestHostname: "localhost",
-    });
+    }, TEST_NONCE);
     const production = buildSecurityHeaders({
       isDevelopment: false,
       configuredApiUrl: "https://api.libretiles.example",
       requestHostname: "play.libretiles.example",
-    });
+    }, TEST_NONCE);
     expect(development["Strict-Transport-Security"]).toBeUndefined();
     expect(production["Strict-Transport-Security"]).toBeTruthy();
   });
@@ -113,7 +115,7 @@ describe("buildSecurityHeaders", () => {
         isDevelopment: true,
         configuredApiUrl: undefined,
         requestHostname: "localhost",
-      }),
+      }, TEST_NONCE),
     );
     expect(csp).not.toMatch(/upgrade-insecure-requests/);
   });
@@ -124,7 +126,7 @@ describe("buildSecurityHeaders", () => {
         isDevelopment: false,
         configuredApiUrl: "https://api.libretiles.example",
         requestHostname: "play.libretiles.example",
-      }),
+      }, TEST_NONCE),
     );
     expect(directiveSources(csp, "script-src")).not.toContain("'unsafe-eval'");
   });
@@ -134,7 +136,7 @@ describe("buildSecurityHeaders", () => {
       isDevelopment: false,
       configuredApiUrl: "https://api.libretiles.example",
       requestHostname: "play.libretiles.example",
-    });
+    }, TEST_NONCE);
     for (const name of REQUIRED_HEADER_NAMES) {
       expect(headers[name], `missing header ${name}`).toBeTruthy();
     }
@@ -146,7 +148,7 @@ describe("buildSecurityHeaders", () => {
         isDevelopment: false,
         configuredApiUrl: "https://api.libretiles.example",
         requestHostname: "play.libretiles.example",
-      }),
+      }, TEST_NONCE),
     );
     expect(directiveSources(csp, "default-src")).toEqual(["'self'"]);
     expect(directiveSources(csp, "frame-ancestors")).toEqual(["'none'"]);
@@ -161,8 +163,55 @@ describe("buildSecurityHeaders", () => {
         isDevelopment: false,
         configuredApiUrl: "https://api.libretiles.example",
         requestHostname: "play.libretiles.example",
-      }),
+      }, TEST_NONCE),
     );
     expect(csp).toMatch(/upgrade-insecure-requests/);
+  });
+
+  it("uses a nonce and strict-dynamic in production script-src (AC-CSP-PROD)", () => {
+    const csp = cspFrom(
+      buildSecurityHeaders({
+        isDevelopment: false,
+        configuredApiUrl: "https://api.libretiles.example",
+        requestHostname: "play.libretiles.example",
+      }, TEST_NONCE),
+    );
+    expect(directiveSources(csp, "script-src")).toEqual([
+      "'self'",
+      `'nonce-${TEST_NONCE}'`,
+      "'strict-dynamic'",
+    ]);
+    expect(directiveSources(csp, "script-src")).not.toContain("'unsafe-inline'");
+    expect(directiveSources(csp, "style-src")).toEqual([
+      "'self'",
+      "'unsafe-inline'",
+    ]);
+  });
+
+  it("keeps unsafe-eval in development script-src and still omits unsafe-inline (AC-CSP-DEV)", () => {
+    const csp = cspFrom(
+      buildSecurityHeaders({
+        isDevelopment: true,
+        configuredApiUrl: undefined,
+        requestHostname: "localhost",
+      }, TEST_NONCE),
+    );
+    expect(directiveSources(csp, "script-src")).toEqual([
+      "'self'",
+      `'nonce-${TEST_NONCE}'`,
+      "'strict-dynamic'",
+      "'unsafe-eval'",
+    ]);
+    expect(directiveSources(csp, "script-src")).not.toContain("'unsafe-inline'");
+  });
+
+  it("throws when the nonce contains whitespace or directive punctuation (AC-NONCE-REJECT)", () => {
+    const context = {
+      isDevelopment: false,
+      configuredApiUrl: "https://api.libretiles.example",
+      requestHostname: "play.libretiles.example",
+    };
+    expect(() => buildSecurityHeaders(context, "test nonce")).toThrow();
+    expect(() => buildSecurityHeaders(context, "test;nonce")).toThrow();
   });
 });
