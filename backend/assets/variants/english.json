@@ -4,6 +4,15 @@
   "source": "builtin",
   "fetched_at": "2024-01-01T00:00:00",
   "dictionary_file": "collins2019.txt",
+  "lexicon_provenance": {
+    "upstream": "Collins Scrabble Words (2019)",
+    "upstream_commit": null,
+    "expander": null,
+    "entry_count": 279496,
+    "spdx": null,
+    "license_file": null,
+    "build_script": null
+  },
   "alphabet_order": ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z"],
   "letters": [
     {"letter": "?", "count": 2, "points": 0},

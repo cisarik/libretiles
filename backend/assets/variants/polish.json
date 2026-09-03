@@ -6,6 +6,15 @@
   "source_url": "https://en.wikipedia.org/wiki/Scrabble_letter_distributions",
   "fetched_at": "2026-09-01T00:00:00",
   "dictionary_file": "polish.txt",
+  "lexicon_provenance": {
+    "upstream": "LibreOffice dictionaries pl_PL",
+    "upstream_commit": "75f5dff8c972fff4a32e4ea8434722c277f02a3f",
+    "expander": "unmunch (hunspell 1.7.3)",
+    "entry_count": 3721704,
+    "spdx": "GPL-2.0-or-later OR LGPL-2.1-or-later OR MPL-1.1 OR Apache-2.0 OR CC-SA-1.0",
+    "license_file": "polish.LICENSE",
+    "build_script": "build_polish_lexicon.py"
+  },
   "alphabet_order": [
     "A", "Ą", "B", "C", "Ć", "D", "E", "Ę", "F", "G",
     "H", "I", "J", "K", "L", "Ł", "M", "N", "Ń", "O",

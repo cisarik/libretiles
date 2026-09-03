@@ -42,6 +42,32 @@ class VariantLetter:
 
 
 @dataclass(frozen=True)
+class LexiconProvenance:
+    """Where a shipped lexicon came from, carried verbatim from its manifest.
+
+    ⛔ SHAPE ONLY. The loader's job is to CARRY provenance, not to police it. Asserting
+    that ``entry_count`` equals the real word count, that ``license_file`` exists, or that
+    ``build_script`` is present belongs to ``tests/test_lexicon_provenance.py``; a content
+    rule here would fail the process at import time for a data problem a test must report.
+
+    Every field defaults to ``None`` because absence is legitimate: ``english.json`` ships
+    Collins with no licence file and no build script, and ``null`` is the honest value
+    there rather than an invented SPDX expression.
+
+    ⛔ This is internal and licence-facing. It is deliberately NOT part of the public
+    ``GET /api/game/variants/`` payload, which keeps exactly its four keys.
+    """
+
+    upstream: str | None = None
+    upstream_commit: str | None = None
+    expander: str | None = None
+    entry_count: int | None = None
+    spdx: str | None = None
+    license_file: str | None = None
+    build_script: str | None = None
+
+
+@dataclass(frozen=True)
 class VariantDefinition:
     slug: str
     language: str
@@ -63,6 +89,9 @@ class VariantDefinition:
     alphabet_order: tuple[TileToken, ...] = ()
     vowels: tuple[TileToken, ...] = _DEFAULT_VOWELS
     forbidden_token_sequences: tuple[tuple[TileToken, ...], ...] = ()
+    # Optional on purpose: a future variant may legitimately ship without provenance and
+    # must still load. See ``_parse_provenance``.
+    lexicon_provenance: LexiconProvenance | None = None
 
     @property
     def distribution(self) -> dict[str, int]:
@@ -306,6 +335,39 @@ def _parse_forbidden(raw: object) -> tuple[tuple[TileToken, ...], ...]:
     return tuple(sequences)
 
 
+def _optional_str(raw: object) -> str | None:
+    """A non-empty string, or ``None``. Absence and emptiness are the same thing here."""
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    return None
+
+
+def _parse_provenance(raw: object) -> LexiconProvenance:
+    """Shape-only ingest of ``lexicon_provenance``.
+
+    ⛔ Only the OBJECT-ness of the value is enforced. Unknown extra keys are ignored, in
+    line with every other unknown manifest key, and a missing declared key becomes
+    ``None`` rather than an error: ``tests/test_lexicon_provenance.py`` owns the rule that
+    the four shipped manifests carry exactly the seven declared keys.
+    """
+    if not isinstance(raw, dict):
+        raise VariantManifestError(
+            "malformed_provenance",
+            "lexicon_provenance must be a JSON object when declared; got "
+            f"{type(raw).__name__}. A variant without provenance OMITS the key entirely.",
+        )
+    count = raw.get("entry_count")
+    return LexiconProvenance(
+        upstream=_optional_str(raw.get("upstream")),
+        upstream_commit=_optional_str(raw.get("upstream_commit")),
+        expander=_optional_str(raw.get("expander")),
+        entry_count=count if isinstance(count, int) and not isinstance(count, bool) else None,
+        spdx=_optional_str(raw.get("spdx")),
+        license_file=_optional_str(raw.get("license_file")),
+        build_script=_optional_str(raw.get("build_script")),
+    )
+
+
 def _load_variant_from_path(path: Path) -> VariantDefinition:
     data = json.loads(path.read_text(encoding="utf-8"))
     language = str(data.get("language") or data.get("name") or "Unknown")
@@ -386,6 +448,11 @@ def _load_variant_from_path(path: Path) -> VariantDefinition:
         if "forbidden_token_sequences" in data
         else ()
     )
+    provenance = (
+        _parse_provenance(data["lexicon_provenance"])
+        if "lexicon_provenance" in data
+        else None
+    )
     letters_raw: Iterable[object] = data.get("letters", [])
 
     letters: list[VariantLetter] = []
@@ -438,6 +505,7 @@ def _load_variant_from_path(path: Path) -> VariantDefinition:
         alphabet_order=alphabet_order,
         vowels=vowels,
         forbidden_token_sequences=forbidden,
+        lexicon_provenance=provenance,
     )
 
 

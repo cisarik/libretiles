@@ -6,6 +6,15 @@
   "source_url": "https://en.wikipedia.org/wiki/Scrabble_letter_distributions",
   "fetched_at": "2026-09-01T00:00:00",
   "dictionary_file": "czech.txt",
+  "lexicon_provenance": {
+    "upstream": "LibreOffice dictionaries cs_CZ",
+    "upstream_commit": "75f5dff8c972fff4a32e4ea8434722c277f02a3f",
+    "expander": "unmunch (hunspell 1.7.3)",
+    "entry_count": 3930497,
+    "spdx": "GPL-2.0-only",
+    "license_file": "czech.LICENSE",
+    "build_script": "build_czech_lexicon.py"
+  },
   "alphabet_order": [
     "A", "Á", "B", "C", "Č", "D", "Ď", "E", "É", "Ě",
     "F", "G", "H", "CH", "I", "Í", "J", "K", "L", "M",

@@ -7,6 +7,15 @@
   "fetched_at": "2024-01-01T00:00:00",
   "dictionary_file": "slovak.txt",
   "two_tile_words_file": "slovak_two_tile_words.txt",
+  "lexicon_provenance": {
+    "upstream": "LibreOffice dictionaries sk_SK",
+    "upstream_commit": "75f5dff8c972fff4a32e4ea8434722c277f02a3f",
+    "expander": "unmunch (hunspell 1.7.3)",
+    "entry_count": 3005250,
+    "spdx": "GPL-2.0-only OR LGPL-2.1-only OR MPL-1.1",
+    "license_file": "slovak.LICENSE",
+    "build_script": "build_slovak_lexicon.py"
+  },
   "alphabet_order": [
     "A", "Á", "Ä", "B", "C", "Č", "D", "Ď", "DZ", "DŽ",
     "E", "É", "F", "G", "H", "CH", "I", "Í", "J", "K",

@@ -17,7 +17,7 @@ Two rules this module must never break:
 The parameterization is driven by the live installed set rather than a literal list,
 so a fifth manifest is covered the moment it lands. ``G1`` and ``G9`` guard the
 parameterization itself: ``list_installed_variants`` logs and SKIPS a manifest it
-cannot load (``gamecore/variant_store.py:453-460``), so without a count comparison a
+cannot load (``gamecore/variant_store.py:538-545``), so without a count comparison a
 broken manifest would be invisible to this harness as well as to the product.
 """
 
@@ -89,14 +89,31 @@ _MANIFEST_STEMS = [path.stem for path in _MANIFEST_PATHS]
 # Keys that duplicate a DERIVED property of VariantDefinition and must therefore never
 # be declared in a manifest. Each name below was confirmed to be a ``property`` on
 # VariantDefinition, with no declared counterpart:
-#   total_tiles       variant_store.py:75-77    sum of letter counts
-#   distribution      variant_store.py:67-69    {token: count}
-#   tile_points       variant_store.py:71-73    {token: points}
-#   playable_letters  variant_store.py:95-106   tile set ordered by alphabet index
+#   total_tiles       variant_store.py:104-106  sum of letter counts
+#   distribution      variant_store.py:96-98    {token: count}
+#   tile_points       variant_store.py:100-102  {token: points}
+#   playable_letters  variant_store.py:124-135  tile set ordered by alphabet index
+#   display_label     variant_store.py:108-112  composed from language and variant_name
 # dictionary_file and two_tile_words_file are deliberately absent from this tuple: they
 # are legitimate declared INPUTS whose derived twins are dictionary_path and
 # two_tile_words_path.
-_FORBIDDEN_DERIVED_KEYS = ("total_tiles", "distribution", "tile_points", "playable_letters")
+# ⛔ lexicon_provenance is a DECLARED key, not a derived property, and must never be added
+# here: all four shipped manifests declare it.
+_FORBIDDEN_DERIVED_KEYS = (
+    "total_tiles",
+    "distribution",
+    "tile_points",
+    "playable_letters",
+    "display_label",
+)
+
+# The other side of the same classification: a derived property whose manifest twin is a
+# legitimate INPUT under a different name. G27b keeps the two sets exhaustive, so a future
+# derived property forces a deliberate decision instead of quietly landing in neither.
+_DERIVED_KEYS_WITH_DECLARED_TWINS = {
+    "dictionary_path": "dictionary_file",
+    "two_tile_words_path": "two_tile_words_file",
+}
 
 
 def _declared_tokens(variant: VariantDefinition) -> list[str]:
@@ -117,7 +134,7 @@ def _synthetic(slug: str, **overrides: Any) -> dict[str, Any]:
     """A minimal loadable manifest, overridable one key at a time.
 
     ``dictionary_file`` always names a real lexicon. ``validate_dictionary_file`` runs
-    at ``variant_store.py:353``, BEFORE ``alphabet_order`` is parsed at ``:363``, so a
+    at ``variant_store.py:432``, BEFORE ``alphabet_order`` is parsed at ``:442``, so a
     synthetic manifest pointing at an absent lexicon would raise ``FileNotFoundError``
     first and the intended ``VariantManifestError`` would never fire.
     """
@@ -282,7 +299,7 @@ def test_g10_declared_asset_references_resolve(variant: VariantDefinition) -> No
 
 @pytest.mark.parametrize("variant", _INSTALLED, ids=_SLUGS)
 def test_g11_extension_points_are_identity_today(variant: VariantDefinition) -> None:
-    # Pins the CURRENT identity behaviour of variant_store.py:108-114 so that a future
+    # Pins the CURRENT identity behaviour of variant_store.py:137-143 so that a future
     # non-identity lexical or display mapping is a deliberate, visible change.
     for token in sorted(_tile_tokens(variant)):
         assert variant.lexical_contribution(token) == token
@@ -364,9 +381,9 @@ def test_g26a_manifest_stem_equals_declared_slug(manifest_path: Path) -> None:
     """The ``{stem: slug}`` pair of every installed manifest must be equal.
 
     ``load_variant(slug)`` resolves a FILENAME — ``_variant_path`` at
-    ``variant_store.py:178-179`` builds ``f"{slugify(slug)}.json"`` — while
+    ``variant_store.py:207-208`` builds ``f"{slugify(slug)}.json"`` — while
     ``list_installed_variants`` advertises the DECLARED ``slug`` key
-    (``variant_store.py:324``). When the two diverge the loader now rejects the
+    (``variant_store.py:386``). When the two diverge the loader now rejects the
     manifest with code ``slug_stem_mismatch``, so ``G9``'s count comparison sees the
     gap; ``G26b`` pins that rejection. This test keeps the repository's own manifests
     honest so that rejection is never reached in practice.
@@ -456,7 +473,7 @@ def test_g28_a_non_canonical_manifest_filename_is_rejected(
 def test_g27_no_manifest_declares_a_derived_property(manifest_path: Path) -> None:
     """Read as RAW JSON, because the loader silently ignores unknown keys.
 
-    ``total_tiles`` is DERIVED at ``variant_store.py:75-77`` as the sum of letter counts,
+    ``total_tiles`` is DERIVED at ``variant_store.py:104-106`` as the sum of letter counts,
     so a declared value could disagree with the real tile set: it would read as
     authoritative to a human reviewer while being completely ignored by the code. The
     same reasoning applies to every other manifest key that duplicates a derived
@@ -470,6 +487,54 @@ def test_g27_no_manifest_declares_a_derived_property(manifest_path: Path) -> Non
         "computed property of VariantDefinition, so a declared value is silently ignored "
         "by the loader while looking authoritative to a reader"
     )
+
+
+def test_g27b_every_derived_property_is_classified() -> None:
+    """Neither set may quietly grow a third category.
+
+    ``_FORBIDDEN_DERIVED_KEYS`` and ``_DERIVED_KEYS_WITH_DECLARED_TWINS`` must together
+    cover EVERY ``property`` on ``VariantDefinition``. Without this, a future derived
+    property would land in neither set and G27 would be blind to it — which is exactly how
+    ``display_label`` stayed unguarded until this exchange.
+    """
+    derived = {
+        name
+        for name, member in vars(VariantDefinition).items()
+        if isinstance(member, property)
+    }
+    classified = set(_FORBIDDEN_DERIVED_KEYS) | set(_DERIVED_KEYS_WITH_DECLARED_TWINS)
+    assert derived == classified, (
+        f"unclassified derived properties: {sorted(derived - classified)}; "
+        f"names classified but no longer properties: {sorted(classified - derived)}"
+    )
+    # lexicon_provenance is a declared manifest key, not a derived property.
+    assert "lexicon_provenance" not in derived
+    assert "lexicon_provenance" not in _FORBIDDEN_DERIVED_KEYS
+
+
+def test_g27c_the_forbidden_set_catches_a_declared_display_label(tmp_path: Path) -> None:
+    """Prove G27 can fail, on the key this exchange added.
+
+    ``display_label`` is composed at ``variant_store.py:108-112`` from ``language`` and
+    ``variant_name`` and has no declared twin, so a manifest declaring it reads as
+    authoritative to a reviewer while the loader ignores it completely. Against the
+    pre-change forbidden set this assertion failed — ``declared`` was ``[]`` — which is the
+    whole reason the key is now listed.
+    """
+    payload = _synthetic("g27c", display_label="Synthetic – NOT the real label")
+    path = _write_manifest(tmp_path, "g27c", payload)
+
+    data = json.loads(path.read_text(encoding="utf-8"))
+    declared = sorted(key for key in _FORBIDDEN_DERIVED_KEYS if key in data)
+    assert declared == ["display_label"], (
+        "the forbidden-derived-key set is blind to a declared display_label; a manifest "
+        "could carry a label that the loader silently ignores"
+    )
+
+    # And the reason it must be forbidden: the declared value really is discarded.
+    variant = _load_variant_from_path(path)
+    assert variant.display_label == "Synthetic"
+    assert variant.display_label != payload["display_label"]
 
 
 # --- Negative tests: a malformed manifest must fail with its exact code -----------------
