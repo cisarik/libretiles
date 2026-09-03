@@ -366,9 +366,10 @@ def test_g26a_manifest_stem_equals_declared_slug(manifest_path: Path) -> None:
     ``load_variant(slug)`` resolves a FILENAME — ``_variant_path`` at
     ``variant_store.py:178-179`` builds ``f"{slugify(slug)}.json"`` — while
     ``list_installed_variants`` advertises the DECLARED ``slug`` key
-    (``variant_store.py:324``). When the two diverge, a variant is selectable and
-    unloadable at the same time, and ``G9``'s count comparison cannot see it. ``G26b``
-    pins that divergence as measured behaviour.
+    (``variant_store.py:324``). When the two diverge the loader now rejects the
+    manifest with code ``slug_stem_mismatch``, so ``G9``'s count comparison sees the
+    gap; ``G26b`` pins that rejection. This test keeps the repository's own manifests
+    honest so that rejection is never reached in practice.
     """
     stem = manifest_path.stem
     pair = {stem: _load_variant_from_path(manifest_path).slug}
