@@ -1,6 +1,6 @@
 import { useGameStore } from "@/hooks/useGameStore";
 import { DEFAULT_LOCALE, t, tf } from "@/lib/i18n";
-import type { Locale } from "@/lib/i18n/locales";
+import { isLocale, LOCALE_COOKIE_NAME, type Locale } from "@/lib/i18n/locales";
 import type {
   AIModel,
   AIPrompt,
@@ -221,11 +221,27 @@ async function refreshAccessToken(): Promise<string | null> {
   return refreshPromise;
 }
 
+function acceptLanguageFromCookie(): string | undefined {
+  if (typeof document === "undefined") return undefined;
+  const prefix = `${LOCALE_COOKIE_NAME}=`;
+  for (const raw of document.cookie.split(";")) {
+    const cookie = raw.trim();
+    if (!cookie.startsWith(prefix)) continue;
+    const value = cookie.slice(prefix.length);
+    return isLocale(value) ? value : undefined;
+  }
+  return undefined;
+}
+
 async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   const sendRequest = (bearer?: string | null) => {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
+    const acceptLanguage = acceptLanguageFromCookie();
+    if (acceptLanguage) {
+      headers["Accept-Language"] = acceptLanguage;
+    }
     if (bearer) {
       headers["Authorization"] = `Bearer ${bearer}`;
     }

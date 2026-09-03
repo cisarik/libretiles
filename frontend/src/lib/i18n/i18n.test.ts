@@ -4,13 +4,16 @@ import { fileURLToPath } from "node:url";
 import { DndContext } from "@dnd-kit/core";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import SettingsPage from "@/app/settings/page";
 import { AIThinkingOverlay } from "@/components/game/AIThinkingOverlay";
 import { BlankPicker } from "@/components/game/BlankPicker";
 import { GameHistoryModal } from "@/components/game/GameHistoryModal";
-import { formatUpdatedAt } from "@/components/game/GameHistoryPanel";
+import {
+  formatUpdatedAt,
+  GameHistoryPanel,
+} from "@/components/game/GameHistoryPanel";
 import {
   composeAnnouncement,
   LiveAnnouncer,
@@ -22,7 +25,8 @@ import {
 import { variantDisplayName } from "@/components/settings/GameLanguagePanel";
 import { TileRack } from "@/components/tiles/TileRack";
 import { useGameStore } from "@/hooks/useGameStore";
-import type { VariantSummary } from "@/lib/types";
+import { api } from "@/lib/api";
+import type { GameHistoryResponse, VariantSummary } from "@/lib/types";
 
 import { t, tf } from "./index";
 import {
@@ -30,6 +34,8 @@ import {
   isLocale,
   localeSyncDecision,
   LOCALES,
+  LOCALE_COOKIE_NAME,
+  type Locale,
 } from "./locales";
 import { csFn, csText } from "./messages.cs";
 import {
@@ -1738,5 +1744,187 @@ describe("AC-KEYTYPED settings option keys", () => {
         expect(t(locale, key!)).not.toBe("");
       }
     }
+  });
+});
+
+function jsonOk(body: unknown = []): Response {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+function acceptLanguageFromFetch(
+  fetchMock: ReturnType<typeof vi.fn>,
+): string | undefined {
+  const init = fetchMock.mock.calls[0]?.[1] as
+    | { headers?: Record<string, string> }
+    | undefined;
+  return init?.headers?.["Accept-Language"];
+}
+
+describe("AC-ACCEPT-LANGUAGE request header", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("sends Accept-Language matching the locale cookie", async () => {
+    const fetchMock = vi.fn(async () => jsonOk());
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("document", { cookie: `${LOCALE_COOKIE_NAME}=sk` });
+    await api.getModels();
+    expect(acceptLanguageFromFetch(fetchMock)).toBe("sk");
+  });
+
+  it("omits Accept-Language when the cookie is absent", async () => {
+    const fetchMock = vi.fn(async () => jsonOk());
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("document", { cookie: "" });
+    await api.getModels();
+    expect(acceptLanguageFromFetch(fetchMock)).toBeUndefined();
+  });
+
+  it("omits Accept-Language when the cookie holds an unsupported value", async () => {
+    const fetchMock = vi.fn(async () => jsonOk());
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("document", { cookie: `${LOCALE_COOKIE_NAME}=fr` });
+    await api.getModels();
+    expect(acceptLanguageFromFetch(fetchMock)).toBeUndefined();
+  });
+
+  it("does not throw when document is undefined", async () => {
+    const fetchMock = vi.fn(async () => jsonOk());
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(api.getModels()).resolves.toEqual([]);
+    expect(acceptLanguageFromFetch(fetchMock)).toBeUndefined();
+  });
+});
+
+const END_REASON_COPY: Array<{
+  value: string;
+  en: string;
+  sk: string;
+  cs: string;
+  pl: string;
+}> = [
+  {
+    value: "BAG_EMPTY_AND_PLAYER_OUT",
+    en: "Bag and rack empty",
+    sk: "Vrecko aj zásobník prázdne",
+    cs: "Sáček i zásobník prázdné",
+    pl: "Woreczek i stojak puste",
+  },
+  {
+    value: "NO_MOVES_AVAILABLE",
+    en: "No moves available",
+    sk: "Žiadny možný ťah",
+    cs: "Žádný možný tah",
+    pl: "Brak możliwych ruchów",
+  },
+  {
+    value: "SIX_CONSECUTIVE_ZERO_SCORES",
+    en: "Six scoreless turns",
+    sk: "Šesť ťahov bez bodov",
+    cs: "Šest tahů bez bodů",
+    pl: "Sześć ruchów bez punktów",
+  },
+  {
+    value: "give_up",
+    en: "Resigned",
+    sk: "Partia vzdaná",
+    cs: "Partie vzdána",
+    pl: "Partia poddana",
+  },
+  {
+    value: "queue_cancelled",
+    en: "Queue cancelled",
+    sk: "Front zrušený",
+    cs: "Fronta zrušena",
+    pl: "Kolejka anulowana",
+  },
+];
+
+function historyData(reason: string): GameHistoryResponse {
+  return {
+    items: [
+      {
+        game_id: "end-reason-game",
+        game_mode: "vs_ai",
+        status: "finished",
+        outcome: "won",
+        opponent_label: "AI",
+        my_score: 100,
+        opponent_score: 50,
+        move_count: 10,
+        is_my_turn: false,
+        winner_slot: 0,
+        game_end_reason: reason,
+        created_at: "2026-08-27T00:00:00Z",
+        started_at: "2026-08-27T00:00:00Z",
+        finished_at: "2026-08-27T01:00:00Z",
+        updated_at: "2026-08-27T01:00:00Z",
+      },
+    ],
+    page: 1,
+    page_size: 8,
+    total: 1,
+    total_pages: 1,
+    has_next: false,
+    has_previous: false,
+    game_mode: "all",
+    sort: "updated",
+  };
+}
+
+function renderHistory(reason: string, locale: Locale): string {
+  Object.assign(useGameStore.getInitialState(), {
+    uiLocale: locale,
+    premiumLookEnabled: false,
+  });
+  return renderToStaticMarkup(
+    createElement(GameHistoryPanel, {
+      data: historyData(reason),
+      filter: "all",
+      sort: "updated",
+      loading: false,
+      error: null,
+      onFilterChange: () => undefined,
+      onPrevPage: () => undefined,
+      onNextPage: () => undefined,
+      onRefresh: () => undefined,
+      onSortChange: () => undefined,
+      onOpenGame: () => undefined,
+    }),
+  );
+}
+
+describe("AC-ENDREASON-4 game_end_reason mapping", () => {
+  afterEach(() => {
+    Object.assign(useGameStore.getInitialState(), {
+      uiLocale: null,
+      premiumLookEnabled: true,
+    });
+  });
+
+  it("renders the authored string for all five values in all four locales", () => {
+    for (const row of END_REASON_COPY) {
+      expect(renderHistory(row.value, "en")).toContain(row.en);
+      expect(renderHistory(row.value, "sk")).toContain(row.sk);
+      expect(renderHistory(row.value, "cs")).toContain(row.cs);
+      expect(renderHistory(row.value, "pl")).toContain(row.pl);
+    }
+  });
+
+  it("renders an unmapped value verbatim", () => {
+    const token = "UNMAPPED_END_REASON";
+    expect(renderHistory(token, "en")).toContain(token);
+    expect(renderHistory(token, "sk")).toContain(token);
+  });
+
+  it("renders an empty value as history.hint.boardReady", () => {
+    expect(renderHistory("", "en")).toContain("Board ready");
+    expect(renderHistory("", "sk")).toContain("Partia je pripravená");
+    expect(renderHistory("", "cs")).toContain("Partie je připravená");
+    expect(renderHistory("", "pl")).toContain("Partia gotowa");
   });
 });

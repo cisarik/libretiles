@@ -256,8 +256,7 @@ come back when a fifth variant is added.
 the Slovak, Czech, and Polish catalogs because a fixed genitive-plural noun
 would be wrong for variable counts of 2–4.
 
-`item.game_end_reason` remains an unlocalized backend enum; localizing it needs
-a separate keyed mapping.
+`game_end_reason` is mapped in the frontend from an unchanged backend value.
 
 | Key | English | Slovak |
 |---|---|---|
@@ -289,6 +288,11 @@ a separate keyed mapping.
 | history.mode.human | Human duel | Duel s človekom |
 | history.hint.waitingRoom | Waiting room | Čakárňa |
 | history.hint.boardReady | Board ready | Partia je pripravená |
+| history.endReason.bagEmpty | Bag and rack empty | Vrecko aj zásobník prázdne |
+| history.endReason.noMoves | No moves available | Žiadny možný ťah |
+| history.endReason.sixZero | Six scoreless turns | Šesť ťahov bez bodov |
+| history.endReason.gaveUp | Resigned | Partia vzdaná |
+| history.endReason.queueCancelled | Queue cancelled | Front zrušený |
 | history.open | Open | Otvoriť |
 | history.current | Current | Aktuálna |
 | history.pageOf (fn) | Page {page} of {total} | Strana {page} z {total} |

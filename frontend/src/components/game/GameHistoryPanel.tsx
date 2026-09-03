@@ -74,6 +74,23 @@ const OUTCOME_META: Record<
   },
 };
 
+export const GAME_END_REASON_KEYS: Record<string, TextKey> = {
+  BAG_EMPTY_AND_PLAYER_OUT: "history.endReason.bagEmpty",
+  NO_MOVES_AVAILABLE: "history.endReason.noMoves",
+  SIX_CONSECUTIVE_ZERO_SCORES: "history.endReason.sixZero",
+  give_up: "history.endReason.gaveUp",
+  queue_cancelled: "history.endReason.queueCancelled",
+};
+
+function historyEndReasonText(
+  reason: string,
+  translateKey: (key: TextKey) => string,
+): string {
+  if (!reason) return translateKey("history.hint.boardReady");
+  const key = GAME_END_REASON_KEYS[reason];
+  return key ? translateKey(key) : reason;
+}
+
 export function formatUpdatedAt(value: string, locale: Locale): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
@@ -290,7 +307,7 @@ export function GameHistoryPanel({
                           ? t("game.status.yourTurn")
                           : item.status === "waiting"
                             ? t("history.hint.waitingRoom")
-                            : item.game_end_reason || t("history.hint.boardReady")}
+                            : historyEndReasonText(item.game_end_reason, t)}
                       </div>
                     </td>
                     <td className="px-4 py-3.5 text-sm text-stone-200">
