@@ -460,3 +460,100 @@ def test_p13_the_expander_constant_is_identical_across_all_three_scripts() -> No
     values = {script: _load_script(script).EXPECTED_EXPANDER for _, script in _SCRIPT_CLAIMS}
     assert len(values) == 3, f"expected three build scripts, found {sorted(values)}"
     assert set(values.values()) == {_EXPECTED_EXPANDER}, f"expander drift: {values}"
+
+
+# --- P14, P15: nothing unclaimed may sit in the shipped dictionary directory --------------
+#
+# ``backend/assets/dicts/sowpods.txt`` sat in this repository for the whole life of the
+# project claimed by NO manifest, carrying NO provenance, and audited by NOTHING:
+# ``validate_lexicons`` walks the MANIFESTS, so a file that no manifest names is invisible to
+# it by construction. It has since been deleted. P14 names that one file forever; P15 is the
+# rule that makes the whole CLASS of defect impossible, which is the part that matters,
+# because this directory is about to receive many more lexicons and their licence files.
+#
+# ⛔ Neither test reads Git history — the deleted blob deliberately survives there, which is
+# exactly what made the deletion reversible — and neither greps the tree for that file's name.
+# ``test_documentation_dictionary_claims.py`` owns the documentation claim and necessarily
+# contains the name in order to forbid it.
+
+# The manifest fields that CLAIM a file under ``assets/dicts/``. ⚠ ``build_script`` is NOT one
+# of them: it names a file under ``backend/scripts/``, and P3 and P10b already own it.
+_DIRECT_CLAIM_FIELDS = ("dictionary_file", "two_tile_words_file")
+_PROVENANCE_CLAIM_FIELD = "license_file"
+
+
+def _claimed_dictionary_filenames(variants_dir: Path) -> dict[str, list[str]]:
+    """Map every ``assets/dicts/`` name a manifest CLAIMS to the manifests that claim it.
+
+    ⛔ A RAW JSON scan, deliberately NOT ``list_installed_variants()``. That helper wraps each
+    load in ``try/except Exception``, logs the failure and CONTINUES, so a manifest that fails
+    to load contributes NO claims — and P15 would then report that manifest's perfectly
+    legitimate lexicon and licence file as orphans, pointing the reader at the wrong files
+    entirely. A raw scan sees the claim regardless of loader health, and loader health is
+    owned by P1-P8 and ``variant_store``.
+
+    Read defensively for the same reason: a missing key, a null, or a non-string value
+    contributes no claim rather than raising, because P15's job is to find orphans, not to
+    re-validate manifest shape. An unparseable manifest is the one exception — a tree where a
+    manifest cannot be read is a tree where P15 cannot honestly claim anything.
+    """
+    claims: dict[str, list[str]] = {}
+    for manifest in sorted(variants_dir.glob("*.json")):
+        try:
+            data = json.loads(manifest.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise AssertionError(f"{manifest.name} is not parsable JSON: {exc}") from exc
+        if not isinstance(data, dict):
+            continue
+        declared = [data.get(field) for field in _DIRECT_CLAIM_FIELDS]
+        provenance = data.get("lexicon_provenance")
+        if isinstance(provenance, dict):
+            declared.append(provenance.get(_PROVENANCE_CLAIM_FIELD))
+        for value in declared:
+            if isinstance(value, str) and value:
+                claims.setdefault(value, []).append(manifest.name)
+    return claims
+
+
+def test_p14_the_unclaimed_english_word_list_is_not_shipped() -> None:
+    """The named absence. One file, one assertion, and the message says WHY it is unwanted."""
+    orphan = _DICTS_DIR / "sowpods.txt"
+    assert not orphan.exists(), (
+        f"{orphan} is back. It is claimed by no manifest, so it carries no lexicon_provenance "
+        f"and validate_lexicons — which walks the manifests — never audits it. The shipped "
+        f"Tier-1 English list is collins2019.txt, claimed by english.json"
+    )
+
+
+def test_p15_every_present_dictionary_file_is_claimed_by_a_manifest() -> None:
+    """ONE DIRECTION: a file that is PRESENT must be CLAIMED. Never the reverse.
+
+    ⛔ Do not "tighten" this into "every claimed file is present". A future variant is already
+    designed to claim a lexicon that is legitimately ABSENT from a fresh checkout: Hungarian's
+    expansion is far past any committable size, so its committed build script generates the
+    word list locally and that output stays out of Git. Until the local build runs,
+    ``hungarian.json`` will claim a ``dictionary_file`` that does not exist, and fail-closed
+    readiness reports the variant unavailable — ``gamecore/lexicon_health.py`` owns that, and
+    it is correct behaviour rather than a test failure. The loader already enforces the
+    alphabet invariant the same way round: every tile token must appear in ``alphabet_order``,
+    while ``alphabet_order`` may legitimately carry letters that are not tiles (Slovak ``CH``).
+    Reversing either direction fails on an asset that is deliberately shipped or deliberately
+    planned.
+
+    ⛔ NO EXEMPTION LIST — not for dotfiles, not for a README, not for ``.gitkeep``. An
+    exemption list is precisely where the next orphan would hide. If an unclaimed file is ever
+    genuinely needed here, that should cost a deliberate decision, and this test failing is
+    that decision's trigger.
+    """
+    claims = _claimed_dictionary_filenames(_VARIANTS_DIR)
+    present = sorted(path for path in _DICTS_DIR.iterdir() if path.is_file())
+    orphans = [path.name for path in present if path.name not in claims]
+    assert orphans == [], (
+        f"unclaimed file(s) under {_DICTS_DIR}: {orphans}. Every file shipped there must be "
+        f"claimed by an installed manifest through dictionary_file, two_tile_words_file, or "
+        f"lexicon_provenance.license_file; an unclaimed asset carries no provenance and "
+        f"validate_lexicons never audits it. Check the manifests as well: a renamed claim, a "
+        f"claim written as a path rather than a basename, or a manifest that no longer parses "
+        f"presents here as an orphan of the file it used to claim. Currently claimed: "
+        f"{sorted(claims)}"
+    )
