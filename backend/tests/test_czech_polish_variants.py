@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -335,3 +336,129 @@ def test_t12_stem_slug_divergent_manifest_is_omitted(
     assert "mismatch" not in dumped.lower()
     assert "slug_stem_mismatch" not in dumped
     assert "VariantManifestError" not in dumped
+
+
+def _synthetic_asset_root(tmp_path: Path) -> Path:
+    """A throwaway assets root with both subdirectories the loader resolves against.
+
+    ``validate_dictionary_file`` and ``VariantDefinition.dictionary_path`` both build on
+    ``variant_store.get_assets_path()``, so a synthetic lexicon can only be reached by
+    repointing that one function. A shipped asset is never written to.
+    """
+    root = tmp_path / "assets"
+    (root / "dicts").mkdir(parents=True)
+    (root / "variants").mkdir(parents=True)
+    return root
+
+
+def _corrupt_manifest(dictionary_file: str) -> dict[str, Any]:
+    return {
+        "language": "Corrupt",
+        "slug": "corrupt",
+        "language_code": "xx",
+        "dictionary_file": dictionary_file,
+        "alphabet_order": ["A"],
+        "letters": [
+            {"letter": "?", "count": 2, "points": 0},
+            {"letter": "A", "count": 98, "points": 1},
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_t13_present_but_corrupt_lexicon_reads_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Readiness is content-aware: a lexicon that exists but carries no word fails closed.
+
+    Before this slice ``_variant_resources_ready`` asked only ``is_file()``, so this
+    manifest reported ``playable`` while every word lookup against it would fail. The
+    file below exists, is non-empty and is valid UTF-8; it simply yields no line that
+    survives the loader's own filter (``gamecore/fastdict.py:_read_words`` plus the
+    two-code-point floor at ``game/services.py:216``).
+    """
+    root = _synthetic_asset_root(tmp_path)
+    (root / "dicts" / "corrupt_lexicon.txt").write_text(
+        "# header only, no words at all\n# second header line\n", encoding="utf-8"
+    )
+    _write_manifest(root / "variants", "corrupt", _corrupt_manifest("corrupt_lexicon.txt"))
+    monkeypatch.setattr("gamecore.variant_store.get_assets_path", lambda: root)
+    monkeypatch.setattr("game.views._variant_json_dir", lambda: root / "variants")
+
+    resp = _auth_client().get("/api/game/variants/")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body == [
+        {
+            "slug": "corrupt",
+            "display_name": "Corrupt",
+            "language_code": "xx",
+            "readiness": "unavailable",
+        }
+    ]
+    for row in body:
+        assert set(row.keys()) == _SUMMARY_KEYS
+    dumped = json.dumps(body)
+    assert "corrupt_lexicon" not in dumped
+    assert ".txt" not in dumped
+    assert str(tmp_path) not in dumped
+    assert "no_surviving_word" not in dumped
+
+
+@pytest.mark.django_db
+def test_t14_omit_branch_reason_discriminates_the_failure_class(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An operator must be able to tell the two omit causes apart, without a leak.
+
+    The ``game`` logger sets ``propagate: False`` in ``config/settings.py``, so the
+    handler is attached to it directly — the same idiom as
+    ``tests/test_multiplayer_ws.py:232-241``.
+    """
+    (tmp_path / "broken.json").write_text("{not json", encoding="utf-8")
+    _write_manifest(
+        tmp_path,
+        "De_Ch",
+        {
+            "language": "Divergent",
+            "slug": "de-ch",
+            "dictionary_file": "collins2019.txt",
+            "alphabet_order": ["A"],
+            "letters": [
+                {"letter": "?", "count": 2, "points": 0},
+                {"letter": "A", "count": 98, "points": 1},
+            ],
+        },
+    )
+    monkeypatch.setattr("game.views._variant_json_dir", lambda: tmp_path)
+
+    game_log = logging.getLogger("game")
+    with caplog.at_level(logging.ERROR, logger="game"):
+        game_log.addHandler(caplog.handler)
+        try:
+            resp = _auth_client().get("/api/game/variants/")
+        finally:
+            game_log.removeHandler(caplog.handler)
+
+    assert resp.status_code == 200
+    assert resp.json() == []
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("variant_list_omitted")
+    ]
+    assert len(messages) == 2, messages
+    for message in messages:
+        assert "reason=" in message, message
+    reasons = {message.split("reason=", 1)[1] for message in messages}
+    # The whole point: two different causes must not read identically.
+    assert len(reasons) == 2, reasons
+    assert reasons == {"JSONDecodeError", "slug_stem_mismatch"}, reasons
+    for message in messages:
+        assert str(tmp_path) not in message
+        assert "/" not in message
+        assert ".json" not in message
+        assert ".txt" not in message
+        assert "De_Ch" not in message
+        assert "broken" not in message
+

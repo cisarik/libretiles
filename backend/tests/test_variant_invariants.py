@@ -421,6 +421,37 @@ def test_g26b_a_stem_slug_divergence_is_rejected_at_ingest(
     assert caught_by_stem.value.code == "slug_stem_mismatch"
 
 
+def test_g28_a_non_canonical_manifest_filename_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A filename that is not already in canonical slug form can never be resolved.
+
+    Measured before this condition existed: ``De_Ch.json`` declaring ``"slug": "de-ch"``
+    was ACCEPTED, ``list_installed_variants()`` advertised it as ``'de-ch'``, and it was
+    unloadable under BOTH names — ``load_variant('de-ch')`` and ``load_variant('De_Ch')``
+    each raised ``FileNotFoundError: Variant ... not found`` — because ``_variant_path``
+    looks for ``f"{slugify(slug)}.json"`` and no such file exists on disk.
+
+    Comparing the declared slug against ``slugify(path.stem)`` cannot see this: both
+    values were ``'de-ch'``. The RAW filename is a third value, and it is the one that
+    decides whether the file can be found, which is why the loader needs its own
+    ``path.stem != slugify(path.stem)`` condition.
+    """
+    path = _write_manifest(tmp_path, "De_Ch", _synthetic("de-ch"))
+    monkeypatch.setattr("gamecore.variant_store._variants_dir", lambda: tmp_path)
+    assert path.stem == "De_Ch"
+    assert slugify(path.stem) == "de-ch"
+
+    with pytest.raises(VariantManifestError) as caught:
+        _load_variant_from_path(path)
+    assert caught.value.code == "slug_stem_mismatch"
+
+    assert list_installed_variants() == []
+    for candidate in ("de-ch", "De_Ch"):
+        with pytest.raises(FileNotFoundError):
+            load_variant(candidate)
+
+
 @pytest.mark.parametrize("manifest_path", _MANIFEST_PATHS, ids=_MANIFEST_STEMS)
 def test_g27_no_manifest_declares_a_derived_property(manifest_path: Path) -> None:
     """Read as RAW JSON, because the loader silently ignores unknown keys.

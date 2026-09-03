@@ -8,6 +8,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from gamecore.assets import get_assets_path
+from gamecore.lexicon_health import check_lexicon
 from gamecore.variant_store import VariantDefinition, _load_variant_from_path, slugify
 
 from . import services
@@ -91,10 +92,34 @@ def _summary_from_payload(data: dict[str, Any], stem: str) -> VariantSummary | N
 
 
 def _variant_resources_ready(variant: VariantDefinition) -> bool:
-    if not variant.dictionary_path.is_file():
+    """Content-aware readiness. Bounded and cached; never reads a whole lexicon.
+
+    Existence alone used to be enough here, so a truncated, BOM-prefixed, mojibake or
+    header-only lexicon read as ``playable`` while every word lookup against it would
+    fail. ``check_lexicon`` reads at most ``MAX_PREFIX_BYTES`` and caches on
+    ``(path, st_size, st_mtime_ns)``, which is what keeps this safe to call per request on
+    a 54 MB asset. A missing file still fails, so the previous behaviour is a subset.
+    """
+    if not check_lexicon(variant.dictionary_path).ok:
         return False
     two_path = variant.two_tile_words_path
-    return two_path is None or two_path.is_file()
+    return two_path is None or check_lexicon(two_path).ok
+
+
+def _omit_reason(error: Exception) -> str:
+    """A private, machine-readable discriminator for the omit branch.
+
+    Never a path, a filename, or exception text: the stable ``VariantManifestError.code``
+    when the exception carries one, otherwise the exception class name. The developer-
+    facing detail already exists in ``gamecore/variant_store.py``'s
+    ``variant_load_failed path=%s error=%s`` line; this token is for an operator grepping
+    the ``game`` logger, who previously could not tell a slug/stem defect from a JSON
+    syntax error.
+    """
+    code = getattr(error, "code", None)
+    if isinstance(code, str) and code:
+        return code
+    return type(error).__name__
 
 
 def list_variant_summaries() -> list[VariantSummary]:
@@ -103,28 +128,30 @@ def list_variant_summaries() -> list[VariantSummary]:
     try:
         paths = sorted(_variant_json_dir().glob("*.json"))
     except OSError:
-        _log.error("variant_list_omitted")
+        _log.error("variant_list_omitted reason=%s", "directory_unreadable")
         return []
     for path in paths:
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeError, json.JSONDecodeError, ValueError, TypeError):
-            _log.error("variant_list_omitted")
+        except (OSError, UnicodeError, json.JSONDecodeError, ValueError, TypeError) as exc:
+            _log.error("variant_list_omitted reason=%s", _omit_reason(exc))
             continue
         if not _looks_structurally_complete(data):
-            _log.error("variant_list_omitted")
+            _log.error("variant_list_omitted reason=%s", "incomplete_manifest")
             continue
         try:
             variant = _load_variant_from_path(path)
         except FileNotFoundError:
+            # Measured: unreachable for a stem/slug-divergent manifest, because the loader
+            # runs that check before validate_dictionary_file, so VariantManifestError wins.
             summary = _summary_from_payload(data, path.stem)
             if summary is None:
-                _log.error("variant_list_omitted")
+                _log.error("variant_list_omitted reason=%s", "unnamed_variant")
                 continue
             summaries.append(summary)
             continue
-        except Exception:
-            _log.error("variant_list_omitted")
+        except Exception as exc:
+            _log.error("variant_list_omitted reason=%s", _omit_reason(exc))
             continue
         readiness: Literal["playable", "unavailable"] = (
             "playable" if _variant_resources_ready(variant) else "unavailable"
