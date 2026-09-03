@@ -121,7 +121,20 @@ def test_t7_variant_list_exact_key_set() -> None:
     assert resp.status_code == 200
     body = resp.json()
     assert isinstance(body, list)
-    assert [row["slug"] for row in body] == ["english", "czech", "polish", "slovak"]
+    # The catalog order is DERIVED at game/views.py: english pinned first because it is the
+    # default slug, then every other variant by casefolded display_name with the slug breaking
+    # ties. So a new language inserts itself alphabetically rather than appending, and
+    # "Afrikaans" sorts before "Czech". ⚠ This expectation is a hardcoded inventory on purpose
+    # — it is what proves a variant did not appear or vanish by accident — so it must be
+    # updated deliberately with each new language, and the four original slugs must all still
+    # be present and playable below.
+    assert [row["slug"] for row in body] == [
+        "english",
+        "afrikaans",
+        "czech",
+        "polish",
+        "slovak",
+    ]
     for row in body:
         assert set(row.keys()) == _SUMMARY_KEYS
         assert row["readiness"] == "playable"

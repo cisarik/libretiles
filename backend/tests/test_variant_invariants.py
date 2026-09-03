@@ -68,6 +68,11 @@ _LEXICON_PROBES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "slovak": (("škola",), (_NEGATIVE_PROBE,)),
     "czech": (("domu", "knihy"), (_NEGATIVE_PROBE,)),
     "polish": (("domach", "książki"), (_NEGATIVE_PROBE,)),
+    # ⛔ `more` is the FOLDED form of `môre`. The Afrikaans edition bears plain Latin tiles and
+    # ignores diacritics, so build_afrikaans_lexicon.py folds them and `môre` is unreachable
+    # while MORE must be playable. Keeping a folded witness here means a build that silently
+    # stopped folding fails this probe rather than shipping 4 614 unplayable words.
+    "afrikaans": (("die", "van", "more"), (_NEGATIVE_PROBE,)),
 }
 
 _BLANK_ENTRY: dict[str, Any] = {"letter": "?", "count": 2, "points": 0}

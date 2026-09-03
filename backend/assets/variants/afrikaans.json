@@ -1,0 +1,54 @@
+{
+  "slug": "afrikaans",
+  "language": "Afrikaans",
+  "language_code": "af",
+  "source": "builtin",
+  "source_url": "https://en.wikipedia.org/wiki/Scrabble_letter_distributions",
+  "fetched_at": "2026-09-03T00:00:00",
+  "dictionary_file": "afrikaans.txt",
+  "alphabet_order": [
+    "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M",
+    "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z"
+  ],
+  "letters": [
+    { "letter": "?", "count": 2, "points": 0 },
+
+    { "letter": "E", "count": 16, "points": 1 },
+    { "letter": "A", "count": 9, "points": 1 },
+    { "letter": "I", "count": 8, "points": 1 },
+    { "letter": "N", "count": 8, "points": 1 },
+    { "letter": "D", "count": 6, "points": 1 },
+    { "letter": "O", "count": 6, "points": 1 },
+    { "letter": "R", "count": 6, "points": 1 },
+    { "letter": "S", "count": 6, "points": 1 },
+    { "letter": "T", "count": 6, "points": 1 },
+
+    { "letter": "G", "count": 4, "points": 2 },
+    { "letter": "H", "count": 3, "points": 2 },
+    { "letter": "L", "count": 3, "points": 2 },
+
+    { "letter": "K", "count": 3, "points": 3 },
+    { "letter": "W", "count": 3, "points": 3 },
+
+    { "letter": "M", "count": 2, "points": 4 },
+    { "letter": "U", "count": 2, "points": 4 },
+    { "letter": "Y", "count": 2, "points": 4 },
+
+    { "letter": "P", "count": 2, "points": 5 },
+    { "letter": "V", "count": 2, "points": 5 },
+
+    { "letter": "B", "count": 1, "points": 8 },
+    { "letter": "F", "count": 1, "points": 8 },
+
+    { "letter": "J", "count": 1, "points": 10 }
+  ],
+  "lexicon_provenance": {
+    "upstream": "LibreOffice dictionaries af_ZA (Translate.org.za MySpell Afrikaans)",
+    "upstream_commit": "75f5dff8c972fff4a32e4ea8434722c277f02a3f",
+    "expander": "hunspell 1.7.3",
+    "entry_count": 148267,
+    "spdx": "LGPL-2.1-only",
+    "license_file": "afrikaans.LICENSE",
+    "build_script": "build_afrikaans_lexicon.py"
+  }
+}

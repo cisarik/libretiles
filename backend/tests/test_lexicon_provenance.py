@@ -369,6 +369,7 @@ def test_p10b_every_non_english_lexicon_has_a_committed_build_script() -> None:
     """
     claimed = dict(_SCRIPT_CLAIMS)
     assert claimed == {
+        "afrikaans": "build_afrikaans_lexicon.py",
         "czech": "build_czech_lexicon.py",
         "polish": "build_polish_lexicon.py",
         "slovak": "build_slovak_lexicon.py",
@@ -455,10 +456,16 @@ def test_p12_the_assets_tree_refusal_guard_is_real(
     assert module.require_check_dir_outside_assets(permitted) == permitted.resolve()
 
 
-def test_p13_the_expander_constant_is_identical_across_all_three_scripts() -> None:
-    """Per-script drift would let one language be built by a different tool than the others."""
+def test_p13_the_expander_constant_is_identical_across_every_build_script() -> None:
+    """Per-script drift would let one language be built by a different tool than the others.
+
+    ⛔ This test owns DRIFT, not the inventory. It deliberately does NOT assert how many build
+    scripts exist: ``P10b`` owns that, and a hardcoded count here defeated the whole point of
+    ``_SCRIPT_CLAIMS`` being derived — the first new language made this test fail for a reason
+    that had nothing to do with expander drift. Vacuity is still impossible: an empty
+    ``values`` makes the set comparison below fail, because ``set() != {_EXPECTED_EXPANDER}``.
+    """
     values = {script: _load_script(script).EXPECTED_EXPANDER for _, script in _SCRIPT_CLAIMS}
-    assert len(values) == 3, f"expected three build scripts, found {sorted(values)}"
     assert set(values.values()) == {_EXPECTED_EXPANDER}, f"expander drift: {values}"
 
 
