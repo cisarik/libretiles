@@ -100,6 +100,11 @@ npm run build
 | Fallback attempt pills | `frontend/src/components/game/AIThinkingOverlay.tsx` |
 | Header / game chrome | `frontend/src/components/game/ScorePanel.tsx`, `frontend/src/components/game/GameControls.tsx` |
 | Shared premium UI effect + ping-pong motion | `frontend/src/lib/premiumSurface.ts` |
+| Lexicon build scripts (pinned upstream) | `backend/scripts/build_slovak_lexicon.py`, `backend/scripts/build_czech_lexicon.py`, `backend/scripts/build_polish_lexicon.py` |
+| Lexicon provenance in manifests | `backend/assets/variants/*.json` → `lexicon_provenance` |
+| Lexicon asset validation | `backend/gamecore/lexicon_health.py`, `manage.py validate_lexicons` |
+
+Every non-English lexicon is reproducible from a pinned upstream commit by its committed script: each pins the upstream commit and the SHA-256 of every source file it fetches, pins the host expander (`hunspell 1.7.3`) and fails closed on a mismatch, and writes the lexicon plus its `.LICENSE`. Adding `--check --check-dir <dir outside backend/assets/>` re-verifies a committed asset instead of rebuilding it: the reproduction goes into that directory, both digests are printed per artifact, the exit code is non-zero on any mismatch, and the run refuses outright if its working directory resolves inside `backend/assets/`. The scripts are host tools — not imported by Django, and they add no Poetry or npm dependency.
 
 ## Current product state (August 2026)
 

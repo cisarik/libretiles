@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import re
 import time
 from dataclasses import FrozenInstanceError
@@ -61,6 +62,11 @@ _DECLARED_KEYS = frozenset(
 )
 
 _COMMIT_RE = re.compile(r"[0-9a-f]{40}")
+
+# The expander every shipped lexicon was built with, measured on the build host by two
+# independent routes — ``hunspell -vv`` and the package owner of ``/usr/bin/unmunch``. Pinned
+# here as well as inside each script so P13 can catch per-script drift.
+_EXPECTED_EXPANDER = "hunspell 1.7.3"
 
 _SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
 _DICTS_DIR = get_assets_path() / "dicts"
@@ -369,3 +375,88 @@ def test_p10b_every_non_english_lexicon_has_a_committed_build_script() -> None:
     }, f"unexpected build-script claims: {claimed}"
     for script in claimed.values():
         assert (_SCRIPTS_DIR / script).is_file()
+
+
+# --- P11-P13: `--check` mode, the assets-tree refusal, and the pinned expander -----------
+#
+# Two hazards compounded before this coverage existed, and either one alone stayed invisible
+# to every gate: nothing asserted the host expander version, and nothing stopped a run from
+# writing over a committed lexicon. A different hunspell plus one default-path run would have
+# replaced a shipped word list silently. ``--check`` is the read-only re-verification route,
+# and the guard below is what keeps it read-only.
+#
+# ⛔ Everything here is OFFLINE and subprocess-free: modules are imported, parsers are built
+# but never parsed, guards are called directly. No ``main()``, no ``unmunch``, no
+# ``hunspell``, no network.
+
+
+@pytest.mark.parametrize(("slug", "script"), _SCRIPT_CLAIMS, ids=_SCRIPT_IDS)
+def test_p11_check_mode_and_expander_pin_are_exposed(slug: str, script: str) -> None:
+    """Each build script offers `--check`, demands an explicit directory, and pins hunspell."""
+    module = _load_script(script)
+
+    assert module.EXPECTED_EXPANDER == _EXPECTED_EXPANDER, (
+        f"{script}: pins expander {module.EXPECTED_EXPANDER!r}, expected "
+        f"{_EXPECTED_EXPANDER!r}"
+    )
+    assert callable(module.is_inside_assets), f"{script}: no is_inside_assets predicate"
+    assert callable(module.require_check_dir_outside_assets), f"{script}: no refusal guard"
+
+    parser = module.build_parser()
+    help_text = parser.format_help()
+    assert "--check" in help_text, f"{script}: no --check flag"
+    assert "--check-dir" in help_text, f"{script}: --check has no explicit working-dir flag"
+    assert parser.get_default("check") is False, f"{script}: --check is on by default"
+    # ⛔ The load-bearing assertion of this test: --check must never pick a directory for the
+    # caller, because the only directory it could pick is the one it must never write to.
+    assert parser.get_default("check_dir") is None, (
+        f"{script}: --check-dir carries default "
+        f"{parser.get_default('check_dir')!r}; --check must require an explicit directory"
+    )
+
+
+@pytest.mark.parametrize(("slug", "script"), _SCRIPT_CLAIMS, ids=_SCRIPT_IDS)
+def test_p12_the_assets_tree_refusal_guard_is_real(
+    slug: str, script: str, tmp_path: Path
+) -> None:
+    """The one behavioural test of the hazard, and it needs no subprocess.
+
+    Every candidate below resolves into ``backend/assets/`` by a different route — directly,
+    one level deeper, through ``..``, through a CWD-relative path, and through a symlink whose
+    own name looks harmless. ``resolve()`` before comparing is what makes all five equivalent;
+    a textual prefix test would pass the last three straight through.
+    """
+    module = _load_script(script)
+    assets = get_assets_path().resolve()
+
+    refused: list[tuple[str, Path]] = [
+        ("assets root itself", assets),
+        ("inside assets/dicts", assets / "dicts"),
+        ("deeper inside assets", assets / "dicts" / "nested" / "work"),
+        ("dot-dot traversal", _SCRIPTS_DIR / ".." / "assets" / "dicts"),
+        ("cwd-relative", Path(os.path.relpath(assets / "dicts", Path.cwd()))),
+    ]
+    decoy = tmp_path / "looks-like-a-safe-tmp-dir"
+    decoy.symlink_to(assets / "dicts", target_is_directory=True)
+    refused.append(("symlink into assets", decoy))
+
+    for label, candidate in refused:
+        assert module.is_inside_assets(candidate) is True, (
+            f"{script}: {label} ({candidate}) was NOT recognised as inside the assets tree"
+        )
+        with pytest.raises(SystemExit) as caught:
+            module.require_check_dir_outside_assets(candidate)
+        assert caught.value.code not in (0, None), (
+            f"{script}: {label} refused with exit code {caught.value.code!r}"
+        )
+
+    permitted = tmp_path / "work"
+    assert module.is_inside_assets(permitted) is False
+    assert module.require_check_dir_outside_assets(permitted) == permitted.resolve()
+
+
+def test_p13_the_expander_constant_is_identical_across_all_three_scripts() -> None:
+    """Per-script drift would let one language be built by a different tool than the others."""
+    values = {script: _load_script(script).EXPECTED_EXPANDER for _, script in _SCRIPT_CLAIMS}
+    assert len(values) == 3, f"expected three build scripts, found {sorted(values)}"
+    assert set(values.values()) == {_EXPECTED_EXPANDER}, f"expander drift: {values}"

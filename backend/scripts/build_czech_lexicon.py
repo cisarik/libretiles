@@ -36,10 +36,20 @@ AFFIX_SET_LINE = b"SET UTF-8"
 WORD_ENCODING = "utf-8"
 # Measured verbatim in cs_CZ/README_en.txt at PINNED_COMMIT (line 19).
 LICENSE_SENTENCE = "This dictionary is licensed under the GNU/GPL license."
+# ⛔ THE EXPANDER IS PINNED, AND A MISMATCH IS FATAL. ``unmunch`` prints no version of its
+# own — measured, it prints only "correct syntax is: unmunch dic_file affix_file" — so the
+# identity comes from ``hunspell -vv``, which prints
+# "@(#) International Ispell Version 3.2.06 (but really Hunspell 1.7.3)".
+# A different expander may expand the same affix file into a DIFFERENT word list, and this
+# script writes a shipped asset, so ``_require_expander`` exits non-zero rather than warning.
+# A warning on a tool that writes a shipped asset is the same as no check at all.
+# ⛔ Keep this value IDENTICAL in all three build scripts; test P13 asserts exactly that.
+EXPECTED_EXPANDER = "hunspell 1.7.3"
 MIN_UNIQUE = 80_000
 MAX_UNIQUE = 5_000_000
 
 _BACKEND_ROOT = Path(__file__).resolve().parent.parent
+_ASSETS_ROOT = _BACKEND_ROOT / "assets"
 _DEFAULT_DICT = _BACKEND_ROOT / "assets" / "dicts" / "czech.txt"
 _DEFAULT_LICENSE = _BACKEND_ROOT / "assets" / "dicts" / "czech.LICENSE"
 
@@ -84,6 +94,88 @@ _LICENSE_TRAILER = "\n"
 
 def _sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def is_inside_assets(path: Path) -> bool:
+    """True when ``path`` resolves inside ``backend/assets/``.
+
+    Both sides are ``resolve()``d FIRST, so a relative path, a ``..`` traversal and a symlink
+    whose own name looks harmless all collapse to the same answer. A textual prefix test
+    would let every one of those three straight through.
+    """
+    resolved = path.resolve()
+    assets = _ASSETS_ROOT.resolve()
+    return resolved == assets or assets in resolved.parents
+
+
+def require_check_dir_outside_assets(path: Path) -> Path:
+    """Refuse a ``--check`` working directory inside the assets tree; return the resolved dir.
+
+    ⛔ This is the guard the whole ``--check`` mode exists for. The committed asset is the
+    comparison ORACLE, so a mode that reproduced into the assets tree would overwrite the
+    very file it claims to verify and then report agreement with itself.
+    """
+    resolved = path.resolve()
+    if is_inside_assets(path):
+        print(
+            "ERROR refused by require_check_dir_outside_assets: --check work directory "
+            f"{path} resolves to {resolved}, which is inside the read-only assets tree "
+            f"{_ASSETS_ROOT.resolve()}. --check never writes under backend/assets/ because "
+            "the committed asset is the comparison oracle; pass a directory outside it.",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    return resolved
+
+
+def _require_expander(hunspell_bin: str) -> str:
+    """Fail closed unless the host expander is exactly ``EXPECTED_EXPANDER``."""
+    proc = subprocess.run(
+        [hunspell_bin, "-vv"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    banner = (proc.stdout + proc.stderr).decode("utf-8", errors="replace").strip()
+    first_line = banner.splitlines()[0] if banner else ""
+    if proc.returncode != 0 or not banner:
+        print(
+            f"ERROR could not read the expander version: {hunspell_bin} -vv exited "
+            f"{proc.returncode} with output {banner!r}. Expected {EXPECTED_EXPANDER}; an "
+            "unverified expander is not a pass, because a different expander may produce a "
+            "different word list.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    if EXPECTED_EXPANDER.casefold() not in banner.casefold():
+        print(
+            f"ERROR expander mismatch: found {first_line!r}, expected {EXPECTED_EXPANDER}. "
+            "A different expander may expand the same affix file into a DIFFERENT word "
+            "list, and this script writes a shipped asset, so this is fatal rather than a "
+            "warning. Upgrading hunspell must be a deliberate, visible decision.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    print(f"expander={EXPECTED_EXPANDER} confirmed: {first_line}")
+    return first_line
+
+
+def _compare_against_committed(pairs: tuple[tuple[Path, Path], ...]) -> int:
+    """Print BOTH digests per artifact; return 0 only when every pair agrees."""
+    mismatches = 0
+    for reproduced, committed in pairs:
+        got = _sha256_bytes(reproduced.read_bytes())
+        expected = _sha256_bytes(committed.read_bytes()) if committed.is_file() else "<absent>"
+        verdict = "IDENTICAL" if got == expected else "MISMATCH"
+        if verdict != "IDENTICAL":
+            mismatches += 1
+        print(f"CHECK {committed.name} reproduced={got} committed={expected} {verdict}")
+    if mismatches:
+        print(f"ERROR --check found {mismatches} mismatching artifact(s)", file=sys.stderr)
+        return 1
+    print("CHECK all artifacts identical")
+    return 0
 
 
 def _collapse_whitespace(text: str) -> str:
@@ -234,7 +326,8 @@ def _write_license(path: Path, english_readme: Path, native_readme: Path) -> Non
     print(f"wrote {path} bytes={path.stat().st_size}")
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
+    """The CLI surface, as a seam so a test can inspect it without running anything."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--cache-dir",
@@ -252,7 +345,25 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output-license", type=Path, default=_DEFAULT_LICENSE)
     parser.add_argument("--refresh", action="store_true", help="Re-download pinned sources")
     parser.add_argument("--unmunch", default="unmunch")
-    args = parser.parse_args(argv)
+    parser.add_argument("--hunspell", default="hunspell")
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Re-verify only: reproduce into --check-dir, compare SHA-256 against the "
+        "committed asset, and write NOTHING under backend/assets/",
+    )
+    parser.add_argument(
+        "--check-dir",
+        type=Path,
+        default=None,
+        help="REQUIRED with --check: working directory for the reproduction. It has no "
+        "default on purpose, and it must resolve outside backend/assets/",
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
 
     unmunch_bin = shutil.which(args.unmunch)
     if unmunch_bin is None:
@@ -260,14 +371,50 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     print(f"unmunch={unmunch_bin}")
 
+    hunspell_bin = shutil.which(args.hunspell)
+    if hunspell_bin is None:
+        print(
+            f"ERROR hunspell not found: {args.hunspell}. The expander version cannot be "
+            "verified, and an unverified expander is a failure rather than a pass.",
+            file=sys.stderr,
+        )
+        return 1
+    _require_expander(hunspell_bin)
+
+    output_dict = args.output_dict
+    output_license = args.output_license
+    raw_out = args.raw_out
+    if args.check:
+        if args.check_dir is None:
+            print(
+                "ERROR --check requires --check-dir DIRECTORY. It has no default because "
+                "the only default it could have would sit under backend/assets/, which is "
+                "exactly where --check must never write.",
+                file=sys.stderr,
+            )
+            return 2
+        work_dir = require_check_dir_outside_assets(args.check_dir)
+        work_dir.mkdir(parents=True, exist_ok=True)
+        output_dict = work_dir / _DEFAULT_DICT.name
+        output_license = work_dir / _DEFAULT_LICENSE.name
+        raw_out = work_dir / "unmunch.stdout"
+        print(
+            f"--check reproducing into {work_dir}; comparing against {args.output_dict} "
+            f"and {args.output_license} (both read-only in this mode)"
+        )
+
     paths = _ensure_pinned_sources(args.cache_dir, refresh=args.refresh)
     _require_affix_encoding(paths["cs_CZ.aff"])
     _require_license_sentence(paths["README_en.txt"])
     _require_pack_version(paths["description.xml"])
-    _run_unmunch(unmunch_bin, paths["cs_CZ.dic"], paths["cs_CZ.aff"], args.raw_out)
-    words = _filter_words(args.raw_out)
-    _write_lexicon(args.output_dict, words)
-    _write_license(args.output_license, paths["README_en.txt"], paths["README_cs.txt"])
+    _run_unmunch(unmunch_bin, paths["cs_CZ.dic"], paths["cs_CZ.aff"], raw_out)
+    words = _filter_words(raw_out)
+    _write_lexicon(output_dict, words)
+    _write_license(output_license, paths["README_en.txt"], paths["README_cs.txt"])
+    if args.check:
+        return _compare_against_committed(
+            ((output_dict, args.output_dict), (output_license, args.output_license))
+        )
     return 0
 
 
