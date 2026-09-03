@@ -260,3 +260,78 @@ def test_t11_create_accepts_czech_and_rejects_unknown() -> None:
     )
     assert unknown.status_code == 400
     assert "unknown_variant" in str(unknown.json())
+
+
+@pytest.mark.django_db
+def test_t12_stem_slug_divergent_manifest_is_omitted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A manifest that can never be loaded is never advertised.
+
+    ``de.json`` declaring ``"slug": "german"`` names a lexicon that really exists, so its
+    only defect is the stem/slug divergence the loader rejects with code
+    ``slug_stem_mismatch``. ``VariantManifestError`` is a ``ValueError``, not a
+    ``FileNotFoundError``, so it lands in the ``except Exception`` branch at
+    ``game/views.py:126-128`` and the row is OMITTED rather than reported
+    ``unavailable``: an ``unavailable`` row would still leak the existence and the display
+    name of a variant no code path can ever load, because ``list_installed_variants``
+    advertises the declared slug while ``load_variant`` resolves the filename.
+    """
+    _write_manifest(
+        tmp_path,
+        "de",
+        {
+            "language": "German",
+            "slug": "german",
+            "language_code": "de",
+            "dictionary_file": "collins2019.txt",
+            "alphabet_order": ["A"],
+            "letters": [
+                {"letter": "?", "count": 2, "points": 0},
+                {"letter": "A", "count": 98, "points": 1},
+            ],
+        },
+    )
+    _write_manifest(
+        tmp_path,
+        "valid",
+        {
+            "language": "Valid",
+            "slug": "valid",
+            "language_code": "xx",
+            "dictionary_file": "collins2019.txt",
+            "alphabet_order": ["A"],
+            "letters": [
+                {"letter": "?", "count": 2, "points": 0},
+                {"letter": "A", "count": 98, "points": 1},
+            ],
+        },
+    )
+    monkeypatch.setattr("game.views._variant_json_dir", lambda: tmp_path)
+
+    resp = _auth_client().get("/api/game/variants/")
+    assert resp.status_code == 200
+    body = resp.json()
+    slugs = [row["slug"] for row in body]
+    # Neither the declared slug nor the filename stem may be advertised.
+    assert "german" not in slugs
+    assert "de" not in slugs
+    assert slugs == ["valid"]
+    assert body[0] == {
+        "slug": "valid",
+        "display_name": "Valid",
+        "language_code": "xx",
+        "readiness": "playable",
+    }
+    for row in body:
+        assert set(row.keys()) == _SUMMARY_KEYS
+    # A new failure mode must not become a new leak: game/views.py:100-101 promises
+    # "Never include paths, filenames, or errors."
+    dumped = json.dumps(body)
+    assert "german" not in dumped.lower()
+    assert "de.json" not in dumped
+    assert str(tmp_path) not in dumped
+    assert ".txt" not in dumped
+    assert "mismatch" not in dumped.lower()
+    assert "slug_stem_mismatch" not in dumped
+    assert "VariantManifestError" not in dumped

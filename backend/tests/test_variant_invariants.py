@@ -17,7 +17,7 @@ Two rules this module must never break:
 The parameterization is driven by the live installed set rather than a literal list,
 so a fifth manifest is covered the moment it lands. ``G1`` and ``G9`` guard the
 parameterization itself: ``list_installed_variants`` logs and SKIPS a manifest it
-cannot load (``gamecore/variant_store.py:433-440``), so without a count comparison a
+cannot load (``gamecore/variant_store.py:453-460``), so without a count comparison a
 broken manifest would be invisible to this harness as well as to the product.
 """
 
@@ -117,7 +117,7 @@ def _synthetic(slug: str, **overrides: Any) -> dict[str, Any]:
     """A minimal loadable manifest, overridable one key at a time.
 
     ``dictionary_file`` always names a real lexicon. ``validate_dictionary_file`` runs
-    at ``variant_store.py:333``, BEFORE ``alphabet_order`` is parsed at ``:343``, so a
+    at ``variant_store.py:353``, BEFORE ``alphabet_order`` is parsed at ``:363``, so a
     synthetic manifest pointing at an absent lexicon would raise ``FileNotFoundError``
     first and the intended ``VariantManifestError`` would never fire.
     """
@@ -379,40 +379,45 @@ def test_g26a_manifest_stem_equals_declared_slug(manifest_path: Path) -> None:
     )
 
 
-def test_g26b_a_stem_slug_divergence_is_reachable_today(
+def test_g26b_a_stem_slug_divergence_is_rejected_at_ingest(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """CHARACTERIZATION ONLY. This documents current behaviour; it requests no change.
+    """A manifest whose declared slug disagrees with its own filename cannot be loaded.
 
-    A manifest named ``de.json`` declaring ``"slug": "german"`` is advertised as
-    selectable under ``german`` and cannot be loaded under it. The divergence is
+    Before this rule, a manifest named ``de.json`` declaring ``"slug": "german"`` was
+    advertised as selectable under ``german`` and could never be loaded under it. That was
     reachable from the product because every incoming ``variant_slug`` is validated
     against ``list_installed_variants()`` at ``game/serializers.py:180``,
     ``game/serializers.py:215`` and ``game/services.py:173``, while every later load goes
-    through ``load_variant``.
+    through ``load_variant``, which resolves a FILENAME.
 
-    Whether the LOADER should also change is a separate Orchestrator decision. Do not
-    alter ``load_variant``, ``list_installed_variants``, or any serializer to satisfy
-    this test; ``G26a`` is what keeps a divergent manifest out of the repository.
+    The divergence is now closed at ingest instead. ``load_variant``,
+    ``list_installed_variants``, ``_variant_path``, ``slugify`` and the three call sites
+    above are all deliberately unchanged.
     """
     _write_manifest(tmp_path, "de", _synthetic("german"))
     monkeypatch.setattr("gamecore.variant_store._variants_dir", lambda: tmp_path)
     files = sorted(tmp_path.glob("*.json"))
+    assert [path.stem for path in files] == ["de"]
 
+    with pytest.raises(VariantManifestError) as caught:
+        _load_variant_from_path(files[0])
+    assert caught.value.code == "slug_stem_mismatch"
+
+    # G9 is no longer blind to this class: list_installed_variants() logs and SKIPS the
+    # manifest, so one manifest file now produces ZERO variants and the count comparison
+    # sees the gap.
     listed = list_installed_variants()
-    assert [item.slug for item in listed] == ["german"]
+    assert listed == []
+    assert len(listed) != len(files)
 
-    # G9 is blind to this: one manifest file really does produce one variant.
-    assert len(listed) == len(files)
-
-    # The G26a invariant is VIOLATED for this directory.
-    pairs = {path.stem: _load_variant_from_path(path).slug for path in files}
-    assert pairs == {"de": "german"}
-    assert any(slug != stem for stem, slug in pairs.items())
-
+    # The lookup path was deliberately left alone, and stays observable as such.
     with pytest.raises(FileNotFoundError):
         load_variant("german")
-    assert load_variant("de").slug == "german"
+    # Not even the filename route can load it: the rejection is fail-closed both ways.
+    with pytest.raises(VariantManifestError) as caught_by_stem:
+        load_variant("de")
+    assert caught_by_stem.value.code == "slug_stem_mismatch"
 
 
 @pytest.mark.parametrize("manifest_path", _MANIFEST_PATHS, ids=_MANIFEST_STEMS)

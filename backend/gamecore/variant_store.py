@@ -322,6 +322,26 @@ def _load_variant_from_path(path: Path) -> VariantDefinition:
         else None
     )
     slug = slugify(str(data.get("slug") or path.stem))
+    # Fail closed when the declared slug disagrees with the manifest's own filename:
+    # ``list_installed_variants`` advertises this computed slug while ``load_variant``
+    # resolves ``_variant_path`` -> ``f"{slugify(slug)}.json"``, so a divergent manifest
+    # would be selectable and unloadable at the same time. Compare against
+    # ``slugify(path.stem)``, never the raw stem: ``slugify("De_Ch") == "de-ch"``, a pair
+    # ``load_variant`` already handles correctly today. Comparing two canonical values also
+    # closes the reverse direction for free — a filename that is not itself in canonical
+    # slug form can no longer be loaded even when its declared slug equals its raw stem.
+    # That second property is deliberate, not redundant. Keep this check BEFORE
+    # ``validate_dictionary_file`` below: that call raises ``FileNotFoundError``, which
+    # ``game/views.py`` reports as readiness "unavailable", whereas an unloadable variant
+    # must be omitted from the public catalog entirely.
+    stem_slug = slugify(path.stem)
+    if slug != stem_slug:
+        raise VariantManifestError(
+            "slug_stem_mismatch",
+            f"manifest {path.name} declares slug {slug!r} but its filename resolves to "
+            f"{stem_slug!r}; load_variant() resolves the filename, so only {stem_slug!r} "
+            "could ever be loaded",
+        )
     source = str(data.get("source", "builtin"))
     fetched_at = data.get("fetched_at")
     source_url_raw = data.get("source_url")
