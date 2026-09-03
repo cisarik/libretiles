@@ -122,7 +122,26 @@ function firstFieldMessage(parsed: unknown): string | null {
   return null;
 }
 
-function parseRetryAfterSeconds(text: string, parsed: unknown): number | null {
+function parseRetryAfterSeconds(
+  headerValue: string | null,
+  text: string,
+  parsed: unknown,
+): number | null {
+  // Prefer the numeric Retry-After header. DRF sets it at
+  // rest_framework/views.py:92 whenever the throttle knows the wait, and unlike
+  // the body it is locale-independent — uii-01-F01.
+  //
+  // The prose fallbacks below are KEPT rather than replaced. The header is only
+  // readable cross-origin while the backend lists it in CORS_EXPOSE_HEADERS, and
+  // a reverse proxy may strip it, so losing the header must degrade to today's
+  // behaviour rather than to "unknown wait". A Retry-After HTTP-date also lands
+  // here and correctly falls through, because DRF only ever sends an integer.
+  if (headerValue) {
+    const seconds = Number(headerValue.trim());
+    if (Number.isFinite(seconds) && seconds >= 0) {
+      return seconds;
+    }
+  }
   if (parsed && typeof parsed === "object" && parsed !== null) {
     const detail = (parsed as { detail?: unknown }).detail;
     if (typeof detail === "string") {
@@ -282,7 +301,10 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
     }
     const fields = extractFieldEntries(parsed);
     const fieldMessage = firstFieldMessage(parsed);
-    const retryAfter = status === 429 ? parseRetryAfterSeconds(text, parsed) : null;
+    const retryAfter =
+      status === 429
+        ? parseRetryAfterSeconds(res.headers.get("Retry-After"), text, parsed)
+        : null;
     const locale: Locale = useGameStore.getState().uiLocale ?? DEFAULT_LOCALE;
     throw new ApiError(
       status,

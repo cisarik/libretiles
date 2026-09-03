@@ -1800,6 +1800,80 @@ describe("AC-ACCEPT-LANGUAGE request header", () => {
   });
 });
 
+function throttled(
+  retryAfterHeader: string | null,
+  detail: string,
+): Response {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (retryAfterHeader !== null) {
+    headers["Retry-After"] = retryAfterHeader;
+  }
+  return new Response(JSON.stringify({ detail }), { status: 429, headers });
+}
+
+async function throttleMessage(response: Response): Promise<string> {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => response),
+  );
+  try {
+    await api.getModels();
+  } catch (error) {
+    return (error as Error).message;
+  }
+  throw new Error("expected a 429 to reject");
+}
+
+describe("AC-RETRY-AFTER the wait time comes from the header, not the prose", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  // uii-01-F01. The two numbers disagree ON PURPOSE: 3300s is 55 minutes and
+  // 120s is 2 minutes, so the assertion can only pass if the header won.
+  it("prefers the numeric header over a body that says something else", async () => {
+    const message = await throttleMessage(
+      throttled("3300", "Request was throttled. Expected available in 120 seconds."),
+    );
+    expect(message).toBe("Too many requests. Try again in about 55 minutes.");
+  });
+
+  it("still parses the body when no header is present", async () => {
+    const message = await throttleMessage(
+      throttled(null, "Request was throttled. Expected available in 120 seconds."),
+    );
+    expect(message).toBe("Too many requests. Try again in about 2 minutes.");
+  });
+
+  it("falls through to the body when the header is an HTTP-date", async () => {
+    const message = await throttleMessage(
+      throttled(
+        "Wed, 21 Oct 2015 07:28:00 GMT",
+        "Request was throttled. Expected available in 120 seconds.",
+      ),
+    );
+    expect(message).toBe("Too many requests. Try again in about 2 minutes.");
+  });
+
+  it("reports an unknown wait when neither channel carries a number", async () => {
+    const message = await throttleMessage(
+      throttled(null, "Požiadavok bol obmedzený, z dôvodu prekročenia limitu."),
+    );
+    expect(message).toBe("Too many requests. Please wait and try again.");
+  });
+
+  it("uses the header even when the body is fully localized", async () => {
+    // The realistic post-R7 shape: a translated first sentence the regex cannot
+    // read, with the durable header alongside it.
+    const message = await throttleMessage(
+      throttled("60", "Żądanie zostało zdławione."),
+    );
+    expect(message).toBe("Too many requests. Try again in about a minute.");
+  });
+});
+
 const END_REASON_COPY: Array<{
   value: string;
   en: string;

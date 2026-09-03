@@ -237,6 +237,10 @@ CORS_ALLOWED_ORIGINS: list[str] = [
 ]
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_ALL_ORIGINS = DEBUG
+# Retry-After is not a CORS-safelisted response header, so a cross-origin
+# frontend cannot read it at all unless it is exposed explicitly. The client
+# prefers this numeric header over parsing a localized 429 body (uii-01-F01).
+CORS_EXPOSE_HEADERS: list[str] = ["Retry-After"]
 
 # HTTPS flags follow DEBUG so plain local HTTP still works.
 SESSION_COOKIE_SECURE = not DEBUG
