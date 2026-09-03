@@ -94,6 +94,10 @@ payload = {
     "csrf_cookie_secure": bool(getattr(settings_mod, "CSRF_COOKIE_SECURE", False)),
     "secure_ssl_redirect": bool(getattr(settings_mod, "SECURE_SSL_REDIRECT", False)),
     "secure_hsts_seconds": int(getattr(settings_mod, "SECURE_HSTS_SECONDS", 0)),
+    "secure_hsts_include_subdomains": bool(
+        getattr(settings_mod, "SECURE_HSTS_INCLUDE_SUBDOMAINS", False)
+    ),
+    "secure_hsts_preload": bool(getattr(settings_mod, "SECURE_HSTS_PRELOAD", False)),
     "default_permission_classes": list(
         settings_mod.REST_FRAMEWORK["DEFAULT_PERMISSION_CLASSES"]
     ),
@@ -282,6 +286,32 @@ def test_production_like_environment_enables_https_security_flags() -> None:
     assert payload["csrf_cookie_secure"] is True
     assert payload["secure_ssl_redirect"] is True
     assert payload["secure_hsts_seconds"] > 0
+    # orch-02-D11: a max-age without includeSubDomains leaves subdomains on
+    # plain HTTP. Preload stays off by Cooperator decision 5.
+    assert payload["secure_hsts_include_subdomains"] is True
+    assert payload["secure_hsts_preload"] is False
+
+
+def test_production_like_hsts_closes_w005_and_keeps_w021_accepted() -> None:
+    """The two HSTS deployment checks are handled deliberately and differently.
+
+    `security.W005` (no includeSubDomains) is CORRECTED and must be gone.
+    `security.W021` (no preload) is an ACCEPTED RESIDUAL and must still be
+    reported, because preloading is submitted to a browser-vendor list and is
+    effectively irreversible. Asserting W021 is still present stops a later
+    session from "finishing the job" by enabling it.
+    """
+    payload = _run_settings_probe(
+        secret=_SYNTHETIC_TEST_SECRET_KEY,
+        debug="false",
+        allowed_hosts="example.test",
+        run_checks=True,
+        throttle_cache_url=_SYNTHETIC_REDIS_URL,
+    )
+    assert payload["status"] == "ok"
+    check_ids = set(payload["check_ids"])
+    assert "security.W005" not in check_ids
+    assert "security.W021" in check_ids
 
 
 def test_production_like_deploy_check_omits_named_warnings() -> None:
@@ -310,6 +340,10 @@ def test_debug_true_keeps_plain_http_workable() -> None:
     assert payload["csrf_cookie_secure"] is False
     assert payload["secure_ssl_redirect"] is False
     assert payload["secure_hsts_seconds"] == 0
+    # HSTS is fully inert in DEBUG, so includeSubDomains must be off too: a
+    # browser that saw it once over http://localhost would pin the whole domain.
+    assert payload["secure_hsts_include_subdomains"] is False
+    assert payload["secure_hsts_preload"] is False
 
 
 def test_drf_default_permission_classes_are_fail_closed() -> None:

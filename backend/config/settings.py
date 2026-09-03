@@ -247,6 +247,16 @@ SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SECURE = not DEBUG
 SECURE_SSL_REDIRECT = not DEBUG
 SECURE_HSTS_SECONDS = _HSTS_SECONDS if not DEBUG else 0
+# orch-02-D11. A max-age without includeSubDomains leaves every subdomain
+# reachable over plain HTTP, which is the hole HSTS exists to close, and Django's
+# own deployment check security.W005 says so.
+#
+# SECURE_HSTS_PRELOAD is deliberately NOT set. Cooperator decision 5. Preloading
+# is submitted to a browser-vendor list and is effectively irreversible on the
+# timescale of a mistake, so Django's security.W021 warning is an ACCEPTED
+# residual here rather than something to silence. test_security_settings.py
+# asserts that W021 is still emitted.
+SECURE_HSTS_INCLUDE_SUBDOMAINS = not DEBUG
 
 # Framework defaults made explicit so a later edit cannot drop them silently.
 SECURE_CONTENT_TYPE_NOSNIFF = True
