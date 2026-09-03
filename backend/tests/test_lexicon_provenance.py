@@ -371,6 +371,8 @@ def test_p10b_every_non_english_lexicon_has_a_committed_build_script() -> None:
     assert claimed == {
         "afrikaans": "build_afrikaans_lexicon.py",
         "czech": "build_czech_lexicon.py",
+        "dutch": "build_dutch_lexicon.py",
+        "italian": "build_italian_lexicon.py",
         "polish": "build_polish_lexicon.py",
         "slovak": "build_slovak_lexicon.py",
     }, f"unexpected build-script claims: {claimed}"

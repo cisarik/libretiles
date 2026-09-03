@@ -1,0 +1,52 @@
+{
+  "slug": "italian",
+  "language": "Italian",
+  "language_code": "it",
+  "source": "builtin",
+  "source_url": "https://en.wikipedia.org/wiki/Scrabble_letter_distributions",
+  "fetched_at": "2026-09-03T00:00:00",
+  "dictionary_file": "italian.txt",
+  "alphabet_order": [
+    "A", "B", "C", "D", "E", "F", "G", "H", "I", "L", "M",
+    "N", "O", "P", "Q", "R", "S", "T", "U", "V", "Z"
+  ],
+  "letters": [
+    { "letter": "?", "count": 2, "points": 0 },
+
+    { "letter": "O", "count": 15, "points": 1 },
+    { "letter": "A", "count": 14, "points": 1 },
+    { "letter": "I", "count": 12, "points": 1 },
+    { "letter": "E", "count": 11, "points": 1 },
+
+    { "letter": "C", "count": 6, "points": 2 },
+    { "letter": "R", "count": 6, "points": 2 },
+    { "letter": "S", "count": 6, "points": 2 },
+    { "letter": "T", "count": 6, "points": 2 },
+
+    { "letter": "L", "count": 5, "points": 3 },
+    { "letter": "M", "count": 5, "points": 3 },
+    { "letter": "N", "count": 5, "points": 3 },
+    { "letter": "U", "count": 5, "points": 3 },
+
+    { "letter": "B", "count": 3, "points": 5 },
+    { "letter": "D", "count": 3, "points": 5 },
+    { "letter": "F", "count": 3, "points": 5 },
+    { "letter": "P", "count": 3, "points": 5 },
+    { "letter": "V", "count": 3, "points": 5 },
+
+    { "letter": "G", "count": 2, "points": 8 },
+    { "letter": "H", "count": 2, "points": 8 },
+    { "letter": "Z", "count": 2, "points": 8 },
+
+    { "letter": "Q", "count": 1, "points": 10 }
+  ],
+  "lexicon_provenance": {
+    "upstream": "LibreOffice dictionaries it_IT (LibreItalia Italian Writing Aids)",
+    "upstream_commit": "75f5dff8c972fff4a32e4ea8434722c277f02a3f",
+    "expander": "hunspell 1.7.3",
+    "entry_count": 3128429,
+    "spdx": "GPL-3.0-only",
+    "license_file": "italian.LICENSE",
+    "build_script": "build_italian_lexicon.py"
+  }
+}

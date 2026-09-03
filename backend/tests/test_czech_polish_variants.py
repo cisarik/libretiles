@@ -132,6 +132,8 @@ def test_t7_variant_list_exact_key_set() -> None:
         "english",
         "afrikaans",
         "czech",
+        "dutch",
+        "italian",
         "polish",
         "slovak",
     ]

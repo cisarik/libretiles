@@ -73,6 +73,15 @@ _LEXICON_PROBES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     # while MORE must be playable. Keeping a folded witness here means a build that silently
     # stopped folding fails this probe rather than shipping 4 614 unplayable words.
     "afrikaans": (("die", "van", "more"), (_NEGATIVE_PROBE,)),
+    # ⛔ `citta` and `perche` are FOLDED forms of `città` and `perché`. The Italian edition
+    # bears plain Latin tiles and ignores diacritic marks, so the fold is what makes them
+    # playable; a build that stopped folding fails here instead of shipping 34 114 dead words.
+    "italian": (("casa", "citta", "perche"), (_NEGATIVE_PROBE,)),
+    # ⛔ `ijs` and `dijk` are LIGATURE witnesses: upstream nl_NL spells them with U+0133, and
+    # the modern Dutch edition has no IJ tile, so build_dutch_lexicon.py writes them as `ij`.
+    # Both are absent from the raw expansion and present after the rewrite — measured. `reeel`
+    # is the separate diacritic-fold witness, from `reëel`.
+    "dutch": (("kaas", "ijs", "dijk", "reeel"), (_NEGATIVE_PROBE,)),
 }
 
 _BLANK_ENTRY: dict[str, Any] = {"letter": "?", "count": 2, "points": 0}
