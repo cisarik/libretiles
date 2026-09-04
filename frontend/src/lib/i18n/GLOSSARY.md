@@ -50,8 +50,40 @@ Do not translate these terms; keep them in English in every catalog:
 Slovak and Czech share the integer rule `1 / 2..4 / otherwise`. Polish keys on
 the last digit with a 12–14 exception, so `pluralSk` is wrong for Polish at
 22, 23, 24, 122, 123, 124. Named helpers: `pluralEn`, `pluralSk`, `pluralCs`
-(= `pluralSk`, deliberately), `pluralPl`. Do not fold them into one
-table-driven function.
+(= `pluralSk`, deliberately), `pluralPl`, `pluralAf`, `pluralNl`, `pluralDe`,
+`pluralDa`, `pluralSv`, `pluralIs`, `pluralIt`, `pluralPt`. Do not fold them
+into one table-driven function.
+
+`plural.test.ts` pins all twelve against the runtime's own
+`Intl.PluralRules` over 0..3000 plus the exact millions, so a CLDR change is a
+red test rather than a silently wrong string.
+
+Three facts a translator cannot infer from the other languages:
+
+- **Icelandic is not the Nordic one/other shape.** `pluralIs` selects `one` when
+  `i % 10 === 1 && i % 100 !== 11`, so 1, 21, 31, 101, 121 and 1001 are singular
+  while 0, 11, 111 and 1011 are plural. Do not copy the Danish or Swedish form.
+- **Portuguese `one` includes ZERO.** `0` is singular in CLDR pt, so it is
+  `0 ponto` and not `0 pontos`. A passed turn and an empty score both display 0,
+  so this is an ordinary board rather than a corner case.
+- **Italian and Portuguese have a third category, `many`,** reachable only at
+  exact millions (`i % 1000000 === 0 && i !== 0`). The `many` slot may
+  legitimately carry the same noun form as `other`: CLDR distinguishes the
+  categories, the language does not necessarily distinguish the words. Do not
+  invent a different word to make the slots look distinct.
+
+The eight new helpers name their parameters after CLDR categories and order them
+`one` → `other` → `many`, so their fallback slot is `other` and not the last
+parameter. `pluralSk` and `pluralPl` keep their older `(n, one, few, many)`
+shape; in `pluralSk` and `pluralCs` that third slot is CLDR `other` over the
+integers, and it holds the genitive plural, which is the right form for 0 and 5+.
+Renaming it is deferred to its own slice.
+
+`pluralAf`, `pluralNl`, `pluralDe`, `pluralDa` and `pluralSv` have five separate
+bodies rather than aliases of `pluralEn`. Over the integers they agree with
+English exactly, but the CLDR rules differ on fractions — CLDR Danish selects
+`one` for 0.5 while English does not — and an alias would let a future CLDR
+divergence in one of them silently change English.
 
 | n | sk | cs | pl |
 |---|---|---|---|
@@ -159,6 +191,14 @@ Login 401 must not distinguish an unknown user from a wrong password.
 | settings.gameVariant.description | Tiles, bag, and lexicon. Applies to NEW games only and never changes a running game. This is not the interface language. | Písmená, vrecko a lexikón. Platí pre NOVÉ partie a nemení prebiehajúcu partiu. Toto nie je jazyk rozhrania. |
 | settings.gameVariant.english | English | Angličtina |
 | settings.gameVariant.slovak | Slovak | Slovenčina |
+| settings.gameVariant.afrikaans | Afrikaans | Afrikánčina |
+| settings.gameVariant.italian | Italian | Taliančina |
+| settings.gameVariant.dutch | Dutch | Holandčina |
+| settings.gameVariant.german | German | Nemčina |
+| settings.gameVariant.portuguese | Portuguese | Portugalčina |
+| settings.gameVariant.danish | Danish | Dánčina |
+| settings.gameVariant.swedish | Swedish | Švédčina |
+| settings.gameVariant.icelandic | Icelandic | Islandčina |
 | settings.rival.title | Your rival | Tvoj súper |
 | settings.rival.description | The administrator picks the rival for new games. | Súpera pre nové partie vyberá správca. |
 | settings.timeout.title | AI Thinking Time | Čas na rozmýšľanie AI |
@@ -358,8 +398,26 @@ separate because the visible label and placeholder are distinct UI roles.
 ## Game screen
 
 `game.lexicon.*` is keyed on the GAME VARIANT's `lexicon_id` (`collins2019` /
-`slovak` / `czech` / `polish`) and not on the interface locale. Those are two
-independent axes; this is the first key family that depends on the other one.
+`slovak` / `czech` / `polish` / `afrikaans` / `italian` / `dutch` / `german` /
+`portuguese` / `danish` / `swedish` / `icelandic`) and not on the interface
+locale. Those are two independent axes; this is the first key family that depends
+on the other one.
+
+A `lexicon_id` is the stem of the variant's `dictionary_file`, not the variant
+slug. Those coincide for eleven of the twelve installed variants, and the English
+variant is the exception: its stem is `collins2019`, which is why there is no
+`game.lexicon.english`. After the twelve arms above, `game.lexicon.unknown` is
+reachable only for a `lexicon_id` no installed variant produces — a variant whose
+dictionary stem matches no arm, and any future variant added before its key
+exists.
+
+The eight rows below take the locative ADJECTIVE, never the language noun of
+`settings.gameVariant.*`: Slovak `v dánskom` and not `v Dánčine`, Czech
+`v dánském`, Polish `w duńskim`. Two of the twenty-four Slavic rows vocalize the
+preposition — Czech `ve švédském` (as the shipped `ve slovenském` does) and
+Polish `we włoskim` (Polish `w` becomes `we` before an initial w-/f- cluster).
+No Slovak row takes `vo`, because none of the eight adjectives begins with v- or
+f-.
 
 | Key | English | Slovak |
 |---|---|---|
@@ -367,6 +425,14 @@ independent axes; this is the first key family that depends on the other one.
 | game.lexicon.slovak | Not in the Slovak lexicon | Nie je v slovenskom lexikóne |
 | game.lexicon.czech | Not in the Czech lexicon | Nie je v českom lexikóne |
 | game.lexicon.polish | Not in the Polish lexicon | Nie je v poľskom lexikóne |
+| game.lexicon.afrikaans | Not in the Afrikaans lexicon | Nie je v afrikánskom lexikóne |
+| game.lexicon.italian | Not in the Italian lexicon | Nie je v talianskom lexikóne |
+| game.lexicon.dutch | Not in the Dutch lexicon | Nie je v holandskom lexikóne |
+| game.lexicon.german | Not in the German lexicon | Nie je v nemeckom lexikóne |
+| game.lexicon.portuguese | Not in the Portuguese lexicon | Nie je v portugalskom lexikóne |
+| game.lexicon.danish | Not in the Danish lexicon | Nie je v dánskom lexikóne |
+| game.lexicon.swedish | Not in the Swedish lexicon | Nie je v švédskom lexikóne |
+| game.lexicon.icelandic | Not in the Icelandic lexicon | Nie je v islandskom lexikóne |
 | game.lexicon.unknown | Not in the game lexicon | Nie je v lexikóne hry |
 | game.blocker.auth.title | Rival authentication failed | Prihlásenie súpera zlyhalo |
 | game.blocker.auth.body | This free rival could not authenticate. Switch to another free rival or retry later. | Tento súper sa nedokázal prihlásiť. Vyber iného súpera alebo to skús neskôr. |

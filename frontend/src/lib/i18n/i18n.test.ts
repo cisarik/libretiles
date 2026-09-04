@@ -156,7 +156,13 @@ describe("AC-EXHAUST catalogs share one key set", () => {
     expect(Object.keys(skFn).sort()).toEqual(fnKeys);
     expect(Object.keys(csFn).sort()).toEqual(fnKeys);
     expect(Object.keys(plFn).sort()).toEqual(fnKeys);
-    expect(textKeys.length + fnKeys.length).toBe(300);
+    // 296 text keys + 20 function keys. This total is deliberately hardcoded so
+    // that adding a key is a decision rather than an accident: every catalog
+    // must define every key, so the cost of a new one is paid in all twelve
+    // files. Update it in the same commit that adds or removes a key.
+    expect(textKeys.length).toBe(296);
+    expect(fnKeys.length).toBe(20);
+    expect(textKeys.length + fnKeys.length).toBe(316);
   });
 });
 
@@ -807,18 +813,33 @@ describe("AC-TERM-4 Czech tile vs letter and Polish płytk/literę", () => {
 });
 
 describe("AC-LEX-4 lexicon rejection follows lexicon_id", () => {
-  const IDS = ["collins2019", "slovak", "czech", "polish"] as const;
+  // Every lexicon_id a shipped variant can actually produce: the stem of each
+  // installed variant's dictionary_file, which is why `english` appears as
+  // `collins2019`.
+  const IDS = [
+    "collins2019",
+    "slovak",
+    "czech",
+    "polish",
+    "afrikaans",
+    "italian",
+    "dutch",
+    "german",
+    "portuguese",
+    "danish",
+    "swedish",
+    "icelandic",
+  ] as const;
 
   it("selects the matching message in every locale and does not call Czech Collins", () => {
     for (const locale of LOCALES) {
       for (const lexiconId of IDS) {
         const message = t(locale, lexiconRejectionKey(lexiconId));
         expect(message.length).toBeGreaterThan(0);
-        if (lexiconId === "czech") {
-          expect(message).not.toContain("Collins");
-        }
         if (lexiconId === "collins2019") {
           expect(message).toContain("Collins");
+        } else {
+          expect(message).not.toContain("Collins");
         }
       }
       expect(t(locale, lexiconRejectionKey("slovak"))).toBe(

@@ -105,6 +105,14 @@ export const csText: Record<TextKey, string> = {
   "settings.gameVariant.slovak": "Slovenština",
   "settings.gameVariant.czech": "Čeština",
   "settings.gameVariant.polish": "Polština",
+  "settings.gameVariant.afrikaans": "Afrikánština",
+  "settings.gameVariant.italian": "Italština",
+  "settings.gameVariant.dutch": "Nizozemština",
+  "settings.gameVariant.german": "Němčina",
+  "settings.gameVariant.portuguese": "Portugalština",
+  "settings.gameVariant.danish": "Dánština",
+  "settings.gameVariant.swedish": "Švédština",
+  "settings.gameVariant.icelandic": "Islandština",
   "settings.rival.title": "Tvůj soupeř",
   "settings.rival.description": "Soupeře pro nové partie vybírá správce.",
   "nav.settings": "Nastavení",
@@ -237,6 +245,17 @@ export const csText: Record<TextKey, string> = {
   "game.lexicon.slovak": "Není ve slovenském lexikonu",
   "game.lexicon.czech": "Není v českém lexikonu",
   "game.lexicon.polish": "Není v polském lexikonu",
+  // Locative ADJECTIVE, not the language noun. Of the eight only `švédském`
+  // vocalizes the preposition to `ve`, for the same reason the shipped
+  // `ve slovenském` row does: an initial š/s + consonant cluster.
+  "game.lexicon.afrikaans": "Není v afrikánském lexikonu",
+  "game.lexicon.italian": "Není v italském lexikonu",
+  "game.lexicon.dutch": "Není v nizozemském lexikonu",
+  "game.lexicon.german": "Není v německém lexikonu",
+  "game.lexicon.portuguese": "Není v portugalském lexikonu",
+  "game.lexicon.danish": "Není v dánském lexikonu",
+  "game.lexicon.swedish": "Není ve švédském lexikonu",
+  "game.lexicon.icelandic": "Není v islandském lexikonu",
   "game.lexicon.unknown": "Není v lexikonu hry",
   "game.blocker.auth.title": "Přihlášení soupeře selhalo",
   "game.blocker.auth.body":

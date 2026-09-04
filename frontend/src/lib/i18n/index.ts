@@ -21,7 +21,20 @@ export {
   writeLocaleCookie,
 } from "./locales";
 export { t, tf } from "./translate";
-export { pluralCs, pluralEn, pluralPl, pluralSk } from "./plural";
+export {
+  pluralAf,
+  pluralCs,
+  pluralDa,
+  pluralDe,
+  pluralEn,
+  pluralIs,
+  pluralIt,
+  pluralNl,
+  pluralPl,
+  pluralPt,
+  pluralSk,
+  pluralSv,
+} from "./plural";
 
 export function useLocale(): Locale {
   const server = useServerLocale();

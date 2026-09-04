@@ -105,6 +105,16 @@ export const enText = {
   "settings.gameVariant.slovak": "Slovak",
   "settings.gameVariant.czech": "Czech",
   "settings.gameVariant.polish": "Polish",
+  // These eight are byte-identical to the server `display_name` they replace, so
+  // the English picker cannot change; sk / cs / pl gain translated exonyms.
+  "settings.gameVariant.afrikaans": "Afrikaans",
+  "settings.gameVariant.italian": "Italian",
+  "settings.gameVariant.dutch": "Dutch",
+  "settings.gameVariant.german": "German",
+  "settings.gameVariant.portuguese": "Portuguese",
+  "settings.gameVariant.danish": "Danish",
+  "settings.gameVariant.swedish": "Swedish",
+  "settings.gameVariant.icelandic": "Icelandic",
   "settings.rival.title": "Your rival",
   "settings.rival.description":
     "The administrator picks the rival for new games.",
@@ -237,6 +247,17 @@ export const enText = {
   "game.lexicon.slovak": "Not in the Slovak lexicon",
   "game.lexicon.czech": "Not in the Czech lexicon",
   "game.lexicon.polish": "Not in the Polish lexicon",
+  // These suffixes are `lexicon_id` values, not variant slugs. The two coincide
+  // for eleven of the twelve installed variants; the English variant's
+  // dictionary stem is `collins2019`, which is why there is no `english` key.
+  "game.lexicon.afrikaans": "Not in the Afrikaans lexicon",
+  "game.lexicon.italian": "Not in the Italian lexicon",
+  "game.lexicon.dutch": "Not in the Dutch lexicon",
+  "game.lexicon.german": "Not in the German lexicon",
+  "game.lexicon.portuguese": "Not in the Portuguese lexicon",
+  "game.lexicon.danish": "Not in the Danish lexicon",
+  "game.lexicon.swedish": "Not in the Swedish lexicon",
+  "game.lexicon.icelandic": "Not in the Icelandic lexicon",
   "game.lexicon.unknown": "Not in the game lexicon",
   "game.blocker.auth.title": "Rival authentication failed",
   "game.blocker.auth.body":
@@ -368,7 +389,26 @@ export function lexiconRejectionKey(
       return "game.lexicon.czech";
     case "polish":
       return "game.lexicon.polish";
+    case "afrikaans":
+      return "game.lexicon.afrikaans";
+    case "italian":
+      return "game.lexicon.italian";
+    case "dutch":
+      return "game.lexicon.dutch";
+    case "german":
+      return "game.lexicon.german";
+    case "portuguese":
+      return "game.lexicon.portuguese";
+    case "danish":
+      return "game.lexicon.danish";
+    case "swedish":
+      return "game.lexicon.swedish";
+    case "icelandic":
+      return "game.lexicon.icelandic";
     default:
+      // Reachable only for a lexicon_id no installed variant produces: a variant
+      // whose dictionary stem matches no arm, and any future variant added
+      // before its own key exists.
       return "game.lexicon.unknown";
   }
 }

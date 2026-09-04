@@ -107,6 +107,14 @@ export const plText: Record<TextKey, string> = {
   "settings.gameVariant.slovak": "Słowacki",
   "settings.gameVariant.czech": "Czeski",
   "settings.gameVariant.polish": "Polski",
+  "settings.gameVariant.afrikaans": "Afrykanerski",
+  "settings.gameVariant.italian": "Włoski",
+  "settings.gameVariant.dutch": "Niderlandzki",
+  "settings.gameVariant.german": "Niemiecki",
+  "settings.gameVariant.portuguese": "Portugalski",
+  "settings.gameVariant.danish": "Duński",
+  "settings.gameVariant.swedish": "Szwedzki",
+  "settings.gameVariant.icelandic": "Islandzki",
   "settings.rival.title": "Twój rywal",
   "settings.rival.description":
     "Rywala do nowych partii wybiera administrator.",
@@ -240,6 +248,17 @@ export const plText: Record<TextKey, string> = {
   "game.lexicon.slovak": "Nie ma w słowackim leksykonie",
   "game.lexicon.czech": "Nie ma w czeskim leksykonie",
   "game.lexicon.polish": "Nie ma w polskim leksykonie",
+  // Locative ADJECTIVE, not the language noun. Of the eight only `włoskim`
+  // vocalizes the preposition to `we`, because Polish `w` becomes `we` before an
+  // initial w-/f- consonant cluster (we Włoszech, we wtorek).
+  "game.lexicon.afrikaans": "Nie ma w afrykanerskim leksykonie",
+  "game.lexicon.italian": "Nie ma we włoskim leksykonie",
+  "game.lexicon.dutch": "Nie ma w niderlandzkim leksykonie",
+  "game.lexicon.german": "Nie ma w niemieckim leksykonie",
+  "game.lexicon.portuguese": "Nie ma w portugalskim leksykonie",
+  "game.lexicon.danish": "Nie ma w duńskim leksykonie",
+  "game.lexicon.swedish": "Nie ma w szwedzkim leksykonie",
+  "game.lexicon.icelandic": "Nie ma w islandzkim leksykonie",
   "game.lexicon.unknown": "Nie ma w leksykonie gry",
   "game.blocker.auth.title": "Błąd uwierzytelnienia rywala",
   "game.blocker.auth.body":

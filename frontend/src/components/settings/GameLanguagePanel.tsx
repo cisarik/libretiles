@@ -14,6 +14,14 @@ const VARIANT_NAME_KEYS: Record<string, TextKey> = {
   slovak: "settings.gameVariant.slovak",
   czech: "settings.gameVariant.czech",
   polish: "settings.gameVariant.polish",
+  afrikaans: "settings.gameVariant.afrikaans",
+  italian: "settings.gameVariant.italian",
+  dutch: "settings.gameVariant.dutch",
+  german: "settings.gameVariant.german",
+  portuguese: "settings.gameVariant.portuguese",
+  danish: "settings.gameVariant.danish",
+  swedish: "settings.gameVariant.swedish",
+  icelandic: "settings.gameVariant.icelandic",
 };
 
 const VARIANT_FLAG_SRC: Record<string, string> = {
