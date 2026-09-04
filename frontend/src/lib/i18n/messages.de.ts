@@ -308,6 +308,10 @@ export const deText: Record<TextKey, string> = {
   "game.toast.aiExchangedBody":
     "Die AI hat ihre Bank erneuert und den Zug verbraucht.",
   "game.toast.aiPassedBody": "Kein gültiger Zug gefunden – du bist am Zug!",
+  // `game.aiPlayedFor.before` and `.points` render as `[before] {score} [points]`
+  // with the score span FIXED in the middle, so no verb form can follow the number.
+  // German perfect tense would put the participle after the score, which that call
+  // site cannot express — hence the simple past `spielte` rather than `hat gespielt`.
   "game.aiPlayedFor.before": "Die AI spielte für",
   "game.aiPlayedFor.points": "Pkt.",
   "game.aWord": "ein Wort",
