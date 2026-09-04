@@ -189,7 +189,7 @@ Rollback:
 ## Not done yet (typical next steps)
 
 - LM Studio, Vercel AI Gateway, and push/deploy are out of this cut (historical rejection / removal, not unfinished AI routing). Stripe is rejected, not unfinished work.
-- Slovak assets now ship; Settings/engine/prompt wiring is later slices of `slovak-playable-variant`; live Slovak play is not enabled until those slices land.
+- UI localization lags gameplay. Twelve variants ship playable — `ls backend/assets/variants/` is 12 and `game.views.list_variant_summaries()` reports `readiness: "playable"` for all twelve — while only four have an interface locale: `LOCALES` in `frontend/src/lib/i18n/locales.ts` is `en sk cs pl`. The other eight (Afrikaans, Italian, Dutch, German, Portuguese, Danish, Swedish, Icelandic) render English chrome and take their picker label from the server `display_name`, because `GameLanguagePanel.tsx` has no `VARIANT_NAME_KEYS` entry for them. Adding those eight `messages.XX.ts` catalogs is open work.
 - Configuring `libretiles-openrouter-catalog-refresh` on a host is separate production authority, not this cut.
 - Tier 2 dictionary (optional API) — see PRD and `docs/architecture.md`.
 - Stronger AI search / candidate generation beyond prompt-only improvements.
