@@ -318,50 +318,54 @@ def _bag_remaining_count(session: GameSession) -> int:
     return len(tiles) if isinstance(tiles, list) else 0
 
 
-_WIRE_ADAPTER_REMOVAL = (
-    "temporary wire adapter cannot represent a multi-code-point token; "
-    "this adapter is deleted when the wire format moves to state_schema_version 4"
-)
+WIRE_STATE_SCHEMA_VERSION = 4
+"""Version of the GAME-STATE WIRE payload. The client refuses what it cannot render.
+
+⚠ NAMING COLLISION: ``gamecore/state.py`` already calls its SAVE-FILE format
+"schema 4" (``_require_schema_4``). Two different axes that happen to share a
+number. Do not unify them.
+
+The value 4 is inherited from the removed wire adapter, which named it in the
+message it raised rather than emitting a wrong board.
+"""
 
 
-def _legacy_wire_board_and_blanks(
-    board_state: object,
-) -> tuple[list[str], list[dict[str, int]]]:
-    """TEMPORARY adapter: structured grid -> 15 joined strings + blanks coords.
+def _wire_board(board_state: object) -> list[list[dict[str, Any] | None]]:
+    """Project the persisted grid onto the wire cell by cell, losslessly.
 
-    Deleted when the wire format moves to state_schema_version 4.
-    Raises rather than truncating if a token or blank_as is longer than one
-    code point — this adapter cannot represent one.
+    Replaces the temporary joined-string adapter, which had to RAISE on any
+    multi-code-point token because a fifteen-character row cannot represent
+    one. A grid of cells can, so no digraph language is blocked by the wire.
+
+    ``None`` means empty, matching ``_board_from_session``, which already
+    treats a non-dict persisted cell as empty. The blank identity travels
+    inside its own cell as ``{"token": "?", "blank_as": <letter>}``; there is
+    deliberately no sidecar ``blanks`` list, because a second source of truth
+    for one fact is a defect waiting to happen.
+
+    ⛔ The PERSISTED ``board_state`` shape is unchanged; this is a projection.
     """
     grid = board_state if isinstance(board_state, list) else []
-    rows: list[str] = []
-    blanks: list[dict[str, int]] = []
+    rows: list[list[dict[str, Any] | None]] = []
     for r in range(BOARD_SIZE):
         raw_row = grid[r] if r < len(grid) else None
         row = raw_row if isinstance(raw_row, list) else []
-        chars: list[str] = []
+        cells: list[dict[str, Any] | None] = []
         for c in range(BOARD_SIZE):
             cell = row[c] if c < len(row) else None
             if not isinstance(cell, dict):
-                chars.append(".")
+                cells.append(None)
                 continue
             token_raw = cell.get("token")
             blank_raw = cell.get("blank_as")
             token = token_raw if isinstance(token_raw, str) else ""
-            blank_as = blank_raw if isinstance(blank_raw, str) else None
             if not token:
-                chars.append(".")
+                cells.append(None)
                 continue
-            if len(token) > 1 or (blank_as is not None and len(blank_as) > 1):
-                raise ValueError(_WIRE_ADAPTER_REMOVAL)
-            realized = blank_as if blank_as else token
-            if len(realized) > 1:
-                raise ValueError(_WIRE_ADAPTER_REMOVAL)
-            chars.append(realized)
-            if token == "?":
-                blanks.append({"row": r, "col": c})
-        rows.append("".join(chars))
-    return rows, blanks
+            blank_as = blank_raw if isinstance(blank_raw, str) and blank_raw else None
+            cells.append({"token": token, "blank_as": blank_as})
+        rows.append(cells)
+    return rows
 
 
 def _resolve_ai_model(
@@ -439,15 +443,15 @@ def _build_state(session: GameSession, *, current_user_id: int, my_slot: PlayerS
     )
     recent_messages.reverse()
 
-    wire_board, wire_blanks = _legacy_wire_board_and_blanks(session.board_state)
-
     return {
         "game_id": str(session.public_id),
+        # The client REFUSES a wire version it does not understand rather than
+        # mis-rendering one. A guard that refuses is loud; a wrong board is silent.
+        "state_schema_version": WIRE_STATE_SCHEMA_VERSION,
         "status": session.status,
         "game_mode": session.game_mode,
         "variant_slug": session.variant_slug,
-        "board": wire_board,
-        "blanks": wire_blanks,
+        "board": _wire_board(session.board_state),
         "premium_used": session.premium_used,
         "bag_remaining": _bag_remaining_count(session),
         "consecutive_scoreless_turns": session.consecutive_scoreless_turns,

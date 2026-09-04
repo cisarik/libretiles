@@ -202,7 +202,22 @@ def test_placement_serializer_accepts_slovak_acute_a() -> None:
     assert nfc_letter.is_valid(), nfc_letter.errors
     assert nfc_letter.validated_data["letter"] == "Á"
 
-    assert not PlacementSerializer(data={"row": 7, "col": 7, "letter": "CH"}).is_valid()
+    # Was `assert not PlacementSerializer(letter="CH").is_valid()`, and it was
+    # passing for the WRONG REASON. "CH" is structurally identical to "SZ" on
+    # every dimension a serializer can see — NFC-stable, uppercase-stable, two
+    # code points — so no shape predicate that accepts SZ can reject CH.
+    # PlacementSerializer has NO VARIANT IN SCOPE and cannot know whether CH is
+    # a tile in the game being played. SAME INVARIANT, split where it belongs:
+    # shape is the serializer's job, playability is the engine's. Both halves
+    # are asserted here, and the engine half is also pinned in
+    # tests/test_atomic_tile_tokens.py:237 (`"CH" not in playable_letters`).
+    digraph = PlacementSerializer(data={"row": 7, "col": 7, "letter": "CH"})
+    assert digraph.is_valid(), digraph.errors
+    assert digraph.validated_data["letter"] == "CH"
+    assert "CH" not in load_variant("slovak").playable_letters
+
     assert not PlacementSerializer(data={"row": 7, "col": 7, "letter": ""}).is_valid()
+    # `1` is still rejected, now for a better reason than a length limit: a tile
+    # token must contain at least one Unicode letter, and a digit has none.
     assert not PlacementSerializer(data={"row": 7, "col": 7, "letter": "1"}).is_valid()
 

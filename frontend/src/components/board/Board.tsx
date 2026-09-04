@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { BOARD_SIZE } from "@/lib/constants";
+import { boardCellLetter, type BoardCell } from "@/lib/types";
 import { Cell } from "./Cell";
 import { useGameStore } from "@/hooks/useGameStore";
 import { useIsCoarsePointer } from "@/hooks/useIsCoarsePointer";
@@ -52,6 +53,11 @@ const TAP_SUPPRESSION_MS = 180;
 const ZOOM_ANIMATION_MS = 220;
 const ZOOM_HINT_TIMEOUT_MS = 4200;
 const ZOOM_HINT_STORAGE_KEY = "libretiles-mobile-zoom-hint-v1";
+
+/** 15x15 of empty squares, for the render before the first payload arrives. */
+const EMPTY_BOARD: BoardCell[][] = Array.from({ length: BOARD_SIZE }, () =>
+  Array.from({ length: BOARD_SIZE }, () => null),
+);
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
@@ -116,10 +122,10 @@ export function Board({
 
   usePremiumBoardLighting(boardRef, isDraggingTile || !boardShineEnabled || isCoarsePointer);
 
-  const grid = gameState?.board ?? Array(BOARD_SIZE).fill(".".repeat(BOARD_SIZE));
-  const blanks = new Set(
-    (gameState?.blanks ?? []).map((b) => `${b.row}-${b.col}`),
-  );
+  // The wire carries a 15x15 GRID of cells, `null` for empty, because both
+  // consumers index by coordinate. `blanks` is gone: each cell carries its own
+  // blank identity as `{ token: "?", blank_as: <letter> }`.
+  const grid = gameState?.board ?? EMPTY_BOARD;
   const lastMoveCells = gameState?.last_move_cells ?? [];
   const lastMoveWords = gameState?.last_move_words ?? [];
   const primaryWordCoords = lastMoveWords[0]?.coords ?? lastMoveCells;
@@ -553,8 +559,8 @@ export function Board({
       removePendingTile(row, col);
       return;
     }
-    const boardLetter = grid[row]?.[col];
-    if (boardLetter && boardLetter !== ".") {
+    const boardCell = grid[row]?.[col] ?? null;
+    if (boardCell) {
       if (moveByPlacedCellKey.has(key)) {
         setRevealedMoveKey((current) => (current === key ? null : key));
       }
@@ -594,12 +600,10 @@ export function Board({
                 Array.from({ length: BOARD_SIZE }, (_, col) => {
                   const key = `${row}-${col}`;
                   const pending = pendingSet.get(key);
-                  const boardLetter = grid[row]?.[col] ?? ".";
+                  const boardCell = grid[row]?.[col] ?? null;
                   const letter = pending
                     ? (pending.blank_as || pending.letter)
-                    : boardLetter !== "."
-                      ? boardLetter
-                      : null;
+                    : boardCellLetter(boardCell);
                   const showDragPreview =
                     dragPreview?.row === row &&
                     dragPreview?.col === col &&
@@ -612,7 +616,7 @@ export function Board({
                       row={row}
                       col={col}
                       letter={letter}
-                      isBlank={pending ? pending.letter === "?" : blanks.has(key)}
+                      isBlank={pending ? pending.letter === "?" : boardCell?.token === "?"}
                       isPending={!!pending}
                       isLastMove={highlightedSet.has(key)}
                       isPreviewTarget={showDragPreview}

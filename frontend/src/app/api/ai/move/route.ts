@@ -115,18 +115,55 @@ async function backendPatch(path: string, body: unknown, token: string) {
   return backendRequest(path, token, { method: "PATCH", body });
 }
 
+/**
+ * Resource bound on ONE tile token, mirroring the backend's shared
+ * `gamecore.variant_store.MAX_TILE_TOKEN_CODEPOINTS`. Never a tile count.
+ */
+const MAX_TILE_TOKEN_CODEPOINTS = 16;
+
+/** At least one Unicode letter, and no whitespace or control characters. */
+const TILE_TOKEN_SHAPE = /^(?=[\s\S]*\p{L})[^\s\p{C}]+$/u;
+
+/**
+ * Wire shape of ONE tile token, of ANY code-point length. Blanks excluded.
+ *
+ * Mirrors `_is_tile_token_shape` in `backend/game/serializers.py`, which is the
+ * authority. A single-code-point rule here would silently drop every digraph
+ * tile — `SZ`, `DZS`, `L·L` — before the backend ever saw it.
+ * `?` is the blank and is handled by each caller.
+ */
+function isTileToken(value: string): boolean {
+  return (
+    value.length > 0 &&
+    value.length <= MAX_TILE_TOKEN_CODEPOINTS &&
+    value === value.toUpperCase() &&
+    TILE_TOKEN_SHAPE.test(value)
+  );
+}
+
+/**
+ * Canonicalize one model-supplied token: trim, NFC, uppercase, NFC again.
+ * The SECOND NFC is required because uppercasing can decompose, and the
+ * backend predicate rejects a token that is not NFC-stable.
+ */
+function normalizeTileToken(value: string): string {
+  return value.normalize("NFC").trim().toUpperCase().normalize("NFC");
+}
+
 const placementSchema = z.object({
   row: z.number().min(0).max(14).describe("Row index (0-14)"),
   col: z.number().min(0).max(14).describe("Column index (0-14)"),
   letter: z
     .string()
-    .length(1)
-    .describe("Tile letter (one Unicode letter) or ? for blank"),
+    .min(1)
+    .max(MAX_TILE_TOKEN_CODEPOINTS)
+    .describe("Tile token (one tile, which may be several letters) or ? for blank"),
   blank_as: z
     .string()
-    .length(1)
+    .min(1)
+    .max(MAX_TILE_TOKEN_CODEPOINTS)
     .optional()
-    .describe("If letter is ?, the Unicode letter it represents"),
+    .describe("If letter is ?, the tile token it represents"),
 });
 
 type PlacementData = {
@@ -306,14 +343,12 @@ function normalizePlacementData(value: unknown): PlacementData | null {
   const row = typeof value.row === "number" ? value.row : null;
   const col = typeof value.col === "number" ? value.col : null;
   const letter =
-    typeof value.letter === "string"
-      ? value.letter.normalize("NFC").trim().toUpperCase()
-      : null;
+    typeof value.letter === "string" ? normalizeTileToken(value.letter) : null;
   const blankAs =
     typeof value.blank_as === "string"
-      ? value.blank_as.normalize("NFC").trim().toUpperCase()
+      ? normalizeTileToken(value.blank_as)
       : typeof value.blankAs === "string"
-        ? value.blankAs.normalize("NFC").trim().toUpperCase()
+        ? normalizeTileToken(value.blankAs)
         : null;
 
   if (
@@ -326,19 +361,19 @@ function normalizePlacementData(value: unknown): PlacementData | null {
     col < 0 ||
     col > 14 ||
     !letter ||
-    !/^[\p{L}?]$/u.test(letter)
+    (letter !== "?" && !isTileToken(letter))
   ) {
     return null;
   }
 
-  if (letter === "?" && (!blankAs || !/^\p{L}$/u.test(blankAs))) return null;
+  if (letter === "?" && (!blankAs || !isTileToken(blankAs))) return null;
   if (letter !== "?" && blankAs !== null) return null;
 
   return {
     row,
     col,
     letter,
-    ...(blankAs && blankAs.length === 1 ? { blank_as: blankAs } : {}),
+    ...(blankAs ? { blank_as: blankAs } : {}),
   };
 }
 
@@ -998,8 +1033,12 @@ export async function POST(req: NextRequest) {
           if (playability.exchange_allowed === true) {
             const letters = Array.isArray(playability.exchange_letters)
               ? playability.exchange_letters.filter(
+                  // RACK tokens, a different path from the placement schema
+                  // above, and the one the backend ExchangeSerializer sits
+                  // downstream of. "?" is a rack blank and is exchangeable.
                   (letter: unknown): letter is string =>
-                    typeof letter === "string" && letter.length === 1,
+                    typeof letter === "string" &&
+                    (letter === "?" || isTileToken(letter)),
                 )
               : [];
             terminalCause = "genuine_no_move_exchange";

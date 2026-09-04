@@ -40,13 +40,47 @@ export interface MoveHistoryItem {
   created_at: string;
 }
 
+/**
+ * Version of the GAME-STATE WIRE payload this client can render.
+ *
+ * The client REFUSES a version it does not understand rather than
+ * mis-rendering one: a guard that refuses is loud, a wrong board is silent.
+ * The refusal lives in `setGameState`, the single ingress choke point for
+ * every game-state payload, REST and websocket alike.
+ *
+ * Unrelated to the zustand persist `version`, and unrelated to the save-file
+ * "schema 4" in the backend's `gamecore/state.py`.
+ */
+export const WIRE_STATE_SCHEMA_VERSION = 4;
+
+export function isSupportedStateSchemaVersion(value: unknown): boolean {
+  return value === WIRE_STATE_SCHEMA_VERSION;
+}
+
+/**
+ * One board square as the wire carries it, or `null` when the square is empty.
+ *
+ * `token` is the ATOMIC tile token and MAY be several code points — "SZ",
+ * "DZS", "L·L". `blank_as` is the letter a blank was played as, or `null`.
+ * A blank arrives as `{ token: "?", blank_as: "SZ" }`, so the blank identity
+ * travels inside its own cell and there is no sidecar `blanks` list to keep in
+ * sync.
+ */
+export type BoardCell = { token: string; blank_as: string | null } | null;
+
+/** The realized letter to render in a cell: the blank's assignment, else the tile. */
+export function boardCellLetter(cell: BoardCell): string | null {
+  if (!cell || !cell.token) return null;
+  return cell.blank_as || cell.token;
+}
+
 export interface GameState {
   game_id: string;
+  state_schema_version: number;
   status: "waiting" | "active" | "finished" | "abandoned";
   game_mode: "vs_ai" | "vs_human";
   variant_slug: string;
-  board: string[];
-  blanks: { row: number; col: number }[];
+  board: BoardCell[][];
   premium_used: { row: number; col: number }[];
   bag_remaining: number;
   consecutive_scoreless_turns?: number;

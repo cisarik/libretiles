@@ -8,12 +8,12 @@ from django.test import TestCase, TransactionTestCase
 
 from accounts.models import User
 from game.models import GameSession, PlayerSlot
+from game.serializers import ExchangeSerializer, PlacementSerializer
 from game.services import (
-    _WIRE_ADAPTER_REMOVAL,
+    WIRE_STATE_SCHEMA_VERSION,
     _bag_from_session,
     _board_from_session,
     _build_state,
-    _legacy_wire_board_and_blanks,
     _perform_starting_draw,
     _persist_bag,
     _persist_board,
@@ -22,7 +22,12 @@ from gamecore.board import BOARD_SIZE, Board
 from gamecore.scoring import score_words
 from gamecore.tiles import TileBag
 from gamecore.types import Placement
-from gamecore.variant_store import VariantDefinition, VariantLetter, load_variant
+from gamecore.variant_store import (
+    MAX_TILE_TOKEN_CODEPOINTS,
+    VariantDefinition,
+    VariantLetter,
+    load_variant,
+)
 from tests._migration_restore import restore_apps_to_leaf
 
 _GAME_0007 = [("game", "0007_consumedwsticket")]
@@ -230,9 +235,14 @@ class AtomicTokenPersistenceTests(TestCase):
         )
         assert draw_tie["slot0_first"] is True
 
-    def test_p7_adapter_is_lossless_for_english_blank_board(self) -> None:
-        # Pre-fix: _build_state emitted session.board_state / session.blanks raw.
-        session, slot, user = _session_with_slot(username="p7-adapter")
+    def test_p7_wire_projection_is_lossless_for_english_blank_board(self) -> None:
+        # Was `test_p7_adapter_is_lossless_for_english_blank_board`, which
+        # asserted the joined-string wire: 15 strings of 15 characters, plus a
+        # sidecar `state["blanks"] == [{"row": 7, "col": 7}]`.
+        # SAME INVARIANT, new mechanism: an English blank board crosses the
+        # wire losslessly. The realized letter and the blank identity now live
+        # in ONE cell instead of a string plus a coordinate list.
+        session, slot, user = _session_with_slot(username="p7-wire")
         board = Board(str(settings.PREMIUMS_PATH))
         board.place_letters(
             [
@@ -244,27 +254,132 @@ class AtomicTokenPersistenceTests(TestCase):
         session.save()
 
         state = _build_state(session, current_user_id=user.id, my_slot=slot)
-        assert len(state["board"]) == 15
-        assert all(isinstance(row, str) and len(row) == 15 for row in state["board"])
-        assert state["board"][7][7] == "A"
-        assert state["board"][7][8] == "T"
-        assert state["blanks"] == [{"row": 7, "col": 7}]
-        expected_row = "." * 7 + "A" + "T" + "." * 6
+        assert len(state["board"]) == BOARD_SIZE
+        assert all(
+            isinstance(row, list) and len(row) == BOARD_SIZE for row in state["board"]
+        )
+        assert state["board"][7][7] == {"token": "?", "blank_as": "A"}
+        assert state["board"][7][8] == {"token": "T", "blank_as": None}
+        assert "blanks" not in state
+        expected_row: list[dict[str, str | None] | None] = [None] * BOARD_SIZE
+        expected_row[7] = {"token": "?", "blank_as": "A"}
+        expected_row[8] = {"token": "T", "blank_as": None}
         assert state["board"][7] == expected_row
 
-    def test_p8_adapter_raises_on_multicodepoint_token(self) -> None:
-        # Pre-fix: joined-string persist truncated or split SZ into S+Z.
-        session, slot, user = _session_with_slot(username="p8-raise")
-        grid = [[None] * 15 for _ in range(15)]
+    def test_p8_wire_projection_carries_a_multicodepoint_token(self) -> None:
+        # Was `test_p8_adapter_raises_on_multicodepoint_token`, which asserted
+        # that `_build_state` RAISED `_WIRE_ADAPTER_REMOVAL` and that a direct
+        # `_legacy_wire_board_and_blanks` call mentioned "state_schema_version 4".
+        # SAME INVARIANT, new mechanism: a multi-code-point token is never
+        # silently mangled on the wire. The temporary adapter had to raise
+        # because a 15-character row cannot represent `SZ`; the structured
+        # projection carries it, so the loud failure becomes a correct payload.
+        session, slot, user = _session_with_slot(username="p8-multicodepoint")
+        grid: list[list[dict[str, str | None] | None]] = [
+            [None] * BOARD_SIZE for _ in range(BOARD_SIZE)
+        ]
         grid[0][0] = {"token": "SZ", "blank_as": None}
         session.board_state = grid
         session.save(update_fields=["board_state"])
-        with self.assertRaises(ValueError) as raised:
-            _build_state(session, current_user_id=user.id, my_slot=slot)
-        assert str(raised.exception) == _WIRE_ADAPTER_REMOVAL
-        with self.assertRaises(ValueError) as raised_direct:
-            _legacy_wire_board_and_blanks(session.board_state)
-        assert "state_schema_version 4" in str(raised_direct.exception)
+
+        state = _build_state(session, current_user_id=user.id, my_slot=slot)
+        assert state["board"][0][0] == {"token": "SZ", "blank_as": None}
+        assert state["state_schema_version"] == WIRE_STATE_SCHEMA_VERSION
+
+    def test_f1_two_multicodepoint_tokens_cross_the_wire_losslessly(self) -> None:
+        # F1. SYNTHETIC TOKENS ARE CORRECT: no shipped variant has a digraph
+        # tile, which is exactly why twelve variants could ship before this
+        # change. Hungarian is the first real consumer and lands later.
+        session, slot, user = _session_with_slot(username="f1-wire-lossless")
+        board = Board(str(settings.PREMIUMS_PATH))
+        board.cells[7][7].letter = "SZ"
+        board.cells[7][7].is_blank = False
+        board.cells[7][8].letter = "DZS"
+        board.cells[7][8].is_blank = False
+        # Placed as a blank: persisted token "?", blank_as "SZ".
+        board.cells[8][7].letter = "SZ"
+        board.cells[8][7].is_blank = True
+        _persist_board(session, board)
+        session.save()
+        session.refresh_from_db()
+
+        state = _build_state(session, current_user_id=user.id, my_slot=slot)
+
+        assert state["state_schema_version"] == WIRE_STATE_SCHEMA_VERSION
+        assert len(state["board"]) == BOARD_SIZE
+        assert all(len(row) == BOARD_SIZE for row in state["board"])
+        assert state["board"][7][7] == {"token": "SZ", "blank_as": None}
+        assert state["board"][7][8] == {"token": "DZS", "blank_as": None}
+        assert state["board"][8][7] == {"token": "?", "blank_as": "SZ"}
+        assert state["board"][0][0] is None
+        assert state["board"][7][9] is None
+        # `blanks` is gone. The cell carries the blank identity, so a second
+        # source of truth for the same fact would be a defect waiting to happen.
+        assert "blanks" not in state
+        occupied = [
+            (r, c)
+            for r in range(BOARD_SIZE)
+            for c in range(BOARD_SIZE)
+            if state["board"][r][c] is not None
+        ]
+        assert occupied == [(7, 7), (7, 8), (8, 7)]
+
+    def test_f4_placement_predicate_accepts_tile_tokens_and_rejects_non_tiles(self) -> None:
+        # F4. The predicate is a SHAPE rule over untrusted public input, of any
+        # code-point length. `1` and `·` are the at-least-one-Unicode-letter
+        # cases; `L·L` is the shipped-asset shape that `str.isalpha()` rejects,
+        # which is why a length limit could not simply be dropped.
+        for accepted in ("SZ", "DZS", "L\u00b7L", "\u00c1", "A"):
+            serializer = PlacementSerializer(
+                data={"row": 7, "col": 7, "letter": accepted}
+            )
+            assert serializer.is_valid(), (accepted, serializer.errors)
+            assert serializer.validated_data["letter"] == accepted
+
+        # `?` IS ACCEPTED DELIBERATELY: the shape clauses reject it
+        # because a question mark contains no letter, and only the explicit
+        # blank branch outside the shared predicate saves it. A careless
+        # shared-predicate refactor breaks blank placement, and this is what
+        # catches it.
+        blank = PlacementSerializer(
+            data={"row": 7, "col": 7, "letter": "?", "blank_as": "SZ"}
+        )
+        assert blank.is_valid(), blank.errors
+        assert blank.validated_data["letter"] == "?"
+        assert blank.validated_data["blank_as"] == "SZ"
+
+        too_long = "A" * (MAX_TILE_TOKEN_CODEPOINTS + 1)
+        for rejected in ("", "a", "S Z", "1", "\u00b7", too_long):
+            serializer = PlacementSerializer(
+                data={"row": 7, "col": 7, "letter": rejected}
+            )
+            assert not serializer.is_valid(), rejected
+
+    def test_f5_exchange_predicate_accepts_tile_tokens_blank_and_bounds_length(self) -> None:
+        # F5. Without this, the exchange path's old one-character child bound
+        # (`CharField(max_length=1)`) could be left in place and every other
+        # change would still look green: the AI route would forward `SZ` and
+        # the backend would answer HTTP 400.
+        digraph = ExchangeSerializer(data={"letters": ["SZ", "A"]})
+        assert digraph.is_valid(), digraph.errors
+        assert digraph.validated_data["letters"] == ["SZ", "A"]
+
+        # Exchanging a blank is a legal move and the old one-character
+        # `CharField` accepted "?", so it is live behaviour, not a new
+        # allowance. The shape clauses reject "?" on their own; the explicit
+        # blank branch outside the shared predicate is what keeps it legal.
+        blank = ExchangeSerializer(data={"letters": ["?"]})
+        assert blank.is_valid(), blank.errors
+        assert blank.validated_data["letters"] == ["?"]
+
+        too_long = ExchangeSerializer(
+            data={"letters": ["A" * (MAX_TILE_TOKEN_CODEPOINTS + 1)]}
+        )
+        assert not too_long.is_valid()
+
+        for rejected in ([""], ["a"], ["S Z"], ["1"], ["\u00b7"], []):
+            serializer = ExchangeSerializer(data={"letters": rejected})
+            assert not serializer.is_valid(), rejected
 
     def test_p9_rack_survives_as_ordered_token_array_with_duplicate_and_blank(self) -> None:
         session, slot, user = _session_with_slot(username="p9-rack")

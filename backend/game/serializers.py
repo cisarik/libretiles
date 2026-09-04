@@ -8,7 +8,7 @@ from catalog.selection import (
     get_selectable_prompts,
     is_selectable_model,
 )
-from gamecore.variant_store import list_installed_variants
+from gamecore.variant_store import MAX_TILE_TOKEN_CODEPOINTS, list_installed_variants
 
 COMPLETION_SOURCES = frozenset(
     {
@@ -245,9 +245,22 @@ class SubmitMoveSerializer(serializers.Serializer[dict[str, Any]]):
 
 class ExchangeSerializer(serializers.Serializer[dict[str, Any]]):
     letters = serializers.ListField(
-        child=serializers.CharField(max_length=1), min_length=1, max_length=7
+        # The child bound is the shared MAX_TILE_TOKEN_CODEPOINTS resource
+        # bound, never a tile count: the OUTER max_length=7 is the tile count.
+        # It replaced a child max_length of ONE, which made every digraph
+        # exchange a HTTP 400 on both the human path (views.ExchangeView) and
+        # the AI path (views.AIExchangeView).
+        child=serializers.CharField(max_length=MAX_TILE_TOKEN_CODEPOINTS),
+        min_length=1,
+        max_length=7,
     )
     ai_metadata = serializers.DictField(required=False, allow_null=True)
+
+    def validate_letters(self, value: list[str]) -> list[str]:
+        # Same token vocabulary as a placement letter, from the same predicate.
+        # allow_blank because exchanging a blank is a legal move that the old
+        # one-character CharField accepted, so it is live behaviour.
+        return [_tile_token(letter, allow_blank=True) for letter in value]
 
     def validate_ai_metadata(self, value: object) -> dict[str, Any]:
         return sanitize_ai_metadata(value)
@@ -266,15 +279,62 @@ class ValidateWordsSerializer(serializers.Serializer[dict[str, Any]]):
     words = serializers.ListField(child=serializers.CharField(max_length=50), min_length=1)
 
 
-def _nfc_uppercase_letter(value: object, *, allow_blank: bool) -> str:
+_TILE_TOKEN_ERROR = "Must be an uppercase tile token."
+
+
+def _is_tile_token_shape(nfc: str) -> bool:
+    """Shape rule for ONE tile token of ANY code-point length. Blanks excluded.
+
+    A tile token is non-empty, no longer than the shared
+    ``gamecore.variant_store.MAX_TILE_TOKEN_CODEPOINTS`` resource bound, equal
+    to its own uppercase form, NFC-stable, free of whitespace and control
+    characters, and contains AT LEAST ONE Unicode letter.
+
+    ⛔ ``str.isalpha()`` cannot be used for that last clause: ``'L·L'.isalpha()``
+    is ``False`` and ``L·L`` is a legitimate shipped-asset token shape. But the
+    clause cannot simply be dropped either, or the digit ``'1'`` and the bare
+    middle dot ``'·'`` would both become valid tile letters.
+
+    ⛔ The BLANK is handled by the caller, deliberately OUTSIDE this predicate:
+    ``'?'`` contains no letter, so this returns ``False`` for it. Placing and
+    exchanging a blank are both legal, and the caller's explicit blank branch
+    is what keeps them legal.
+
+    ⚠ WHY THIS IS STRICTER than ``gamecore.variant_store._parse_asset_token``,
+    which accepts ``'1'``: that loader validates tokens DECLARED BY A MAINTAINER
+    in a committed asset, while this serializer validates UNTRUSTED PUBLIC
+    INPUT. Two different threat models justify two different predicates, so do
+    not "harmonize" them.
+    """
+    if not nfc:
+        return False
+    if len(nfc) > MAX_TILE_TOKEN_CODEPOINTS:
+        return False
+    if nfc != nfc.upper():
+        return False
+    if unicodedata.normalize("NFC", nfc) != nfc:
+        return False
+    if any(character.isspace() for character in nfc):
+        return False
+    if any(unicodedata.category(character).startswith("C") for character in nfc):
+        return False
+    return any(character.isalpha() for character in nfc)
+
+
+def _tile_token(value: object, *, allow_blank: bool) -> str:
+    """Ingest one untrusted tile token. Shared by the placement and exchange paths.
+
+    An exchange letter and a placement letter are the same kind of thing, so
+    they share one predicate rather than drifting apart.
+    """
     if not isinstance(value, str):
-        raise serializers.ValidationError("Must be a single uppercase letter.")
+        raise serializers.ValidationError(_TILE_TOKEN_ERROR)
     nfc = unicodedata.normalize("NFC", value)
     if allow_blank and nfc == "?":
         return nfc
-    if len(nfc) == 1 and nfc.isalpha() and nfc == nfc.upper():
+    if _is_tile_token_shape(nfc):
         return nfc
-    raise serializers.ValidationError("Must be a single uppercase letter.")
+    raise serializers.ValidationError(_TILE_TOKEN_ERROR)
 
 
 class PlacementSerializer(serializers.Serializer[dict[str, Any]]):
@@ -284,10 +344,10 @@ class PlacementSerializer(serializers.Serializer[dict[str, Any]]):
     blank_as = serializers.CharField(required=False)
 
     def validate_letter(self, value: str) -> str:
-        return _nfc_uppercase_letter(value, allow_blank=True)
+        return _tile_token(value, allow_blank=True)
 
     def validate_blank_as(self, value: str) -> str:
-        return _nfc_uppercase_letter(value, allow_blank=False)
+        return _tile_token(value, allow_blank=False)
 
     def to_internal_value(self, data: Any) -> dict[str, Any]:
         if not isinstance(data, dict):

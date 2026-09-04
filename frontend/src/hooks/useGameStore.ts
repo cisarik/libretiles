@@ -6,6 +6,10 @@ import {
   writeLocaleCookie,
   type Locale,
 } from "@/lib/i18n/locales";
+import {
+  isSupportedStateSchemaVersion,
+  WIRE_STATE_SCHEMA_VERSION,
+} from "@/lib/types";
 import type {
   GameState,
   Placement,
@@ -148,7 +152,22 @@ export const useGameStore = create<GameStore>()(
       },
 
       gameState: null,
-      setGameState: (gameState) => set({ gameState }),
+      // The SINGLE ingress choke point for every game-state payload, REST and
+      // websocket alike, which is why play/page.tsx and waiting/[id]/page.tsx
+      // need no guard of their own. A payload whose wire version this client
+      // cannot render is REFUSED here rather than mis-rendered: a guard that
+      // refuses is loud, a wrong board is silent.
+      setGameState: (gameState) => {
+        if (!isSupportedStateSchemaVersion(gameState?.state_schema_version)) {
+          console.error(
+            "libretiles: refusing a game state with unsupported " +
+              `state_schema_version ${JSON.stringify(gameState?.state_schema_version)}; ` +
+              `this client renders ${WIRE_STATE_SCHEMA_VERSION}`,
+          );
+          return;
+        }
+        set({ gameState });
+      },
 
       startingDraw: null,
       setStartingDraw: (startingDraw) => set({ startingDraw }),
@@ -269,7 +288,7 @@ export const useGameStore = create<GameStore>()(
     }),
     {
       name: "libretiles-store",
-      version: 5,
+      version: 6,
       migrate: (persistedState, version) => {
         const incoming = { ...((persistedState ?? {}) as Record<string, unknown>) };
         if (version < 1) {
@@ -293,6 +312,13 @@ export const useGameStore = create<GameStore>()(
         }
         if (version < 5) {
           delete incoming.selectedPromptId;
+        }
+        if (version < 6) {
+          // NOTHING TO MIGRATE, and this branch exists to say so rather than
+          // leave the version bump unexplained. The bump accompanies wire
+          // `state_schema_version` 4, which belongs to the GAME-STATE payload;
+          // this store persists PREFERENCES only (see `partialize` below), so
+          // no persisted key changed shape or meaning.
         }
         return incoming as unknown as GameStore;
       },

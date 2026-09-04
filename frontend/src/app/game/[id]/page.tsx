@@ -1209,8 +1209,9 @@ export default function GamePage() {
   }, []);
 
   const getValidPreviewTarget = useCallback((row: number, col: number) => {
-    const boardLetter = gameState?.board?.[row]?.[col];
-    if (boardLetter && boardLetter !== ".") return null;
+    // A non-null wire cell means the square is occupied. Any occupant counts,
+    // whatever its code-point length.
+    if (gameState?.board?.[row]?.[col]) return null;
     if (pendingTiles.some((t) => t.row === row && t.col === col)) return null;
     return { row, col };
   }, [gameState, pendingTiles]);

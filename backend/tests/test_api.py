@@ -1075,7 +1075,12 @@ class GameAPITest(TestCase):
         assert resp.status_code == 200
         data = resp.json()
         assert data["ok"] is True
-        assert data["state"]["board"][7][7:9] == "AT"
+        # Was `data["state"]["board"][7][7:9] == "AT"` — a slice of a joined
+        # fifteen-character row. SAME INVARIANT, new mechanism: the two tiles
+        # the human just played are on the wire at (7,7) and (7,8), now as
+        # atomic cells that a multi-code-point token also fits.
+        assert data["state"]["board"][7][7] == {"token": "A", "blank_as": None}
+        assert data["state"]["board"][7][8] == {"token": "T", "blank_as": None}
         assert len(data["state"]["my_rack"]) == 7
 
     @patch("game.views.services.get_game_state_for_user")
@@ -1321,7 +1326,14 @@ class GameAPITest(TestCase):
         assert resp.status_code == 200
         data = resp.json()
         assert data["ok"] is True
-        assert data["state"]["board"][7][7:10] == "JOE"
+        # Was `data["state"]["board"][7][7:10] == "JOE"` — a slice of a joined
+        # fifteen-character row. SAME INVARIANT, new mechanism: the three tiles
+        # the AI just played are on the wire at (7,7)-(7,9), now as atomic cells.
+        assert [data["state"]["board"][7][col] for col in (7, 8, 9)] == [
+            {"token": "J", "blank_as": None},
+            {"token": "O", "blank_as": None},
+            {"token": "E", "blank_as": None},
+        ]
         assert len(data["state"]["my_rack"]) == 7
         assert data["state"]["current_turn_slot"] == 0
         assert "billing" not in data

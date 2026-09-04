@@ -1,8 +1,34 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { WIRE_STATE_SCHEMA_VERSION } from "@/lib/types";
+import type { GameState } from "@/lib/types";
 import { adoptBrowserLocaleIfUnset, useGameStore } from "./useGameStore";
 
 function attempt(modelId: string, extra = {}) {
   return { provider: "openrouter", modelId, status: "pending" as const, ...extra };
+}
+
+function stateWithSchemaVersion(version: unknown): GameState {
+  return {
+    game_id: "11111111-1111-1111-1111-111111111111",
+    status: "active",
+    game_mode: "vs_ai",
+    variant_slug: "english",
+    state_schema_version: version,
+    board: Array.from({ length: 15 }, () => Array.from({ length: 15 }, () => null)),
+    premium_used: [],
+    bag_remaining: 86,
+    current_turn_slot: 0,
+    game_over: false,
+    game_end_reason: "",
+    winner_slot: null,
+    my_slot: 0,
+    ai_model_id: null,
+    slots: [],
+    move_count: 0,
+    my_rack: ["A"],
+    move_history: [],
+    chat_messages: [],
+  } as unknown as GameState;
 }
 
 describe("fallback progress store state", () => {
@@ -152,7 +178,10 @@ describe("AC-ONCE explicit locale is sticky", () => {
 
 describe("AC-MIGRATE persist version 2 to 3", () => {
   it("yields uiLocale null when a v2 payload has no locale", async () => {
-    expect(useGameStore.persist.getOptions().version).toBe(5);
+    // Persist version 6 — the store persists PREFERENCES, not game
+    // state, so the bump has nothing to migrate. Same invariant: this pin is
+    // an exact equality on the CURRENT declared version, whatever it is.
+    expect(useGameStore.persist.getOptions().version).toBe(6);
     const migrate = useGameStore.persist.getOptions().migrate;
     expect(migrate).toBeTypeOf("function");
     const migrated = (await migrate!(
@@ -164,7 +193,10 @@ describe("AC-MIGRATE persist version 2 to 3", () => {
   });
 
   it("rewrites a garbage uiLocale to null and preserves a valid stored value", async () => {
-    expect(useGameStore.persist.getOptions().version).toBe(5);
+    // Persist version 6 — the store persists PREFERENCES, not game
+    // state, so the bump has nothing to migrate. Same invariant: this pin is
+    // an exact equality on the CURRENT declared version, whatever it is.
+    expect(useGameStore.persist.getOptions().version).toBe(6);
     const migrate = useGameStore.persist.getOptions().migrate;
     expect(migrate).toBeTypeOf("function");
     const garbage = (await migrate!(
@@ -219,7 +251,10 @@ describe("persist migrate to version 4", () => {
 
 describe("AC-PERSIST-5 migrate drops selectedPromptId", () => {
   it("removes selectedPromptId from a v4 payload and preserves the kept fields", async () => {
-    expect(useGameStore.persist.getOptions().version).toBe(5);
+    // Persist version 6 — the store persists PREFERENCES, not game
+    // state, so the bump has nothing to migrate. Same invariant: this pin is
+    // an exact equality on the CURRENT declared version, whatever it is.
+    expect(useGameStore.persist.getOptions().version).toBe(6);
     const migrate = useGameStore.persist.getOptions().migrate;
     expect(migrate).toBeTypeOf("function");
     const migrated = (await migrate!(
@@ -246,7 +281,7 @@ describe("AC-MODEL-KEPT selectedModelId remains persisted", () => {
   });
 
   it("keeps selectedModelId in partialize and round-trips a stored id", () => {
-    expect(useGameStore.persist.getOptions().version).toBe(5);
+    expect(useGameStore.persist.getOptions().version).toBe(6);
     const id = "google/gemma-4-31b-it:free";
     useGameStore.getState().setSelectedModelId(id);
     expect(useGameStore.getState().selectedModelId).toBe(id);
@@ -255,5 +290,44 @@ describe("AC-MODEL-KEPT selectedModelId remains persisted", () => {
     const sliced = partialize!(useGameStore.getState()) as Record<string, unknown>;
     expect(sliced.selectedModelId).toBe(id);
     expect(sliced).not.toHaveProperty("selectedPromptId");
+  });
+});
+
+describe("F3 setGameState refuses an unknown state_schema_version", () => {
+  beforeEach(() => {
+    useGameStore.setState(useGameStore.getInitialState(), true);
+    vi.restoreAllMocks();
+  });
+
+  it("introduces wire schema version 4", () => {
+    expect(WIRE_STATE_SCHEMA_VERSION).toBe(4);
+  });
+
+  it("accepts the supported version at the single ingress choke point", () => {
+    const supported = stateWithSchemaVersion(WIRE_STATE_SCHEMA_VERSION);
+    useGameStore.getState().setGameState(supported);
+    expect(useGameStore.getState().gameState).toBe(supported);
+  });
+
+  it("REFUSES a newer, older, or absent version rather than mis-rendering it", () => {
+    // Assert the REFUSAL, not the absence of a crash: a guard that refuses is
+    // loud, a wrong board is silent. `setGameState` is the SINGLE ingress for
+    // every game-state payload, REST and websocket alike, which is why
+    // play/page.tsx and waiting/[id]/page.tsx need no guard of their own.
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    for (const bogus of [5, 99, 3, undefined, null, "4", Number.NaN]) {
+      useGameStore.setState(useGameStore.getInitialState(), true);
+      useGameStore.getState().setGameState(stateWithSchemaVersion(bogus));
+      expect(useGameStore.getState().gameState).toBeNull();
+    }
+    expect(errors).toHaveBeenCalledTimes(7);
+  });
+
+  it("keeps an already-accepted state when a refused payload arrives", () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const accepted = stateWithSchemaVersion(WIRE_STATE_SCHEMA_VERSION);
+    useGameStore.getState().setGameState(accepted);
+    useGameStore.getState().setGameState(stateWithSchemaVersion(99));
+    expect(useGameStore.getState().gameState).toBe(accepted);
   });
 });
