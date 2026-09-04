@@ -93,6 +93,10 @@ _LEXICON_PROBES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     # `coracao` and a missing fold would leave `coração`, so only the correct partial rule
     # satisfies this one probe. `nao` from `não` is the plain fold witness.
     "portuguese": (("casa", "nao", "coraçao"), (_NEGATIVE_PROBE,)),
+    # ⛔ `københavn` is the PRESERVATION witness — Æ Ø Å are 4-point Danish tiles, so a total
+    # fold would spell it `kobenhavn` and this probe would catch it. `cafe` is the FOLD witness,
+    # from `café`.
+    "danish": (("hus", "københavn", "cafe"), (_NEGATIVE_PROBE,)),
 }
 
 _BLANK_ENTRY: dict[str, Any] = {"letter": "?", "count": 2, "points": 0}

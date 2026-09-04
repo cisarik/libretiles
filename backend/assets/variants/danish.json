@@ -1,0 +1,59 @@
+{
+  "slug": "danish",
+  "language": "Danish",
+  "language_code": "da",
+  "source": "builtin",
+  "source_url": "https://en.wikipedia.org/wiki/Scrabble_letter_distributions",
+  "fetched_at": "2026-09-03T00:00:00",
+  "dictionary_file": "danish.txt",
+  "alphabet_order": [
+    "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M",
+    "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z",
+    "Æ", "Ø", "Å"
+  ],
+  "letters": [
+    { "letter": "?", "count": 2, "points": 0 },
+
+    { "letter": "E", "count": 9, "points": 1 },
+    { "letter": "A", "count": 7, "points": 1 },
+    { "letter": "N", "count": 6, "points": 1 },
+    { "letter": "R", "count": 6, "points": 1 },
+
+    { "letter": "D", "count": 5, "points": 2 },
+    { "letter": "L", "count": 5, "points": 2 },
+    { "letter": "O", "count": 5, "points": 2 },
+    { "letter": "S", "count": 5, "points": 2 },
+    { "letter": "T", "count": 5, "points": 2 },
+
+    { "letter": "B", "count": 4, "points": 3 },
+    { "letter": "I", "count": 4, "points": 3 },
+    { "letter": "K", "count": 4, "points": 3 },
+    { "letter": "F", "count": 3, "points": 3 },
+    { "letter": "G", "count": 3, "points": 3 },
+    { "letter": "M", "count": 3, "points": 3 },
+    { "letter": "U", "count": 3, "points": 3 },
+    { "letter": "V", "count": 3, "points": 3 },
+
+    { "letter": "H", "count": 2, "points": 4 },
+    { "letter": "J", "count": 2, "points": 4 },
+    { "letter": "P", "count": 2, "points": 4 },
+    { "letter": "Y", "count": 2, "points": 4 },
+    { "letter": "Æ", "count": 2, "points": 4 },
+    { "letter": "Ø", "count": 2, "points": 4 },
+    { "letter": "Å", "count": 2, "points": 4 },
+
+    { "letter": "C", "count": 2, "points": 8 },
+    { "letter": "W", "count": 1, "points": 8 },
+    { "letter": "X", "count": 1, "points": 8 },
+    { "letter": "Z", "count": 1, "points": 8 }
+  ],
+  "lexicon_provenance": {
+    "upstream": "LibreOffice dictionaries da_DK (Stavekontrolden; data from Det Danske Sprog- og Litteraturselskab)",
+    "upstream_commit": "75f5dff8c972fff4a32e4ea8434722c277f02a3f",
+    "expander": "hunspell 1.7.3",
+    "entry_count": 317167,
+    "spdx": "GPL-2.0-only OR LGPL-2.1-only OR MPL-1.1",
+    "license_file": "danish.LICENSE",
+    "build_script": "build_danish_lexicon.py"
+  }
+}

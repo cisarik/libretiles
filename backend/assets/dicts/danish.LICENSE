@@ -1,0 +1,26 @@
+Danish lexicon for Libre Tiles
+Source: LibreOffice dictionaries da_DK (Stavekontrolden) at commit 75f5dff8c972fff4a32e4ea8434722c277f02a3f
+LibreOffice Danish dictionary pack version 2023.09.05
+SPDX-License-Identifier: GPL-2.0-only OR LGPL-2.1-only OR MPL-1.1
+
+The word list is derived by expanding the upstream affix file, preserving the three
+Danish letters that have their own tiles, folding every other marked letter, and
+dropping any form that still contains a letter no Danish tile bears; see the lexicon
+header for why. The upstream README below carries the copyright and the three licence
+options, and names the dictionary files it grants them for.
+
+--- upstream README_da_DK.txt ---
+
+Stavekontrolden - Danish dictionary files for Hunspell and thesaurus files for MyThes
+Version 2.8.001 - 05-09-2023
+da_DK.dic, da_DK.aff, th_da_DK.dat, th_da_DK.idx: © 2020 Foreningen for frit tilgængelige sprogværktøjer - http://www.stavekontrolden.dk
+These files are published under the following open source licenses:
+
+GNU GPL version 2.0 - https://www.gnu.org/licenses/gpl-2.0.html
+GNU LGPL version 2.1 - https://www.gnu.org/licenses/lgpl-2.1.html
+Mozilla MPL version 1.1 - https://www.mozilla.org/en-US/MPL/1.1/
+
+This dictionary is based on data from Det Danske Sprog- og Litteraturselskab
+(The Danish Society for Language and Literature), https://dsl.dk.
+Thanks to Lyngby-Taarbæk Kommune, Gribskov Kommune and Region Midtjylland for financial support to the thesaurus project.
+
