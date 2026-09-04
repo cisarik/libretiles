@@ -1,0 +1,31 @@
+German lexicon for Libre Tiles
+Source: LibreOffice dictionaries de / de_DE_frami at commit 75f5dff8c972fff4a32e4ea8434722c277f02a3f
+LibreOffice German dictionary pack version 2017.01.12
+SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only
+
+Upstream is ISO8859-1 encoded; this file is UTF-8. The word list is derived by expanding
+the upstream affix file, letting Unicode case folding write eszett as 'ss', preserving
+a-, o- and u-umlaut because each has its own tile, and folding every other marked letter.
+The full GNU GPL v2 and v3 texts are not reproduced here; the SPDX expression above
+identifies them and upstream ships them as COPYING_GPLv2 and COPYING_GPLv3.
+
+--- upstream README_de_DE_frami.txt ---
+
+Bei dem Wörterbuch xxx_frami handelt es sich um ein Addon. Es enthält
+alle Wörter des Basiswörterbuchs, zusätzlich jedoch etliche, die entweder
+im Basiswörterbuch noch fehlen oder die nicht unbedingt zum Kernwortschatz
+des Deutschen gehören. Die zusätzlichen Aufnahmen sind ungeprüft.
+Dieses Wörterbuch basiert auf dem igerman98 Ispell-Wörterbuch, zu finden
+unter https://www.j3e.de/ispell/igerman98/ .
+
+Das Wörterbuch und alle enthaltenen Wortlisten sind lizenziert unter der
+GNU GPL, Version 2 oder 3.
+Fehlermeldungen oder Ergänzungswünsche können gemailt werden an:
+Franz Michael Baumann <fm.baumann@uni-muenster.de>
+
+Autor des Grundwörterbuchs:
+Bjoern Jacke <bjoern@j3e.de>
+
+Autor der Erweiterung
+Franz Michael Baumann <fm.baumann@uni-muenster.de>
+

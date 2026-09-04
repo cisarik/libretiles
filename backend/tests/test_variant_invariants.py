@@ -82,6 +82,12 @@ _LEXICON_PROBES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     # Both are absent from the raw expansion and present after the rewrite — measured. `reeel`
     # is the separate diacritic-fold witness, from `reëel`.
     "dutch": (("kaas", "ijs", "dijk", "reeel"), (_NEGATIVE_PROBE,)),
+    # ⛔ `strasse` is `Straße` after Unicode full case folding, which expands eszett on its own —
+    # the German edition has no eszett tile. `käse` is the PRESERVATION witness: German Ä Ö Ü
+    # are tiles worth 6, 8 and 6 points, so the fold that Afrikaans, Italian and Dutch apply
+    # totally must stay PARTIAL here. If someone makes it total, this probe fails instead of
+    # 155 641 playable words disappearing.
+    "german": (("haus", "strasse", "käse"), (_NEGATIVE_PROBE,)),
 }
 
 _BLANK_ENTRY: dict[str, Any] = {"letter": "?", "count": 2, "points": 0}
