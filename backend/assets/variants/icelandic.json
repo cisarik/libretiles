@@ -1,0 +1,67 @@
+{
+  "slug": "icelandic",
+  "language": "Icelandic",
+  "language_code": "is",
+  "source": "builtin",
+  "source_url": "https://en.wikipedia.org/wiki/Scrabble_letter_distributions",
+  "fetched_at": "2026-09-03T00:00:00",
+  "dictionary_file": "icelandic.txt",
+  "alphabet_order": [
+    "A", "Á", "B", "D", "Ð", "E", "É", "F", "G", "H", "I", "Í", "J", "K",
+    "L", "M", "N", "O", "Ó", "P", "R", "S", "T", "U", "Ú", "V", "X", "Y",
+    "Ý", "Þ", "Æ", "Ö"
+  ],
+  "letters": [
+    { "letter": "?", "count": 2, "points": 0 },
+
+    { "letter": "A", "count": 10, "points": 1 },
+    { "letter": "N", "count": 8, "points": 1 },
+    { "letter": "R", "count": 8, "points": 1 },
+    { "letter": "I", "count": 7, "points": 1 },
+    { "letter": "E", "count": 6, "points": 1 },
+    { "letter": "S", "count": 6, "points": 1 },
+    { "letter": "U", "count": 6, "points": 1 },
+    { "letter": "T", "count": 5, "points": 1 },
+
+    { "letter": "Ð", "count": 4, "points": 2 },
+    { "letter": "G", "count": 4, "points": 2 },
+    { "letter": "L", "count": 4, "points": 2 },
+
+    { "letter": "M", "count": 4, "points": 3 },
+    { "letter": "F", "count": 3, "points": 3 },
+    { "letter": "K", "count": 3, "points": 3 },
+
+    { "letter": "Á", "count": 2, "points": 4 },
+    { "letter": "D", "count": 2, "points": 4 },
+    { "letter": "H", "count": 2, "points": 4 },
+    { "letter": "Í", "count": 2, "points": 4 },
+    { "letter": "O", "count": 2, "points": 4 },
+    { "letter": "V", "count": 2, "points": 4 },
+
+    { "letter": "Þ", "count": 1, "points": 5 },
+
+    { "letter": "B", "count": 1, "points": 6 },
+    { "letter": "J", "count": 1, "points": 6 },
+    { "letter": "Ó", "count": 1, "points": 6 },
+    { "letter": "Y", "count": 1, "points": 6 },
+    { "letter": "Æ", "count": 1, "points": 6 },
+
+    { "letter": "É", "count": 1, "points": 8 },
+    { "letter": "P", "count": 1, "points": 8 },
+    { "letter": "Ú", "count": 1, "points": 8 },
+    { "letter": "Ö", "count": 1, "points": 8 },
+
+    { "letter": "Ý", "count": 1, "points": 9 },
+
+    { "letter": "X", "count": 1, "points": 10 }
+  ],
+  "lexicon_provenance": {
+    "upstream": "LibreOffice dictionaries is (Orðabók Háskólans, public domain base; Icelandic Wiktionary morphological additions)",
+    "upstream_commit": "75f5dff8c972fff4a32e4ea8434722c277f02a3f",
+    "expander": "hunspell 1.7.3",
+    "entry_count": 200182,
+    "spdx": "CC-BY-SA-3.0",
+    "license_file": "icelandic.LICENSE",
+    "build_script": "build_icelandic_lexicon.py"
+  }
+}

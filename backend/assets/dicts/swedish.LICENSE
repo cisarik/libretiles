@@ -1,0 +1,32 @@
+Swedish lexicon for Libre Tiles
+Source: LibreOffice dictionaries sv_SE at commit 75f5dff8c972fff4a32e4ea8434722c277f02a3f
+LibreOffice Swedish dictionary pack version 2.40
+SPDX-License-Identifier: LGPL-3.0-only
+
+The word list is derived by expanding the upstream affix file, preserving the three
+Swedish letters that have their own tiles, folding every other marked letter except
+u-umlaut, and dropping any form that still contains a letter no Swedish tile bears;
+see the lexicon header for why.
+
+--- upstream LICENSE_en_US.txt ---
+
+This Swedish Dictionary for Spell Checking is maintained by
+Göran Andersson <goran@init.se>.
+
+************ COPYRIGHT ************
+
+Copyright © 2003-15 Göran Andersson <goran@init.se>.
+
+This dictionary is made available subject to the terms of GNU Lesser General Public License Version 3. A copy of the LGPL license can be found at http://www.gnu.org/licenses/lgpl-3.0.html .
+
+--- upstream LICENSE_sv_SE.txt ---
+
+Denna svenska ordlista för rättstavning underhålls av
+Göran Andersson <goran@init.se>.
+
+************ COPYRIGHT ************
+
+Copyright © 2003-15 Göran Andersson <goran@init.se>.
+
+Denna ordlista är tillgänglig under licensen GNU Lesser General Public License Version 3. Licenstexten finns på adressen http://www.gnu.org/licenses/lgpl-3.0.html .
+

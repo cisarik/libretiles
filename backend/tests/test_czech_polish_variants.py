@@ -135,10 +135,12 @@ def test_t7_variant_list_exact_key_set() -> None:
         "danish",
         "dutch",
         "german",
+        "icelandic",
         "italian",
         "polish",
         "portuguese",
         "slovak",
+        "swedish",
     ]
     for row in body:
         assert set(row.keys()) == _SUMMARY_KEYS

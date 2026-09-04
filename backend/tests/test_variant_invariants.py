@@ -97,6 +97,14 @@ _LEXICON_PROBES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     # fold would spell it `kobenhavn` and this probe would catch it. `cafe` is the FOLD witness,
     # from `café`.
     "danish": (("hus", "københavn", "cafe"), (_NEGATIVE_PROBE,)),
+    # ⛔ `väg` is the PRESERVATION witness (Å Ä Ö are Swedish tiles) and `cafe` the FOLD witness.
+    # The sourced Swedish rule ignores diacritics EXCEPT Ü, so the build also asserts that
+    # `musli` is ABSENT — folding ü would invent a play the edition does not have.
+    "swedish": (("hus", "väg", "cafe"), (_NEGATIVE_PROBE, "musli")),
+    # ⛔ Icelandic has NO fold rule at all — every non-ASCII letter it uses is a TILE. All three
+    # probe words become different words under a fold (`madur`, `thu`, `fjordur`), so this row
+    # is the assertion that nobody adds one by analogy with the other Nordic scripts.
+    "icelandic": (("maður", "þú", "fjörður"), (_NEGATIVE_PROBE, "madur", "fjordur")),
 }
 
 _BLANK_ENTRY: dict[str, Any] = {"letter": "?", "count": 2, "points": 0}

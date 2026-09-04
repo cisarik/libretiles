@@ -374,10 +374,12 @@ def test_p10b_every_non_english_lexicon_has_a_committed_build_script() -> None:
         "danish": "build_danish_lexicon.py",
         "dutch": "build_dutch_lexicon.py",
         "german": "build_german_lexicon.py",
+        "icelandic": "build_icelandic_lexicon.py",
         "italian": "build_italian_lexicon.py",
         "polish": "build_polish_lexicon.py",
         "portuguese": "build_portuguese_lexicon.py",
         "slovak": "build_slovak_lexicon.py",
+        "swedish": "build_swedish_lexicon.py",
     }, f"unexpected build-script claims: {claimed}"
     for script in claimed.values():
         assert (_SCRIPTS_DIR / script).is_file()

@@ -1,0 +1,60 @@
+{
+  "slug": "swedish",
+  "language": "Swedish",
+  "language_code": "sv",
+  "source": "builtin",
+  "source_url": "https://en.wikipedia.org/wiki/Scrabble_letter_distributions",
+  "fetched_at": "2026-09-03T00:00:00",
+  "dictionary_file": "swedish.txt",
+  "alphabet_order": [
+    "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M",
+    "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z",
+    "Å", "Ä", "Ö"
+  ],
+  "letters": [
+    { "letter": "?", "count": 2, "points": 0 },
+
+    { "letter": "A", "count": 8, "points": 1 },
+    { "letter": "R", "count": 8, "points": 1 },
+    { "letter": "S", "count": 8, "points": 1 },
+    { "letter": "T", "count": 8, "points": 1 },
+    { "letter": "E", "count": 7, "points": 1 },
+    { "letter": "N", "count": 6, "points": 1 },
+    { "letter": "D", "count": 5, "points": 1 },
+    { "letter": "I", "count": 5, "points": 1 },
+    { "letter": "L", "count": 5, "points": 1 },
+
+    { "letter": "O", "count": 5, "points": 2 },
+    { "letter": "G", "count": 3, "points": 2 },
+    { "letter": "K", "count": 3, "points": 2 },
+    { "letter": "M", "count": 3, "points": 2 },
+    { "letter": "H", "count": 2, "points": 2 },
+
+    { "letter": "F", "count": 2, "points": 3 },
+    { "letter": "V", "count": 2, "points": 3 },
+    { "letter": "Ä", "count": 2, "points": 3 },
+
+    { "letter": "U", "count": 3, "points": 4 },
+    { "letter": "B", "count": 2, "points": 4 },
+    { "letter": "P", "count": 2, "points": 4 },
+    { "letter": "Å", "count": 2, "points": 4 },
+    { "letter": "Ö", "count": 2, "points": 4 },
+
+    { "letter": "J", "count": 1, "points": 7 },
+    { "letter": "Y", "count": 1, "points": 7 },
+
+    { "letter": "C", "count": 1, "points": 8 },
+    { "letter": "X", "count": 1, "points": 8 },
+
+    { "letter": "Z", "count": 1, "points": 10 }
+  ],
+  "lexicon_provenance": {
+    "upstream": "LibreOffice dictionaries sv_SE (Göran Andersson)",
+    "upstream_commit": "75f5dff8c972fff4a32e4ea8434722c277f02a3f",
+    "expander": "hunspell 1.7.3",
+    "entry_count": 822919,
+    "spdx": "LGPL-3.0-only",
+    "license_file": "swedish.LICENSE",
+    "build_script": "build_swedish_lexicon.py"
+  }
+}
