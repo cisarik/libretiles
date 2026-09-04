@@ -1,0 +1,106 @@
+Portuguese lexicon for Libre Tiles
+Source: LibreOffice dictionaries pt_PT at commit 75f5dff8c972fff4a32e4ea8434722c277f02a3f
+LibreOffice Portuguese (pt_PT) dictionary pack version 20.10.5.1
+SPDX-License-Identifier: GPL-2.0-only OR LGPL-2.1-only OR MPL-1.1
+
+The word list is derived by expanding the upstream affix file, preserving c-cedilla
+because it has its own tile, and folding every other marked letter; see the lexicon
+header for why.
+
+NOTE ON THE LICENCE: the two upstream documents below do not agree. README_pt_PT.txt
+states that all dictionary files are covered by GPL 2 / LGPL 2.1 / MPL 1.1 in that
+order; LICENSES.txt says, without versions, 'the GPL and BSD licence'. The SPDX
+expression above follows the README because it is the specific, versioned statement
+about the dictionary files themselves. BSD is deliberately not claimed. Both documents
+are reproduced in full so the conflict is visible rather than resolved silently.
+
+--- upstream README_pt_PT.txt ---
+
+This is a Portuguese (Portugal) dictionary for Hunspell:
+
+Copyright (C) 2006-2012  José João de Almeida <jj@di.uminho.pt> , 
+	Rui Vilela <ruivilela@di.uminho.pt> ,
+	Alberto Simões <ambs@di.uminho.pt>
+
+Dep. Informática, Universidade do Minho
+Portugal
+
+All dictionary files and associated programs are currently covered by
+the (GPL/LGPL/MPL), by this order. See also COPYING file for more
+details, if available.
+
+Regarding license versions: 
+     1. GPL Version 2
+     2. LGPL Version 2.1
+     3. MPL Version 1.1
+
+To install : Find a suitable application that uses myspell
+    dictionaries like openoffice, or hunspell terminal aplication. Use
+    the program dictionary application (if it has) for installing the
+    dictionaries.  For openoffice, you should make sure that the
+    dictionary.lst file has the following line: DICT pt PT pt_PT
+
+Automatic instalation: You can automatically download our dictionary
+using the available plugins, either from mozilla, or OpenOffice. See
+our site for details.
+
+Latest versions, suggestions, automatic install, informations at
+       http://natura.di.uminho.pt/
+
+
+
+--- upstream LICENSES.txt ---
+
+LICENSES:
+
+Extension distribution / Distribuição da extensão
+-------------------------------------------------
+
+Copyright (C) 2008-2012 António Manuel Dias <ammdias@gmail.com>
+  http://maracuja.homeip.net/software/dict
+
+Copyright (C) 2012 Alberto Simões <ambs@di.uminho.pt>
+
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation; either version 2 of the License, or
+(at your option) any later version.
+
+
+Spellchecker / Corrector ortográfico
+------------------------------------
+
+Copyright (C) 2006  Jose Joao de Almeida <jj@di.uminho.pt> , 
+	Rui Vilela <ruivilela@di.uminho.pt> ,
+	Alberto Simões <ambs@di.uminho.pt>
+
+Dep. Informatica, Universidade do Minho
+Portugal
+
+All dictionary files and associated programs are currently covered
+by the GPL and BSD licence
+
+
+Hyphenation dictionary / Dicionário de hifenização
+--------------------------------------------------
+
+Language: Portuguese (pt PT).
+Origin:   Based on the TeX hyphenation tables by Pedro J. de Rezende <rezende@dcc.unicamp.br> (Brazilian) and tuned up by J.Joao Dias Almeida <jj@di.uminho.pt>
+License:  GNU GPL license.
+Author:   conversion author is Paulo Morgado <paulo.morgado@vizzavi.pt>
+
+
+Thesaurus / Dicionário de sinónimos
+-----------------------------------
+
+OpenThesaurus - Deutscher Thesaurus - Version für OpenOffice.org
+Copyright (C) 2003-2006 Daniel Naber (naber at danielnaber de)
+Snapshot, automatisch generiert 2006-08-17 18:17, Sprache: pt_PT
+Homepage: http://www.openthesaurus.de/
+
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation; either version 2 of the License, or
+(at your option) any later version.
+
+

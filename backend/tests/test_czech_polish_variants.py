@@ -136,6 +136,7 @@ def test_t7_variant_list_exact_key_set() -> None:
         "german",
         "italian",
         "polish",
+        "portuguese",
         "slovak",
     ]
     for row in body:

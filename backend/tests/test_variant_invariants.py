@@ -88,6 +88,11 @@ _LEXICON_PROBES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     # totally must stay PARTIAL here. If someone makes it total, this probe fails instead of
     # 155 641 playable words disappearing.
     "german": (("haus", "strasse", "käse"), (_NEGATIVE_PROBE,)),
+    # ⛔ `coraçao` is the strongest probe in this table: it is `coração` with the CEDILLA KEPT
+    # (Ç is a 3-point Portuguese tile) and the TILDE FOLDED. A total fold would spell it
+    # `coracao` and a missing fold would leave `coração`, so only the correct partial rule
+    # satisfies this one probe. `nao` from `não` is the plain fold witness.
+    "portuguese": (("casa", "nao", "coraçao"), (_NEGATIVE_PROBE,)),
 }
 
 _BLANK_ENTRY: dict[str, Any] = {"letter": "?", "count": 2, "points": 0}

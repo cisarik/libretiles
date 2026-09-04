@@ -1,0 +1,56 @@
+{
+  "slug": "portuguese",
+  "language": "Portuguese",
+  "language_code": "pt",
+  "source": "builtin",
+  "source_url": "https://en.wikipedia.org/wiki/Scrabble_letter_distributions",
+  "fetched_at": "2026-09-03T00:00:00",
+  "dictionary_file": "portuguese.txt",
+  "alphabet_order": [
+    "A", "B", "C", "Ç", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M",
+    "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z"
+  ],
+  "letters": [
+    { "letter": "?", "count": 3, "points": 0 },
+
+    { "letter": "A", "count": 14, "points": 1 },
+    { "letter": "E", "count": 11, "points": 1 },
+    { "letter": "I", "count": 10, "points": 1 },
+    { "letter": "O", "count": 10, "points": 1 },
+    { "letter": "S", "count": 8, "points": 1 },
+    { "letter": "U", "count": 7, "points": 1 },
+    { "letter": "M", "count": 6, "points": 1 },
+    { "letter": "R", "count": 6, "points": 1 },
+    { "letter": "T", "count": 5, "points": 1 },
+
+    { "letter": "D", "count": 5, "points": 2 },
+    { "letter": "L", "count": 5, "points": 2 },
+    { "letter": "C", "count": 4, "points": 2 },
+    { "letter": "P", "count": 4, "points": 2 },
+
+    { "letter": "N", "count": 4, "points": 3 },
+    { "letter": "B", "count": 3, "points": 3 },
+    { "letter": "Ç", "count": 2, "points": 3 },
+
+    { "letter": "F", "count": 2, "points": 4 },
+    { "letter": "G", "count": 2, "points": 4 },
+    { "letter": "H", "count": 2, "points": 4 },
+    { "letter": "V", "count": 2, "points": 4 },
+
+    { "letter": "J", "count": 2, "points": 5 },
+
+    { "letter": "Q", "count": 1, "points": 6 },
+
+    { "letter": "X", "count": 1, "points": 8 },
+    { "letter": "Z", "count": 1, "points": 8 }
+  ],
+  "lexicon_provenance": {
+    "upstream": "LibreOffice dictionaries pt_PT (Universidade do Minho / Natura)",
+    "upstream_commit": "75f5dff8c972fff4a32e4ea8434722c277f02a3f",
+    "expander": "hunspell 1.7.3",
+    "entry_count": 4119831,
+    "spdx": "GPL-2.0-only OR LGPL-2.1-only OR MPL-1.1",
+    "license_file": "portuguese.LICENSE",
+    "build_script": "build_portuguese_lexicon.py"
+  }
+}
