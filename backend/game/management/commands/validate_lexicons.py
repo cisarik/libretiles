@@ -25,15 +25,35 @@ from gamecore.lexicon_health import (
 )
 from gamecore.variant_store import VariantDefinition, list_installed_variants
 
-# Real inflected forms, mirroring tests/test_variant_invariants.py::_LEXICON_PROBES. A
-# range check is not a correctness check: only membership of real words catches a lexicon
-# that is mechanically well formed but is the wrong word list. A variant with no entry here
-# is still audited structurally; it simply has no positive probe.
+# Real inflected forms, mirroring the PRESENT half of
+# tests/test_variant_invariants.py::_LEXICON_PROBES, one row per installed variant. A range
+# check is not a correctness check: only membership of real words catches a lexicon that is
+# mechanically well formed but is the wrong word list. Several rows also witness the
+# variant's FOLD RULE, so a build that silently stopped folding — or started folding a letter
+# that bears a tile — fails the audit instead of shipping a wrong word list:
+#   afrikaans/italian/dutch  `more` `citta` `perche` `reeel` are FOLDED forms
+#   dutch                    `ijs` `dijk` are LIGATURE rewrites of U+0133
+#   german/portuguese        `käse` `coraçao` are PRESERVATION witnesses of a PARTIAL fold
+#   danish/swedish           `københavn` `väg` preserve tile-bearing Æ Ø Å Ä Ö; `cafe` folds
+#   icelandic                every letter is a tile, so nothing folds at all
+# ⚠ The ABSENT half of that table is per-variant (Swedish forbids `musli`, Icelandic forbids
+# `madur` and `fjordur` — anti-fold assertions) while ``_ABSENT_PROBES`` below is one global
+# set. Those extra per-variant negatives are asserted by the test suite and NOT by this
+# command; making them per-variant here is a separate change to ``_targets``.
+# A variant with no entry here is still audited structurally; it simply has no positive probe.
 _PRESENT_PROBES: dict[str, frozenset[str]] = {
     "english": frozenset({"qi", "za", "fe"}),
     "slovak": frozenset({"škola"}),
     "czech": frozenset({"domu", "knihy"}),
     "polish": frozenset({"domach", "książki"}),
+    "afrikaans": frozenset({"die", "van", "more"}),
+    "italian": frozenset({"casa", "citta", "perche"}),
+    "dutch": frozenset({"kaas", "ijs", "dijk", "reeel"}),
+    "german": frozenset({"haus", "strasse", "käse"}),
+    "portuguese": frozenset({"casa", "nao", "coraçao"}),
+    "danish": frozenset({"hus", "københavn", "cafe"}),
+    "swedish": frozenset({"hus", "väg", "cafe"}),
+    "icelandic": frozenset({"maður", "þú", "fjörður"}),
 }
 _ABSENT_PROBES = frozenset({"qxqxqxqxq"})
 # An auxiliary two-tile allowlist is intentionally tiny (the shipped Slovak one has 103
