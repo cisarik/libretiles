@@ -387,7 +387,7 @@ npm run build                              # Production build
 - Django Channels + Redis for realtime multiplayer and chat
 - JWT auth (djangorestframework-simplejwt)
 - PostgreSQL (prod) / SQLite (dev)
-- Collins 2019 English dictionary (~279k words, O(1) frozenset lookup)
+- Twelve word lists, one per playable variant, all O(1) frozenset lookup — Collins 2019 for English (~279k words) and a hunspell-expanded list for each of the other eleven
 
 ### Frontend
 - Next.js 16, React 19, TypeScript

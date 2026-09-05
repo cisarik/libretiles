@@ -4,7 +4,7 @@ Updated: August 25, 2026
 
 ## 1. Product in One Sentence
 
-Libre Tiles is an open-source web-based Libre Tiles game with an eye-candy animated frontend, AI opponents via provider-diverse free rivals, and a lightweight Django backend with full admin control.
+Libre Tiles is an open-source web-based Libre Tiles game playable in twelve board languages with a twelve-locale interface, an eye-candy animated frontend, AI opponents via provider-diverse free rivals, and a lightweight Django backend with full admin control.
 
 ## 2. Product Goals
 
@@ -23,7 +23,7 @@ Libre Tiles is an open-source web-based Libre Tiles game with an eye-candy anima
 ## 4. Architecture Overview
 
 - **Frontend**: Next.js 16 (React 19, TypeScript, Tailwind CSS 4, Framer Motion, @dnd-kit) deployed on **Vercel**.
-- **AI**: Next.js API routes using Vercel AI SDK as an OpenAI-compatible adapter against OpenRouter and NVIDIA NIM (`OPENROUTER_API_KEY` and `NVIDIA_API_KEY` on the Next.js server). Catalog gated by `DYNAMIC_FREE_MODEL_CATALOG_ENABLED` (default false = bootstrap pairs). Hardcoded bases; no Vercel AI Gateway, LM Studio, or base-URL env vars. There is no `NEXT_PUBLIC_DEFAULT_MODEL`.
+- **AI**: Next.js API routes using Vercel AI SDK as an OpenAI-compatible adapter. Nine providers ship — `openrouter`, `nvidia-nim`, `groq`, `google-gemini`, `cloudflare-workers-ai`, `mistral`, `ibm-watsonx`, `aion`, `huggingface` — of which `EXACT_PROVIDER_METADATA` marks five `direct`, two `watchlist` and one `legacy`. Dispatch is `ai-runtimes.ts`: `nvidia-nim`, `openrouter` and `ibm-watsonx` have their own runtimes and every other provider goes through the shared OpenAI-compatible constructor. Credentials are server-only. Catalog gated by `DYNAMIC_FREE_MODEL_CATALOG_ENABLED` (default false = bootstrap pairs). Hardcoded bases; no Vercel AI Gateway, LM Studio, or base-URL env vars. There is no `NEXT_PUBLIC_DEFAULT_MODEL`.
 - **Backend**: Django 5.x + DRF on self-hosted VPS (game state, validation, auth, admin).
 - **Database**: PostgreSQL (production), SQLite (dev).
 - **Game Engine**: Pure Python `gamecore/` package ported from scrabgpt/core/ (zero UI dependencies).
