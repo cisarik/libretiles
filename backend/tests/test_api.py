@@ -1487,7 +1487,11 @@ class GameAPITest(TestCase):
 
         from gamecore.legality import evaluate_scoring_move
         from gamecore.types import Placement
-        from game.services import _board_from_session, _is_word, _session_letters
+        from game.services import (
+            _board_from_session,
+            _session_authority,
+            _session_letters,
+        )
 
         placements = [
             Placement(
@@ -1502,7 +1506,7 @@ class GameAPITest(TestCase):
             _board_from_session(session),
             ["A", "T", "C", "D", "E", "F", "G"],
             placements,
-            lambda word: _is_word(session, word),
+            authority=_session_authority(session),
             letters=_session_letters(session),
             variant=session.variant_slug,
         )

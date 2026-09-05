@@ -23,8 +23,9 @@ def score_words(
     total_score = 0
     breakdowns: list[ScoreBreakdown] = []
     new_cells = set(placed.keys())
-    # Points are keyed by atomic tile token (cell.letter), never by slicing
-    # a concatenated string.
+    # Points are keyed by the COMPLETE PHYSICAL TILE TOKEN on the square, never
+    # by slicing a concatenated string. A physical blank scores zero whatever it
+    # realizes, so the lookup uses `cell.token`, not `cell.realized_token`.
     tile_points = get_tile_points(cast(VariantDefinition | str | None, variant))
 
     for word, coords in words_coords:
@@ -33,8 +34,7 @@ def score_words(
         letter_bonus = 0
         for r, c in coords:
             cell = board.cells[r][c]
-            letter = cell.letter or ""
-            base = 0 if cell.is_blank else tile_points.get(letter, 0)
+            base = 0 if cell.is_blank else tile_points.get(cell.token or "", 0)
             if (r, c) in new_cells and cell.premium and not cell.premium_used:
                 if cell.premium == Premium.DL:
                     letter_bonus += base

@@ -46,6 +46,8 @@ from game.diagnostics import (
     worker_script_for_runtime_mode,
 )
 from game.models import GameSession
+from game.services import _board_from_session
+from gamecore.types import WordFound
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _FRONTEND = _REPO_ROOT / "frontend"
@@ -56,6 +58,38 @@ _GEMMA = "google/gemma-4-31b-it:free"
 
 def _nfc(value: str) -> str:
     return unicodedata.normalize("NFC", value)
+
+
+def _persisted_formed_records(
+    session: GameSession, move: Any | None
+) -> tuple[WordFound, ...]:
+    """Physical formed words rebuilt from the PERSISTED BOARD plus the move's own coordinates.
+
+    ⛔ No reverse segmentation. Every token is READ FROM THE SQUARE it occupies,
+    so a digraph tile counts once and an aggregate lexical string is never split
+    to manufacture tile evidence. With no persisted move there is no tile
+    evidence at all, and the honest answer is no records.
+    """
+    if move is None:
+        return ()
+    board = _board_from_session(session)
+    records: list[WordFound] = []
+    for entry in move.words_formed or []:
+        if not isinstance(entry, dict):
+            continue
+        raw_coords = entry.get("coords")
+        if not isinstance(raw_coords, list) or not raw_coords:
+            continue
+        coords = [
+            (int(item["row"]), int(item["col"]))
+            for item in raw_coords
+            if isinstance(item, dict) and "row" in item and "col" in item
+        ]
+        if not coords:
+            continue
+        tokens = [board.cells[row][col].realized_token or "" for row, col in coords]
+        records.append(WordFound("".join(tokens), coords, tokens))
+    return tuple(records)
 
 
 def seed_catalog() -> dict[str, AIModel]:
@@ -253,9 +287,8 @@ def merge_turn_sample(
     formed = persisted_words or sse_words
     context = load_variant_context(variant_slug)
     rejected = classify_complete_formed_words(
-        formed,
-        contains=context.index.contains,
-        two_letter_allowlist=context.allowlist,
+        _persisted_formed_records(session, move),
+        authority=context.authority,
     )
     playability_status = str(playability.get("status") or "indeterminate")
     witness = playability.get("witness")

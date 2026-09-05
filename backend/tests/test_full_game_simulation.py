@@ -16,6 +16,7 @@ from gamecore.game import Game, GameEndReason, PlayerState
 from gamecore.legality import evaluate_scoring_move
 from gamecore.move_search import DEFAULT_MAX_NODES, find_legal_scoring_move
 from gamecore.tiles import TileBag, get_tile_distribution, get_tile_points
+from gamecore.word_authority import WordAuthority
 
 _DICTIONARY_PATH = Path(get_assets_path()) / "dicts" / "collins2019.txt"
 _INDEX = load_prefix_index(_DICTIONARY_PATH)
@@ -28,14 +29,10 @@ _ALLOWED_END_REASONS = {
 _ACCEPTANCE_SEARCH_MAX_ELAPSED_MS = 10_000
 
 
-def _is_word(word: str) -> bool:
-    folded = word.strip().casefold()
-    return (
-        len(folded) >= 2
-        and folded.isascii()
-        and folded.isalpha()
-        and _INDEX.contains(folded)
-    )
+# Migrated fixture, identical expectations: the injected Collins callable became
+# the one authority over the same index. English tiles are all ASCII letters, so
+# the dropped `isascii` clause cannot change a verdict reachable from this rack.
+_AUTHORITY = WordAuthority.from_index(_INDEX)
 
 
 def _tile_counter(game: Game) -> Counter[str]:
@@ -110,8 +107,7 @@ def _simulate(seed: int, *, max_plies: int = 200) -> SimulationResult:
         search = find_legal_scoring_move(
             game.board,
             rack_before,
-            is_word=_is_word,
-            has_prefix=_INDEX.has_prefix,
+            authority=_AUTHORITY,
             max_nodes=DEFAULT_MAX_NODES,
             max_elapsed_ms=_ACCEPTANCE_SEARCH_MAX_ELAPSED_MS,
         )
@@ -129,7 +125,7 @@ def _simulate(seed: int, *, max_plies: int = 200) -> SimulationResult:
                 game.board,
                 rack_before,
                 search.witness,
-                _is_word,
+                authority=_AUTHORITY,
             )
             assert legality.ok, f"{context}: witness failed re-certification: {legality}"
             assert legality.total_score == search.total_score, context

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import json
+from collections.abc import Sequence
 from io import StringIO
 from pathlib import Path
 from typing import Any
@@ -22,11 +23,10 @@ from game.diagnostics import (
     reserved_completion_sources,
     scenario_asset_path,
 )
-from game.services import _word_passes_dictionary
 from gamecore.assets import get_assets_path, get_premiums_path
 from gamecore.board import Board
 from gamecore.legality import REASON_INVALID_WORD, evaluate_scoring_move
-from gamecore.types import Placement
+from gamecore.types import Placement, WordFound
 from gamecore.variant_store import load_two_tile_words, load_variant
 
 _OSAMENIU = "OSAMENIU"
@@ -69,8 +69,21 @@ def _hook_board() -> Board:
     scenario = load_named_scenario("slovak-hooks-umenasi")
     board = Board(get_premiums_path())
     for row, col, letter in scenario.board_letters:
-        board.cells[row][col].letter = letter
+        board.cells[row][col].token = letter
     return board
+
+
+def _single_codepoint_records(words: Sequence[str]) -> tuple[WordFound, ...]:
+    """WordFound records for a variant whose every tile is one code point.
+
+    ⛔ NOT a segmenter for production use. These fixtures state their tile
+    evidence explicitly; nothing here reverse-segments an aggregate string that
+    a real board produced.
+    """
+    return tuple(
+        WordFound(word, [(7, index) for index in range(len(word))], list(word))
+        for word in words
+    )
 
 
 def _assert_engine_report_v1(payload: object) -> dict[str, Any]:
@@ -177,15 +190,13 @@ def test_formed_word_policy_checks_complete_words_not_substrings() -> None:
     module_text = Path(diagnostics_mod.__file__).read_text(encoding="utf-8")
     assert "isascii" not in module_text
     longer = classify_complete_formed_words(
-        [_OSAMENIU, "LATINOU"],
-        contains=context.index.contains,
-        two_letter_allowlist=context.allowlist,
+        _single_codepoint_records([_OSAMENIU, "LATINOU"]),
+        authority=context.authority,
     )
     assert longer == ()
     mixed = classify_complete_formed_words(
-        [_OSAMENIU, "am", "LATINOU", "ou"],
-        contains=context.index.contains,
-        two_letter_allowlist=context.allowlist,
+        _single_codepoint_records([_OSAMENIU, "am", "LATINOU", "ou"]),
+        authority=context.authority,
     )
     rejected = {word.casefold() for word in mixed}
     assert rejected == {"am", "ou"}
@@ -201,7 +212,7 @@ def test_slovak_hook_fixture_keeps_osameniu_legal() -> None:
         _hook_board(),
         scenario.rack,
         _OSAMENIU_PLACEMENTS,
-        context.is_word,
+        authority=context.authority,
         letters=context.letters,
         variant="slovak",
     )
@@ -210,9 +221,8 @@ def test_slovak_hook_fixture_keeps_osameniu_legal() -> None:
     formed = {word.casefold() for word in move.words}
     assert _OSAMENIU.casefold() in formed
     rejected = classify_complete_formed_words(
-        move.words,
-        contains=context.index.contains,
-        two_letter_allowlist=context.allowlist,
+        move.words_found,
+        authority=context.authority,
     )
     assert rejected == ()
 
@@ -223,9 +233,8 @@ def test_slovak_b2_accepts_named_legal_complete_words() -> None:
     for word in _LEGAL_SLOVAK_TWO_LETTER:
         assert context.is_word(word) is True
         rejected = classify_complete_formed_words(
-            [word],
-            contains=context.index.contains,
-            two_letter_allowlist=context.allowlist,
+            _single_codepoint_records([word]),
+            authority=context.authority,
         )
         assert rejected == ()
 
@@ -238,12 +247,12 @@ def test_slovak_b2_rejects_complete_ou_and_am() -> None:
     assert context.is_word("am") is False
 
     ou_board = Board(get_premiums_path())
-    ou_board.cells[6][7].letter = "O"
+    ou_board.cells[6][7].token = "O"
     ou_move = evaluate_scoring_move(
         ou_board,
         ["U", "M"],
         (Placement(7, 7, "U"), Placement(7, 8, "M")),
-        context.is_word,
+        authority=context.authority,
         letters=context.letters,
         variant="slovak",
     )
@@ -252,12 +261,12 @@ def test_slovak_b2_rejects_complete_ou_and_am() -> None:
     assert "ou" in {word.casefold() for word in ou_move.words}
 
     am_board = Board(get_premiums_path())
-    am_board.cells[6][7].letter = "A"
+    am_board.cells[6][7].token = "A"
     am_move = evaluate_scoring_move(
         am_board,
         ["M", "I"],
         (Placement(7, 7, "M"), Placement(7, 8, "I")),
-        context.is_word,
+        authority=context.authority,
         letters=context.letters,
         variant="slovak",
     )
@@ -268,9 +277,8 @@ def test_slovak_b2_rejects_complete_ou_and_am() -> None:
     assert context.is_word(_OSAMENIU) is True
     assert context.is_word("LATINOU") is True
     longer = classify_complete_formed_words(
-        [_OSAMENIU, "LATINOU"],
-        contains=context.index.contains,
-        two_letter_allowlist=context.allowlist,
+        _single_codepoint_records([_OSAMENIU, "LATINOU"]),
+        authority=context.authority,
     )
     assert longer == ()
 
@@ -285,18 +293,17 @@ def test_english_two_letter_policy_delegates_to_collins() -> None:
     assert context.is_word("qi") is True
     assert context.is_word("tranquil") is True
     rejected_long = classify_complete_formed_words(
-        ["TRANQUIL"],
-        contains=context.index.contains,
-        two_letter_allowlist=None,
+        _single_codepoint_records(["TRANQUIL"]),
+        authority=context.authority,
     )
     assert rejected_long == ()
     rejected_qx = classify_complete_formed_words(
-        ["QX"],
-        contains=context.index.contains,
-        two_letter_allowlist=None,
+        _single_codepoint_records(["QX"]),
+        authority=context.authority,
     )
     assert {word.casefold() for word in rejected_qx} == {"qx"}
-    assert _word_passes_dictionary(context.index.contains, "qi") is True
+    assert context.authority.accepts_word_query("qi") is True
+    assert context.authority.accepts_tokens(("Q", "I")) is True
 
 
 def test_engine_cli_rejects_unknown_variant_or_fixture_before_search(

@@ -11,26 +11,28 @@ import os
 import subprocess
 import tempfile
 import unicodedata
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
-from game.services import _lexicon_id, _word_passes_dictionary
+from game.services import _lexicon_id
 from gamecore.assets import get_assets_path, get_premiums_path
 from gamecore.board import Board
 from gamecore.fastdict import PrefixIndex, load_prefix_index
 from gamecore.legality import evaluate_scoring_move, placements_to_dicts
 from gamecore.move_search import RankedMoveCandidate, find_ranked_scoring_moves
 from gamecore.tiles import TileBag, get_tile_points
-from gamecore.types import Placement
+from gamecore.types import Placement, WordFound
 from gamecore.variant_store import (
     VariantDefinition,
+    canonicalize_tile_token,
     list_installed_variants,
     load_two_tile_words,
     load_variant,
 )
+from gamecore.word_authority import WordAuthority
 
 ARTIFACT_ID = "libretiles.ai-play-diagnostic/v1"
 REPORT_KIND_ENGINE = "engine"
@@ -131,21 +133,18 @@ class VariantProbeContext:
     index: PrefixIndex
     allowlist: frozenset[str] | None
     letters: frozenset[str]
+    authority: WordAuthority
 
     def is_word(self, word: str) -> bool:
-        return _word_passes_dictionary(
-            self.index.contains,
-            word,
-            two_letter_allowlist=self.allowlist,
-        )
+        """ADVISORY string query for observation only.
+
+        ⛔ Never handed to a search or to the evaluator — those take
+        ``self.authority`` — because a bare string carries no tile boundaries.
+        """
+        return self.authority.accepts_word_query(word)
 
     def has_prefix(self, prefix: str) -> bool:
-        if self.index.has_prefix(prefix):
-            return True
-        if self.allowlist is None:
-            return False
-        folded = unicodedata.normalize("NFC", prefix).casefold()
-        return len(folded) == 2 and folded in self.allowlist
+        return self.authority.has_prefix(prefix)
 
 
 @dataclass(frozen=True)
@@ -330,31 +329,29 @@ def load_variant_context(variant_slug: str) -> VariantProbeContext:
         index=load_prefix_index(variant.dictionary_path),
         allowlist=load_two_tile_words(variant),
         letters=frozenset(variant.playable_letters),
+        authority=WordAuthority.for_variant(variant),
     )
 
 
 def classify_complete_formed_words(
-    words: Sequence[str],
+    words: Sequence[WordFound],
     *,
-    contains: Callable[[str], bool],
-    two_letter_allowlist: frozenset[str] | None,
+    authority: WordAuthority,
 ) -> tuple[str, ...]:
-    """Return complete formed words of length 2 rejected by the variant lexicon.
+    """Return complete formed words of TWO PHYSICAL TILES rejected by the variant.
 
-    Membership is over the complete-word list only. Longer words are never
-    scanned for two-letter substrings.
+    Routing is by physical tile count, not by lexical code-point length: a
+    two-tile word spelled with three code points is still a two-tile word.
+    Membership is over the complete-word lexicon only — longer words are never
+    scanned for two-letter substrings, and an aggregate lexical string is never
+    reverse-segmented to manufacture tile evidence.
     """
     rejected: list[str] = []
     for word in words:
-        folded = unicodedata.normalize("NFC", word.strip()).casefold()
-        if len(folded) != 2:
+        if len(word.tokens) != 2:
             continue
-        if not _word_passes_dictionary(
-            contains,
-            word,
-            two_letter_allowlist=two_letter_allowlist,
-        ):
-            rejected.append(word)
+        if not authority.accepts_tokens(word.tokens):
+            rejected.append(word.word)
     return tuple(rejected)
 
 
@@ -363,15 +360,22 @@ def _is_nfc_unicode_letter_tile(
     blank_as: object,
     playable: frozenset[str],
 ) -> bool:
+    """Is this placement payload a tile the variant can actually play?
+
+    ⛔ THE CHECK IS MEMBERSHIP IN THE VARIANT'S PLAYABLE TILE SET, and it always
+    was — the two ``len(...) == 1`` clauses this replaced rejected every
+    multi-code-point token, so Hungarian ``SZ`` and Croatian ``DŽ`` could never
+    have survived a probe replay. Length was never the rule; a canonical token
+    that the variant declares is.
+    """
     if not isinstance(letter, str):
         return False
-    normalized = unicodedata.normalize("NFC", letter.strip()).upper()
+    normalized = canonicalize_tile_token(letter)
     if normalized == "?":
         if not isinstance(blank_as, str):
             return False
-        blank = unicodedata.normalize("NFC", blank_as.strip()).upper()
-        return len(blank) == 1 and blank.isalpha() and blank in playable
-    return len(normalized) == 1 and normalized.isalpha()
+        return canonicalize_tile_token(blank_as) in playable
+    return normalized in playable
 
 
 def _placements_are_unicode(
@@ -387,7 +391,8 @@ def _placements_are_unicode(
 def _board_from_scenario(scenario: DiagnosticScenario) -> Board:
     board = Board(get_premiums_path())
     for row, col, letter in scenario.board_letters:
-        board.cells[row][col].letter = letter
+        board.cells[row][col].token = letter
+        board.cells[row][col].blank_as = None
     return board
 
 
@@ -431,7 +436,15 @@ def _verdict_for_candidate(
     context: VariantProbeContext,
     board: Board,
     rack: Sequence[str],
-) -> tuple[Verdict, str, tuple[str, ...], list[dict[str, object]], int, dict[str, object] | None]:
+) -> tuple[
+    Verdict,
+    str,
+    tuple[str, ...],
+    list[dict[str, object]],
+    int,
+    dict[str, object] | None,
+    tuple[str, ...],
+]:
     if candidate is None:
         if status == "found":
             return (
@@ -441,18 +454,30 @@ def _verdict_for_candidate(
                 [],
                 0,
                 None,
+                (),
             )
-        return ("pass", REASON_OK, (), [], 0, None)
+        return ("pass", REASON_OK, (), [], 0, None, ())
 
     payload = _candidate_payload(candidate)
     placements = payload["placements"]
     assert isinstance(placements, list)
     placement_dicts = [item for item in placements if isinstance(item, dict)]
     formed_words = tuple(candidate.words)
+    rebuilt = _placements_from_payload(placement_dicts)
+    # Replay the placements to obtain the PHYSICAL formed words. The evaluator
+    # retains them after clearing the board, so the two-tile policy below is
+    # decided on real tile evidence rather than on a reconstructed string.
+    legality = evaluate_scoring_move(
+        board,
+        rack,
+        rebuilt,
+        authority=context.authority,
+        letters=context.letters,
+        variant=context.variant.slug,
+    )
     rejected = classify_complete_formed_words(
-        formed_words,
-        contains=context.index.contains,
-        two_letter_allowlist=context.allowlist,
+        legality.words_found,
+        authority=context.authority,
     )
     if not _placements_are_unicode(placement_dicts, context.letters):
         return (
@@ -462,6 +487,7 @@ def _verdict_for_candidate(
             placement_dicts,
             candidate.total_score,
             payload,
+            rejected,
         )
     if rejected:
         return (
@@ -471,16 +497,8 @@ def _verdict_for_candidate(
             placement_dicts,
             candidate.total_score,
             payload,
+            rejected,
         )
-    rebuilt = _placements_from_payload(placement_dicts)
-    legality = evaluate_scoring_move(
-        board,
-        rack,
-        rebuilt,
-        context.is_word,
-        letters=context.letters,
-        variant=context.variant.slug,
-    )
     if not legality.ok or legality.total_score != candidate.total_score:
         return (
             "fail",
@@ -489,6 +507,7 @@ def _verdict_for_candidate(
             placement_dicts,
             candidate.total_score,
             payload,
+            rejected,
         )
     return (
         "pass",
@@ -497,6 +516,7 @@ def _verdict_for_candidate(
         placement_dicts,
         candidate.total_score,
         payload,
+        rejected,
     )
 
 
@@ -508,15 +528,14 @@ def run_engine_probe(
     result = find_ranked_scoring_moves(
         board,
         scenario.rack,
-        context.is_word,
-        context.has_prefix,
+        authority=context.authority,
         bag_count=100,
         tile_points=get_tile_points(context.variant),
         blank_letters=context.variant.playable_letters,
         variant=context.variant.slug,
     )
     top = result.candidates[0] if result.candidates else None
-    verdict, reason, words, placements, score, payload = _verdict_for_candidate(
+    verdict, reason, words, placements, score, payload, rejected = _verdict_for_candidate(
         status=result.status,
         candidate=top,
         context=context,
@@ -532,19 +551,17 @@ def run_engine_probe(
         formed_words=words,
         score=score,
         placements=placements,
-        rejected_two_letter_words=rejected_words(words, context),
+        rejected_two_letter_words=rejected,
         verdict=verdict,
         reason_code=reason,
         top_candidate=payload,
     )
 
 
-def rejected_words(words: Sequence[str], context: VariantProbeContext) -> tuple[str, ...]:
-    return classify_complete_formed_words(
-        words,
-        contains=context.index.contains,
-        two_letter_allowlist=context.allowlist,
-    )
+def rejected_words(
+    words: Sequence[WordFound], context: VariantProbeContext
+) -> tuple[str, ...]:
+    return classify_complete_formed_words(words, authority=context.authority)
 
 
 def format_metric_line(

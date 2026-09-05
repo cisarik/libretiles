@@ -43,7 +43,6 @@ from game.diagnostics import (
     observe_source_revision,
     write_report_atomically,
 )
-from game.services import _word_passes_dictionary
 from gamecore.assets import get_assets_path, get_premiums_path
 from gamecore.board import Board
 from gamecore.game import Game, GameEndReason, PlayerState
@@ -59,7 +58,8 @@ from gamecore.move_search import (
     find_ranked_scoring_moves,
 )
 from gamecore.tiles import TileBag, get_tile_distribution, get_tile_points
-from gamecore.types import Placement
+from gamecore.types import Placement, WordFound
+from gamecore.word_authority import WordAuthority
 
 POLICY_WITNESS = "witness-first"
 POLICY_RANKED_BEST = "ranked-best"
@@ -107,6 +107,10 @@ assert len(_RARE_TILES["slovak"]) == 17
 assert _RARE_TILES["english"] == frozenset()
 
 _RESULT_CACHE: dict[tuple[str, str, int], PolicyComparisonSample] = {}
+# Physical tile evidence for every played move, kept beside the serializable
+# sample so the two-letter policy can be re-checked over TOKEN SEQUENCES instead
+# of reverse-segmenting the report's lexical strings.
+_RECORDS_CACHE: dict[tuple[str, str, int], tuple[WordFound, ...]] = {}
 
 
 @dataclass(frozen=True)
@@ -164,8 +168,7 @@ def _ranked_search(
     return find_ranked_scoring_moves(
         game.board,
         rack,
-        context.is_word,
-        context.has_prefix,
+        authority=context.authority,
         bag_count=game.bag.remaining(),
         top_k=DEFAULT_RANKED_TOP_K,
         max_nodes=DEFAULT_RANKED_MAX_NODES,
@@ -226,8 +229,7 @@ def _choose(
         search = find_legal_scoring_move(
             game.board,
             rack,
-            context.is_word,
-            context.has_prefix,
+            authority=context.authority,
             max_nodes=DEFAULT_MAX_NODES,
             max_elapsed_ms=WITNESS_MAX_ELAPSED_MS,
             blank_letters=context.variant.playable_letters,
@@ -294,6 +296,7 @@ def _simulate(variant_slug: str, policy_id: str, seed: int) -> PolicyComparisonS
     exchanges = 0
     passes = 0
     formed_words: list[str] = []
+    formed_records: list[WordFound] = []
     nodes_sum = 0
     elapsed_sum = 0
     decisions = 0
@@ -330,19 +333,19 @@ def _simulate(variant_slug: str, policy_id: str, seed: int) -> PolicyComparisonS
                 game.board,
                 rack_before,
                 decision.placements,
-                context.is_word,
+                authority=context.authority,
                 letters=context.letters,
                 variant=variant_slug,
             )
             assert legality.ok, f"{context_label}: candidate failed re-certification: {legality}"
             assert legality.total_score == decision.total_score, context_label
             rejected = classify_complete_formed_words(
-                legality.words,
-                contains=context.index.contains,
-                two_letter_allowlist=context.allowlist,
+                legality.words_found,
+                authority=context.authority,
             )
             assert rejected == (), f"{context_label}: two-letter policy rejected {rejected}"
             formed_words.extend(legality.words)
+            formed_records.extend(legality.words_found)
             awarded = game.play_move(decision.placements)
             assert awarded == legality.total_score, context_label
             placement_scores[acting.name] += awarded
@@ -403,11 +406,11 @@ def _simulate(variant_slug: str, policy_id: str, seed: int) -> PolicyComparisonS
             rack_remaining = {player.name: tuple(player.rack) for player in players}
             stranded = bag_remaining + sum(len(tiles) for tiles in rack_remaining.values())
             rejected = classify_complete_formed_words(
-                formed_words,
-                contains=context.index.contains,
-                two_letter_allowlist=context.allowlist,
+                tuple(formed_records),
+                authority=context.authority,
             )
             assert rejected == ()
+            _RECORDS_CACHE[(variant_slug, policy_id, seed)] = tuple(formed_records)
             return PolicyComparisonSample(
                 variant_slug=variant_slug,
                 policy_id=policy_id,
@@ -553,15 +556,20 @@ def test_english_control_matrix_has_no_ascii_only_predicate() -> None:
     word_source = inspect.getsource(type(english).is_word)
     choose_source = inspect.getsource(_choose)
     simulate_source = inspect.getsource(_simulate)
-    passes_source = inspect.getsource(_word_passes_dictionary)
+    # Migrated target, same invariant: the word verdict now lives on the one
+    # authority, so the ASCII-only lock is asserted over that whole module.
+    authority_source = inspect.getsource(WordAuthority)
     banned = "is" + "ascii"
-    assert "_word_passes_dictionary" in word_source
+    assert "authority" in word_source
     assert banned not in choose_source
     assert banned not in simulate_source
-    assert banned not in passes_source
+    assert banned not in authority_source
     assert english.allowlist is None
+    assert english.authority.two_tile_words is None
     assert english.is_word("QI")
     assert not english.is_word("QZ")
+    assert english.authority.accepts_tokens(("Q", "I"))
+    assert not english.authority.accepts_tokens(("Q", "Z"))
     assert _RARE_TILES["english"] == frozenset()
 
 
@@ -580,11 +588,16 @@ def test_two_letter_policy_holds_for_every_played_move_in_every_policy() -> None
     samples = _matrix(DEFAULT_SEEDS)
     for sample in samples:
         context = _CONTEXTS[sample.variant_slug]
+        records = _RECORDS_CACHE[
+            (sample.variant_slug, sample.policy_id, sample.seed)
+        ]
+        # ⚠ Classified over the retained TOKEN SEQUENCES. The report's lexical
+        # strings are never reverse-segmented to manufacture tile evidence.
         rejected = classify_complete_formed_words(
-            sample.formed_words,
-            contains=context.index.contains,
-            two_letter_allowlist=context.allowlist,
+            records,
+            authority=context.authority,
         )
+        assert tuple(record.word for record in records) == sample.formed_words
         assert sample.rejected_two_letter_words == ()
         assert rejected == ()
 

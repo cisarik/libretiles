@@ -12,8 +12,7 @@ import pytest
 from game.services import (
     _board_from_session,
     _placements_from_data,
-    _word_checker,
-    _word_passes_dictionary,
+    _session_authority,
 )
 from gamecore.assets import get_premiums_path
 from gamecore.board import Board
@@ -23,6 +22,7 @@ from gamecore.move_search import find_legal_scoring_move
 from gamecore.scoring import score_words
 from gamecore.types import Placement
 from gamecore.variant_store import load_two_tile_words, load_variant
+from gamecore.word_authority import WordAuthority
 
 
 @pytest.fixture(scope="module")
@@ -35,71 +35,74 @@ def slovak_index() -> Any:
     return load_prefix_index(load_variant("slovak").dictionary_path)
 
 
+@pytest.fixture(scope="module")
+def slovak_authority() -> WordAuthority:
+    return WordAuthority.for_variant(load_variant("slovak"))
+
+
+@pytest.fixture(scope="module")
+def english_authority() -> WordAuthority:
+    return WordAuthority.for_variant(load_variant("english"))
+
+
 def test_slovak_diacritic_membership_only_on_slovak_path(
-    collins_contains: Callable[[str], bool],
-    slovak_index: Any,
+    slovak_authority: WordAuthority,
+    english_authority: WordAuthority,
 ) -> None:
-    allowlist = load_two_tile_words(load_variant("slovak"))
-    assert _word_passes_dictionary(
-        slovak_index.contains, "škola", two_letter_allowlist=allowlist
-    ) is True
-    assert _word_passes_dictionary(collins_contains, "škola") is False
-    assert _word_passes_dictionary(collins_contains, "qi") is True
-    assert _word_passes_dictionary(collins_contains, "za") is True
-    assert _word_passes_dictionary(collins_contains, "fe") is True
+    # Migrated fixture, identical expectations: the injected callable became the
+    # one authority for the same variant.
+    assert slovak_authority.accepts_word_query("škola") is True
+    assert english_authority.accepts_word_query("škola") is False
+    assert english_authority.accepts_word_query("qi") is True
+    assert english_authority.accepts_word_query("za") is True
+    assert english_authority.accepts_word_query("fe") is True
 
 
-def test_slovak_two_letter_b2_is_the_lexicon(slovak_index: Any) -> None:
+def test_slovak_two_letter_b2_is_the_lexicon(slovak_authority: WordAuthority) -> None:
     allowlist = load_two_tile_words(load_variant("slovak"))
     assert allowlist is not None
-    assert _word_passes_dictionary(
-        slovak_index.contains, "as", two_letter_allowlist=allowlist
-    ) is True
-    assert _word_passes_dictionary(
-        slovak_index.contains, "ja", two_letter_allowlist=allowlist
-    ) is True
-    assert _word_passes_dictionary(
-        slovak_index.contains, "škola", two_letter_allowlist=allowlist
-    ) is True
-    assert _word_passes_dictionary(
-        slovak_index.contains, "ou", two_letter_allowlist=allowlist
-    ) is False
-    assert _word_passes_dictionary(
-        slovak_index.contains, "am", two_letter_allowlist=allowlist
-    ) is False
+    assert slovak_authority.two_tile_words == allowlist
+    assert slovak_authority.accepts_word_query("as") is True
+    assert slovak_authority.accepts_word_query("ja") is True
+    assert slovak_authority.accepts_word_query("škola") is True
+    assert slovak_authority.accepts_word_query("ou") is False
+    assert slovak_authority.accepts_word_query("am") is False
     # Residual is hunspell junk of length ≥3, not missing B2.
-    assert _word_passes_dictionary(
-        slovak_index.contains, "aj", two_letter_allowlist=allowlist
-    ) is True
-    assert _word_passes_dictionary(
-        slovak_index.contains, "ak", two_letter_allowlist=allowlist
-    ) is True
-    assert _word_passes_dictionary(
-        slovak_index.contains, "či", two_letter_allowlist=allowlist
-    ) is True
+    assert slovak_authority.accepts_word_query("aj") is True
+    assert slovak_authority.accepts_word_query("ak") is True
+    assert slovak_authority.accepts_word_query("či") is True
+    # The same verdicts as PHYSICAL tile sequences, which is the authority.
+    assert slovak_authority.accepts_tokens(("A", "S")) is True
+    assert slovak_authority.accepts_tokens(("O", "U")) is False
+    assert slovak_authority.accepts_tokens(("Š", "K", "O", "L", "A")) is True
 
 
-def test_word_checker_rejects_slovak_ou_on_session_stub() -> None:
+def test_session_authority_rejects_slovak_ou_on_session_stub() -> None:
     session = SimpleNamespace(variant_slug="slovak")
-    check = _word_checker(session)  # type: ignore[arg-type]
-    assert check("ou") is False
-    assert check("am") is False
-    assert check("as") is True
-    assert check("aj") is True
-    assert check("či") is True
-    assert check("škola") is True
-    english = _word_checker(SimpleNamespace(variant_slug="english"))  # type: ignore[arg-type]
-    assert english("qi") is True
-    assert english("za") is True
-    assert english("fe") is True
+    authority = _session_authority(session)  # type: ignore[arg-type]
+    assert authority.accepts_word_query("ou") is False
+    assert authority.accepts_word_query("am") is False
+    assert authority.accepts_word_query("as") is True
+    assert authority.accepts_word_query("aj") is True
+    assert authority.accepts_word_query("či") is True
+    assert authority.accepts_word_query("škola") is True
+    assert authority.accepts_tokens(("O", "U")) is False
+    assert authority.accepts_tokens(("A", "S")) is True
+    english = _session_authority(SimpleNamespace(variant_slug="english"))  # type: ignore[arg-type]
+    assert english.accepts_word_query("qi") is True
+    assert english.accepts_word_query("za") is True
+    assert english.accepts_word_query("fe") is True
 
 
-def test_combining_character_nfc_equivalent_is_accepted(slovak_index: Any) -> None:
+def test_combining_character_nfc_equivalent_is_accepted(
+    slovak_authority: WordAuthority,
+) -> None:
     composed = "škola"
     decomposed = unicodedata.normalize("NFD", composed)
     assert decomposed != composed
-    assert _word_passes_dictionary(slovak_index.contains, composed) is True
-    assert _word_passes_dictionary(slovak_index.contains, decomposed) is True
+    assert slovak_authority.accepts_word_query(composed) is True
+    assert slovak_authority.accepts_word_query(decomposed) is True
+    assert slovak_authority.accepts_tokens(tuple(decomposed.upper())) is True
 
 
 def test_slovak_blank_acute_a_is_not_invalid_blank() -> None:
@@ -109,11 +112,12 @@ def test_slovak_blank_acute_a_is_not_invalid_blank() -> None:
         Placement(7, 7, "?", "Á"),
         Placement(7, 8, "T"),
     ]
+    accept_all = WordAuthority.from_words(("ÁT", "TÁ"))
     slovak = evaluate_scoring_move(
         board,
         ["?", "T"],
         placements,
-        lambda _word: True,
+        authority=accept_all,
         letters=letters,
         variant="slovak",
     )
@@ -123,7 +127,7 @@ def test_slovak_blank_acute_a_is_not_invalid_blank() -> None:
         board,
         ["?", "T"],
         placements,
-        lambda _word: True,
+        authority=accept_all,
     )
     assert english.reason_code == REASON_INVALID_BLANK
 
@@ -161,21 +165,14 @@ def test_board_from_session_structured_cell_is_one_cell() -> None:
     assert not board.cells[0][1].letter
 
 
-def test_empty_board_slovak_rack_finds_legal_word(slovak_index: Any) -> None:
+def test_empty_board_slovak_rack_finds_legal_word(
+    slovak_authority: WordAuthority,
+) -> None:
     variant = load_variant("slovak")
-
-    def is_word(word: str) -> bool:
-        return _word_passes_dictionary(
-            slovak_index.contains,
-            word,
-            two_letter_allowlist=load_two_tile_words(variant),
-        )
-
     result = find_legal_scoring_move(
         Board(get_premiums_path()),
         ["A", "U", "T", "O", "L", "I", "N"],
-        is_word,
-        slovak_index.has_prefix,
+        authority=slovak_authority,
         blank_letters=variant.playable_letters,
         variant="slovak",
     )

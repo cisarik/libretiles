@@ -4,6 +4,10 @@ The original witness search deliberately keeps its first-match semantics because
 it is the pass/exchange safety authority.  The ranked search is a separate,
 stricter quality path: it re-certifies and ranks a bounded set of legal moves,
 but its result never authorizes a non-scoring action.
+
+Both take the ONE ``WordAuthority``. Cross checks and completed prefixes are
+decided over PHYSICAL TOKEN SEQUENCES; only the extension probe stays lexical,
+because a prefix has no complete-word verdict to give.
 """
 
 from __future__ import annotations
@@ -11,7 +15,7 @@ from __future__ import annotations
 import string
 import time
 from collections import Counter
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
@@ -19,6 +23,7 @@ from .board import BOARD_SIZE, Board
 from .legality import evaluate_scoring_move
 from .tiles import get_tile_points
 from .types import Direction, Placement
+from .word_authority import WordAuthority
 
 DEFAULT_MAX_NODES = 2_000_000
 DEFAULT_MAX_ELAPSED_MS = 2000
@@ -82,9 +87,8 @@ class RankedSearchResult:
 def find_legal_scoring_move(
     board: Board,
     rack: Sequence[str],
-    is_word: Callable[[str], bool],
-    has_prefix: Callable[[str], bool],
     *,
+    authority: WordAuthority,
     max_nodes: int = DEFAULT_MAX_NODES,
     max_elapsed_ms: int = DEFAULT_MAX_ELAPSED_MS,
     blank_letters: Sequence[str] = _BLANK_LETTERS,
@@ -94,8 +98,7 @@ def find_legal_scoring_move(
     searcher = _Searcher(
         board=board,
         rack=rack,
-        is_word=is_word,
-        has_prefix=has_prefix,
+        authority=authority,
         max_nodes=max_nodes,
         max_elapsed_ms=max_elapsed_ms,
         blank_letters=blank_letters,
@@ -107,9 +110,8 @@ def find_legal_scoring_move(
 def find_ranked_scoring_moves(
     board: Board,
     rack: Sequence[str],
-    is_word: Callable[[str], bool],
-    has_prefix: Callable[[str], bool],
     *,
+    authority: WordAuthority,
     bag_count: int,
     top_k: int = DEFAULT_RANKED_TOP_K,
     max_nodes: int = DEFAULT_RANKED_MAX_NODES,
@@ -128,8 +130,7 @@ def find_ranked_scoring_moves(
     searcher = _RankedSearcher(
         board=board,
         rack=rack,
-        is_word=is_word,
-        has_prefix=has_prefix,
+        authority=authority,
         bag_count=max(0, bag_count),
         top_k=max(1, min(int(top_k), MAX_RANKED_TOP_K)),
         max_nodes=max_nodes,
@@ -148,17 +149,15 @@ class _Searcher:
         *,
         board: Board,
         rack: Sequence[str],
-        is_word: Callable[[str], bool],
-        has_prefix: Callable[[str], bool],
+        authority: WordAuthority,
         max_nodes: int,
         max_elapsed_ms: int,
         blank_letters: Sequence[str] = _BLANK_LETTERS,
         variant: object = None,
     ) -> None:
         self.board = board
-        self.grid = tuple(tuple(cell.letter for cell in row) for row in board.cells)
-        self.is_word = is_word
-        self.has_prefix = has_prefix
+        self.grid = tuple(tuple(cell.realized_token for cell in row) for row in board.cells)
+        self.authority = authority
         self.max_nodes = max_nodes
         self.max_elapsed_ms = max_elapsed_ms
         self.blank_letters = blank_letters
@@ -361,20 +360,22 @@ class _Searcher:
             cc2 += pdc
         if len(word_chars) < 2:
             return True
-        return self.is_word("".join(word_chars))
+        # Whole-token authority: `word_chars` is a TILE sequence, one entry per
+        # square, so a digraph tile counts once.
+        return self.authority.accepts_tokens(word_chars)
 
     def _try_complete(self, prefix: list[str], placed: list[Placement], first_move: bool) -> None:
         if not placed or len(prefix) < 2:
             return
         if first_move and not any((p.row, p.col) == CENTER for p in placed):
             return
-        if not self.is_word("".join(prefix)):
+        if not self.authority.accepts_tokens(prefix):
             return
         result = evaluate_scoring_move(
             self.board,
             list(self.initial_rack.elements()),
             placed,
-            self.is_word,
+            authority=self.authority,
             letters=self.letter_set,
             variant=self.variant,
         )
@@ -410,7 +411,7 @@ class _Searcher:
         existing = self.grid[row][col]
         if existing:
             prefix.append(existing)
-            if not self.has_prefix("".join(prefix)):
+            if not self.authority.has_prefix("".join(prefix)):
                 prefix.pop()
                 return
             self._extend(
@@ -440,7 +441,7 @@ class _Searcher:
             if not self._cross_ok(row, col, letter, dr, dc):
                 continue
             prefix.append(letter)
-            if not self.has_prefix("".join(prefix)):
+            if not self.authority.has_prefix("".join(prefix)):
                 prefix.pop()
                 continue
             placed.append(Placement(row=row, col=col, letter=tile, blank_as=blank_as))
@@ -468,8 +469,7 @@ class _RankedSearcher(_Searcher):
         *,
         board: Board,
         rack: Sequence[str],
-        is_word: Callable[[str], bool],
-        has_prefix: Callable[[str], bool],
+        authority: WordAuthority,
         bag_count: int,
         top_k: int,
         max_nodes: int,
@@ -482,8 +482,7 @@ class _RankedSearcher(_Searcher):
         super().__init__(
             board=board,
             rack=rack,
-            is_word=is_word,
-            has_prefix=has_prefix,
+            authority=authority,
             max_nodes=max_nodes,
             max_elapsed_ms=max_elapsed_ms,
             blank_letters=blank_letters,
@@ -572,7 +571,7 @@ class _RankedSearcher(_Searcher):
             return
         if first_move and not any((p.row, p.col) == CENTER for p in placed):
             return
-        if not self.is_word("".join(prefix)):
+        if not self.authority.accepts_tokens(prefix):
             return
 
         canonical_key = self._canonical_key(placed)
@@ -586,7 +585,7 @@ class _RankedSearcher(_Searcher):
             self.board,
             self.rack_tiles,
             placed,
-            self.is_word,
+            authority=self.authority,
             letters=self.letter_set,
             variant=self.variant,
         )

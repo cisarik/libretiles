@@ -4,37 +4,104 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from .types import Direction, Placement, Premium, WordFound
+from .types import BLANK_TOKEN, Direction, Placement, Premium, WordFound
 
 BOARD_SIZE = 15
 
 
 @dataclass
 class Cell:
-    # Storage fields stay as letter/is_blank this slice so persistence paths
-    # outside gamecore keep compiling. F2 inverts storage onto token/blank_as
-    # and removes these derived properties.
-    letter: str | None = None
-    is_blank: bool = False
+    """One board square, stored as the tile that physically sits on it.
+
+    Canonical storage is ``token`` plus ``blank_as``. The invariant is the whole
+    specification and getting it backwards would score blanks as real tiles:
+
+    ========================  ==============  ==============  ================
+    occupancy                 token           blank_as        realized_token
+    ========================  ==============  ==============  ================
+    empty                     ``None``        ``None``        ``None``
+    ordinary tile ``T``       ``T``           ``None``        ``T``
+    blank assigned ``T``      ``"?"``         ``T``           ``T``
+    ========================  ==============  ==============  ================
+
+    An assigned blank scores ZERO regardless of what it realizes.
+
+    ``letter`` and ``is_blank`` survive as COMPATIBILITY ACCESSORS backed solely
+    by the two canonical fields, so persistence and projection paths outside
+    ``gamecore`` keep compiling and every existing assignment idiom keeps its
+    meaning. ``letter`` is the REALIZED token, which is what it always was.
+    """
+
+    token: str | None = None
+    blank_as: str | None = None
     premium: Premium | None = None
     premium_used: bool = False
 
     @property
-    def token(self) -> str | None:
-        """Physical identity: '?' if blank, else the tile token. None if empty."""
-        if self.letter is None:
-            return None
-        return "?" if self.is_blank else self.letter
+    def is_occupied(self) -> bool:
+        return self.token is not None
 
     @property
-    def blank_as(self) -> str | None:
-        """Blank assignment (realized letter) when this cell holds a blank."""
-        return self.letter if self.is_blank else None
+    def is_malformed(self) -> bool:
+        """A physical blank with no assignment, or an assignment with no blank.
+
+        ⛔ Fails closed before evaluation. It must NOT read as an empty cell:
+        silently vanishing would turn a corrupt payload into a legal-looking
+        board.
+        """
+        if self.token == BLANK_TOKEN:
+            return self.blank_as is None
+        return self.blank_as is not None
 
     @property
     def realized_token(self) -> str | None:
-        """Lexical occupant: blank_as if blank, else the tile token."""
-        return self.letter
+        """Lexical occupant: the blank's assignment if blank, else the tile token.
+
+        A malformed blank realizes as ``"?"`` — occupied, never a word, and
+        never mistaken for an empty square.
+        """
+        if self.token is None:
+            return None
+        if self.token == BLANK_TOKEN and self.blank_as is not None:
+            return self.blank_as
+        return self.token
+
+    @property
+    def letter(self) -> str | None:
+        """Compatibility accessor for ``realized_token``."""
+        return self.realized_token
+
+    @letter.setter
+    def letter(self, value: str | None) -> None:
+        if value is None:
+            self.token = None
+            self.blank_as = None
+        elif self.token == BLANK_TOKEN:
+            # Retarget an existing blank rather than turning it into a real tile.
+            self.blank_as = value
+        else:
+            self.token = value
+            self.blank_as = None
+
+    @property
+    def is_blank(self) -> bool:
+        """Compatibility accessor: this square holds a physical blank."""
+        return self.token == BLANK_TOKEN
+
+    @is_blank.setter
+    def is_blank(self, value: bool) -> None:
+        if value:
+            if self.token == BLANK_TOKEN:
+                return
+            # Preserve what the square realizes; the tile underneath becomes '?'.
+            self.blank_as = self.token
+            self.token = BLANK_TOKEN
+        else:
+            if self.token != BLANK_TOKEN:
+                self.blank_as = None
+                return
+            self.token = self.blank_as
+            self.blank_as = None
 
 
 class Board:
@@ -62,19 +129,32 @@ class Board:
         return 0 <= row < BOARD_SIZE and 0 <= col < BOARD_SIZE
 
     def get_letter(self, row: int, col: int) -> str | None:
-        return self.cells[row][col].letter
+        return self.cells[row][col].realized_token
+
+    def malformed_cells(self) -> list[tuple[int, int]]:
+        """Occupied squares whose token/blank_as pair cannot be evaluated."""
+        return [
+            (r, c)
+            for r in range(BOARD_SIZE)
+            for c in range(BOARD_SIZE)
+            if self.cells[r][c].is_malformed
+        ]
 
     def place_letters(self, placements: list[Placement]) -> None:
         for p in placements:
             cell = self.cells[p.row][p.col]
-            cell.letter = p.blank_as or p.letter
-            cell.is_blank = p.letter == "?"
+            if p.letter == BLANK_TOKEN:
+                cell.token = BLANK_TOKEN
+                cell.blank_as = p.blank_as
+            else:
+                cell.token = p.letter
+                cell.blank_as = None
 
     def clear_letters(self, placements: list[Placement]) -> None:
         for p in placements:
             cell = self.cells[p.row][p.col]
-            cell.letter = None
-            cell.is_blank = False
+            cell.token = None
+            cell.blank_as = None
 
     def letters_in_line(self, placements: list[Placement]) -> Direction | None:
         rows = {p.row for p in placements}

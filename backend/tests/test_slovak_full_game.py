@@ -13,7 +13,7 @@ import pytest
 
 from accounts.models import User
 from game.models import GameSession, PlayerSlot
-from game.services import _check_endgame, _word_passes_dictionary
+from game.services import _check_endgame
 from gamecore.assets import get_premiums_path
 from gamecore.board import Board
 from gamecore.fastdict import load_prefix_index
@@ -21,8 +21,9 @@ from gamecore.game import Game, GameEndReason, PlayerState, apply_final_scoring
 from gamecore.legality import evaluate_scoring_move, placements_to_dicts
 from gamecore.move_search import DEFAULT_MAX_NODES, find_legal_scoring_move
 from gamecore.tiles import TileBag, get_tile_distribution, get_tile_points
-from gamecore.types import Placement
+from gamecore.types import Placement, WordFound
 from gamecore.variant_store import load_two_tile_words, load_variant
+from gamecore.word_authority import WordAuthority
 
 _VARIANT = load_variant("slovak")
 _INDEX = load_prefix_index(_VARIANT.dictionary_path)
@@ -42,19 +43,11 @@ _ENGLISH_LEFTOVER_POINTS = 4
 _OPT_IN_ENV = "LIBRETILES_RUN_SLOVAK_FULL_GAME"
 
 
-def _is_word(word: str) -> bool:
-    return _word_passes_dictionary(
-        _INDEX.contains,
-        word,
-        two_letter_allowlist=_ALLOWLIST,
-    )
-
-
-def _has_prefix(prefix: str) -> bool:
-    if _INDEX.has_prefix(prefix):
-        return True
-    folded = unicodedata.normalize("NFC", prefix).casefold()
-    return len(folded) == 2 and folded in _ALLOWLIST
+# Migrated fixture, identical expectations: the two injected callables became
+# the one authority for the same variant and the same two-tile lexicon.
+_AUTHORITY = WordAuthority.for_variant(_VARIANT)
+assert _AUTHORITY.contains_main == _INDEX.contains
+assert _AUTHORITY.two_tile_words == _ALLOWLIST
 
 
 def _tile_counter(game: Game) -> Counter[str]:
@@ -115,11 +108,13 @@ def _assert_slovak_unicode_placements(placements: Sequence[Placement]) -> None:
     assert placements_to_dicts(rebuilt) == payload
 
 
-def _assert_b2_complete_words(words: Sequence[str]) -> None:
+def _assert_b2_complete_words(words: Sequence[WordFound]) -> None:
+    # Routing is by PHYSICAL tile count, not by code-point length. Slovak tiles
+    # are all one code point, so the SSS B2 expectation is unchanged.
     for word in words:
-        folded = unicodedata.normalize("NFC", word).casefold()
-        if len(folded) == 2:
-            assert folded in _ALLOWLIST, f"complete two-letter word {word!r} not in SSS B2"
+        if len(word.tokens) == 2:
+            folded = unicodedata.normalize("NFC", word.word).casefold()
+            assert folded in _ALLOWLIST, f"complete two-letter word {word.word!r} not in SSS B2"
 
 
 @dataclass(frozen=True)
@@ -166,8 +161,7 @@ def _simulate(seed: int, *, max_plies: int = 200) -> SimulationResult:
         search = find_legal_scoring_move(
             game.board,
             rack_before,
-            is_word=_is_word,
-            has_prefix=_has_prefix,
+            authority=_AUTHORITY,
             max_nodes=DEFAULT_MAX_NODES,
             max_elapsed_ms=_ACCEPTANCE_SEARCH_MAX_ELAPSED_MS,
             blank_letters=_VARIANT.playable_letters,
@@ -188,13 +182,13 @@ def _simulate(seed: int, *, max_plies: int = 200) -> SimulationResult:
                 game.board,
                 rack_before,
                 search.witness,
-                _is_word,
+                authority=_AUTHORITY,
                 letters=_PLAYABLE,
                 variant="slovak",
             )
             assert legality.ok, f"{context}: witness failed re-certification: {legality}"
             assert legality.total_score == search.total_score, context
-            _assert_b2_complete_words(legality.words)
+            _assert_b2_complete_words(legality.words_found)
             awarded = game.play_move(search.witness)
             assert awarded == legality.total_score, context
             placement_scores[acting_index] += awarded

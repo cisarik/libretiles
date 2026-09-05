@@ -23,6 +23,7 @@ from gamecore.game import Game, GameEndReason, PlayerState
 from gamecore.legality import evaluate_scoring_move
 from gamecore.move_search import find_legal_scoring_move, find_ranked_scoring_moves
 from gamecore.tiles import TileBag, get_tile_distribution
+from gamecore.word_authority import WordAuthority
 from gamecore.types import Placement
 
 _DICTIONARY_PATH = Path(get_assets_path()) / "dicts" / "collins2019.txt"
@@ -37,14 +38,8 @@ _MAX_PLIES = 200
 _OPT_IN_ENV = "LIBRETILES_RUN_STRENGTH_ACCEPTANCE"
 
 
-def _is_word(word: str) -> bool:
-    folded = word.strip().casefold()
-    return (
-        len(folded) >= 2
-        and folded.isascii()
-        and folded.isalpha()
-        and _INDEX.contains(folded)
-    )
+# Migrated fixture, identical expectations: one authority over the same index.
+_AUTHORITY = WordAuthority.from_index(_INDEX)
 
 
 def _tile_counter(game: Game) -> Counter[str]:
@@ -92,8 +87,7 @@ def _first_witness(game: Game, rack: list[str], context: str) -> tuple[Placement
     result = find_legal_scoring_move(
         game.board,
         rack,
-        is_word=_is_word,
-        has_prefix=_INDEX.has_prefix,
+        authority=_AUTHORITY,
         max_elapsed_ms=_SAFETY_SEARCH_MAX_ELAPSED_MS,
     )
     assert result.status != "indeterminate", (
@@ -118,8 +112,7 @@ def _strategy_move(
         ranked = find_ranked_scoring_moves(
             game.board,
             rack,
-            is_word=_is_word,
-            has_prefix=_INDEX.has_prefix,
+            authority=_AUTHORITY,
             bag_count=game.bag.remaining(),
         )
         if ranked.candidates:
@@ -163,7 +156,9 @@ def _simulate(seed: int, strategy_slot: int) -> StrengthGameResult:
         )
 
         if move is not None:
-            certified = evaluate_scoring_move(game.board, rack, move, _is_word)
+            certified = evaluate_scoring_move(
+                game.board, rack, move, authority=_AUTHORITY
+            )
             assert certified.ok, f"{context}: selected move failed Collins certification"
             assert certified.total_score > 0, context
             assert game.play_move(move) == certified.total_score, context

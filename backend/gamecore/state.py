@@ -6,6 +6,7 @@ from typing import Any, Literal, TypedDict
 
 from .board import Board
 from .tiles import TileBag
+from .types import BLANK_TOKEN
 
 
 class BlankPos(TypedDict):
@@ -108,10 +109,14 @@ def build_save_state_dict(
         row: list[str | None] = []
         for c in range(15):
             cell = board.cells[r][c]
-            if getattr(cell, "premium_used", False):
+            if cell.premium_used:
                 premium_used.append({"row": r, "col": c})
-            if cell.letter:
-                row.append(cell.letter)
+            realized = cell.realized_token
+            if realized is not None:
+                # ⛔ SAVE-FILE SCHEMA UNCHANGED: the grid still carries the
+                # REALIZED token and blank identity still travels in the sidecar
+                # list. Only the in-memory cell was inverted.
+                row.append(realized)
                 if cell.is_blank:
                     blanks.append({"row": r, "col": c})
             else:
@@ -162,12 +167,16 @@ def restore_board_from_save(state: dict[str, Any], premiums_path: str) -> Board:
                 continue
             if not isinstance(cell_val, str):
                 raise ValueError("schema 4 cell must be a token string or empty")
-            board.cells[r][c].letter = cell_val
-            board.cells[r][c].is_blank = False
+            # The saved grid holds the REALIZED token; the sidecar below decides
+            # which of those squares was physically a blank.
+            board.cells[r][c].token = cell_val
+            board.cells[r][c].blank_as = None
     for pos in state.get("blanks", []):
         rr, cc = pos["row"], pos["col"]
-        if board.cells[rr][cc].letter:
-            board.cells[rr][cc].is_blank = True
+        cell = board.cells[rr][cc]
+        if cell.token is not None:
+            cell.blank_as = cell.token
+            cell.token = BLANK_TOKEN
     for pos in state.get("premium_used", []):
         rr, cc = pos["row"], pos["col"]
         board.cells[rr][cc].premium_used = True

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-
 import pytest
 
 from gamecore.assets import get_assets_path, get_premiums_path
@@ -25,104 +23,103 @@ from gamecore.move_search import (
     find_ranked_scoring_moves,
 )
 from gamecore.types import Placement
+from gamecore.word_authority import WordAuthority
 
 _DICT_PATH = get_assets_path() / "dicts" / "collins2019.txt"
 
 
 @pytest.fixture(scope="module")
-def dictionary() -> tuple[Callable[[str], bool], Callable[[str], bool]]:
-    index = load_prefix_index(_DICT_PATH)
+def authority() -> WordAuthority:
+    """Migrated fixture: the two injected callables became the one authority.
 
-    def is_word(word: str) -> bool:
-        folded = word.strip().casefold()
-        if len(folded) < 2 or not folded.isascii() or not folded.isalpha():
-            return False
-        return index.contains(folded)
-
-    return is_word, index.has_prefix
+    English tiles are all ASCII letters, so dropping the fixture's own
+    `isascii` clause cannot change a verdict reachable from an English rack.
+    """
+    return WordAuthority.from_index(load_prefix_index(_DICT_PATH))
 
 
 def _board(*cells: tuple[int, int, str]) -> Board:
     board = Board(get_premiums_path())
     for row, col, letter in cells:
-        board.cells[row][col].letter = letter
+        board.cells[row][col].token = letter
     return board
 
 
 def test_prefix_index_prunes_missing_and_keeps_real_prefixes(
-    dictionary: tuple[Callable[[str], bool], Callable[[str], bool]],
+    authority: WordAuthority,
 ) -> None:
-    _is_word, has_prefix = dictionary
-    assert has_prefix("AT")
-    assert has_prefix("at")
-    assert not has_prefix("QZZZ")
-    assert has_prefix("")
+    assert authority.has_prefix("AT")
+    assert authority.has_prefix("at")
+    assert not authority.has_prefix("QZZZ")
+    assert authority.has_prefix("")
 
 
 def test_first_move_horizontal_and_vertical_through_center(
-    dictionary: tuple[Callable[[str], bool], Callable[[str], bool]],
+    authority: WordAuthority,
 ) -> None:
-    is_word, has_prefix = dictionary
     board = _board()
-    result = find_legal_scoring_move(board, ["A", "T"], is_word, has_prefix)
+    result = find_legal_scoring_move(board, ["A", "T"], authority=authority)
     assert result.status == "found"
     assert result.complete is True
     assert result.witness is not None
     cells = {(p.row, p.col) for p in result.witness}
     assert (7, 7) in cells
-    legality = evaluate_scoring_move(board, ["A", "T"], result.witness, is_word)
+    legality = evaluate_scoring_move(
+        board, ["A", "T"], result.witness, authority=authority
+    )
     assert legality.ok
     assert legality.total_score == result.total_score
     assert set(legality.words) == set(result.words)
 
-    vertical = find_legal_scoring_move(board, ["A", "T"], is_word, has_prefix)
+    vertical = find_legal_scoring_move(board, ["A", "T"], authority=authority)
     assert vertical.status == "found"
     assert vertical.witness == result.witness
 
 
 def test_connected_move_uses_fixed_board_letters_and_crosses(
-    dictionary: tuple[Callable[[str], bool], Callable[[str], bool]],
+    authority: WordAuthority,
 ) -> None:
-    is_word, has_prefix = dictionary
     board = _board((7, 7, "A"), (7, 8, "T"))
-    result = find_legal_scoring_move(board, ["S"], is_word, has_prefix)
+    result = find_legal_scoring_move(board, ["S"], authority=authority)
     assert result.status == "found"
     assert result.witness is not None
-    legality = evaluate_scoring_move(board, ["S"], result.witness, is_word)
+    legality = evaluate_scoring_move(board, ["S"], result.witness, authority=authority)
     assert legality.ok
-    assert all(is_word(word) for word in result.words)
+    assert all(authority.accepts_word_query(word) for word in result.words)
 
 
 def test_occupied_cells_cannot_be_overwritten(
-    dictionary: tuple[Callable[[str], bool], Callable[[str], bool]],
+    authority: WordAuthority,
 ) -> None:
-    is_word, has_prefix = dictionary
     board = _board((7, 7, "A"), (7, 8, "T"))
     result = evaluate_scoring_move(
         board,
         ["A", "T"],
         (Placement(7, 7, "Q"), Placement(7, 8, "I")),
-        is_word,
+        authority=authority,
     )
     assert not result.ok
     assert result.reason_code == "occupied"
 
 
 def test_duplicate_letters_and_blank_as_duplicate_trap(
-    dictionary: tuple[Callable[[str], bool], Callable[[str], bool]],
+    authority: WordAuthority,
 ) -> None:
-    is_word, has_prefix = dictionary
     board = _board()
-    two_a = find_legal_scoring_move(board, ["A", "A"], is_word, has_prefix)
+    two_a = find_legal_scoring_move(board, ["A", "A"], authority=authority)
     assert two_a.status == "found"
     assert two_a.witness is not None
-    assert evaluate_scoring_move(board, ["A", "A"], two_a.witness, is_word).ok
+    assert evaluate_scoring_move(
+        board, ["A", "A"], two_a.witness, authority=authority
+    ).ok
 
-    blank_result = find_legal_scoring_move(board, ["?", "T"], is_word, has_prefix)
+    blank_result = find_legal_scoring_move(board, ["?", "T"], authority=authority)
     assert blank_result.status == "found"
     assert blank_result.witness is not None
     assert any(p.letter == "?" for p in blank_result.witness)
-    assert evaluate_scoring_move(board, ["?", "T"], blank_result.witness, is_word).ok
+    assert evaluate_scoring_move(
+        board, ["?", "T"], blank_result.witness, authority=authority
+    ).ok
 
     trap = evaluate_scoring_move(
         board,
@@ -131,7 +128,7 @@ def test_duplicate_letters_and_blank_as_duplicate_trap(
             Placement(7, 7, "A"),
             Placement(7, 8, "A"),
         ),
-        is_word,
+        authority=authority,
     )
     assert not trap.ok
     assert trap.reason_code == REASON_RACK_MISMATCH
@@ -143,48 +140,46 @@ def test_duplicate_letters_and_blank_as_duplicate_trap(
             Placement(7, 7, "A"),
             Placement(7, 8, "?", blank_as="A"),
         ),
-        is_word,
+        authority=authority,
     )
     assert legal_blank_duplicate.ok
 
 
 def test_blank_as_required_and_forbidden(
-    dictionary: tuple[Callable[[str], bool], Callable[[str], bool]],
+    authority: WordAuthority,
 ) -> None:
-    is_word, _has_prefix = dictionary
     board = _board()
     missing = evaluate_scoring_move(
         board,
         ["?"],
         (Placement(7, 7, "?"), Placement(7, 8, "A")),
-        is_word,
+        authority=authority,
     )
     assert not missing.ok
     extra = evaluate_scoring_move(
         board,
         ["A", "T"],
         (Placement(7, 7, "A", blank_as="T"), Placement(7, 8, "T")),
-        is_word,
+        authority=authority,
     )
     assert not extra.ok
     assert extra.reason_code == REASON_INVALID_BLANK
 
 
 def test_found_none_and_injected_indeterminate(
-    dictionary: tuple[Callable[[str], bool], Callable[[str], bool]],
+    authority: WordAuthority,
 ) -> None:
-    is_word, has_prefix = dictionary
     board = _board()
-    found = find_legal_scoring_move(board, ["A", "T"], is_word, has_prefix)
+    found = find_legal_scoring_move(board, ["A", "T"], authority=authority)
     assert found.status == "found"
 
-    none = find_legal_scoring_move(board, ["Q"], is_word, has_prefix)
+    none = find_legal_scoring_move(board, ["Q"], authority=authority)
     assert none.status == "none"
     assert none.complete is True
     assert none.witness is None
 
     capped = find_legal_scoring_move(
-        board, ["A", "T", "E", "R", "S", "I", "N"], is_word, has_prefix, max_nodes=1
+        board, ["A", "T", "E", "R", "S", "I", "N"], authority=authority, max_nodes=1
     )
     assert capped.status == "indeterminate"
     assert capped.complete is False
@@ -192,26 +187,24 @@ def test_found_none_and_injected_indeterminate(
 
 
 def test_phantom_rack_rejected(
-    dictionary: tuple[Callable[[str], bool], Callable[[str], bool]],
+    authority: WordAuthority,
 ) -> None:
-    is_word, _has_prefix = dictionary
     board = _board()
     result = evaluate_scoring_move(
         board,
         ["A"],
         (Placement(7, 7, "A"), Placement(7, 8, "T")),
-        is_word,
+        authority=authority,
     )
     assert not result.ok
     assert result.reason_code == REASON_RACK_MISMATCH
 
 
 def test_board_boundaries(
-    dictionary: tuple[Callable[[str], bool], Callable[[str], bool]],
+    authority: WordAuthority,
 ) -> None:
-    is_word, has_prefix = dictionary
     board = _board((0, 0, "Q"), (0, 1, "I"))
-    result = find_legal_scoring_move(board, ["S"], is_word, has_prefix)
+    result = find_legal_scoring_move(board, ["S"], authority=authority)
     assert result.status in {"found", "none"}
     assert result.status != "indeterminate"
     if result.status == "found":
@@ -219,7 +212,9 @@ def test_board_boundaries(
         for placement in result.witness:
             assert 0 <= placement.row <= 14
             assert 0 <= placement.col <= 14
-        assert evaluate_scoring_move(board, ["S"], result.witness, is_word).ok
+        assert evaluate_scoring_move(
+            board, ["S"], result.witness, authority=authority
+        ).ok
 
 
 def _board_snapshot(board: Board) -> tuple[tuple[object, ...], ...]:
@@ -230,18 +225,16 @@ def _board_snapshot(board: Board) -> tuple[tuple[object, ...], ...]:
 
 
 def test_ranked_search_preserves_first_witness_identity_and_board(
-    dictionary: tuple[Callable[[str], bool], Callable[[str], bool]],
+    authority: WordAuthority,
 ) -> None:
-    is_word, has_prefix = dictionary
     board = _board()
     before = _board_snapshot(board)
 
-    witness = find_legal_scoring_move(board, ["A", "T"], is_word, has_prefix)
+    witness = find_legal_scoring_move(board, ["A", "T"], authority=authority)
     ranked = find_ranked_scoring_moves(
         board,
         ["A", "T"],
-        is_word,
-        has_prefix,
+        authority=authority,
         bag_count=86,
         max_elapsed_ms=10_000,
     )
@@ -254,15 +247,16 @@ def test_ranked_search_preserves_first_witness_identity_and_board(
     assert ranked.complete is True
     assert _board_snapshot(board) == before
     for candidate in ranked.candidates:
-        certified = evaluate_scoring_move(board, ["A", "T"], candidate.placements, is_word)
+        certified = evaluate_scoring_move(
+            board, ["A", "T"], candidate.placements, authority=authority
+        )
         assert certified.ok
         assert certified.total_score == candidate.total_score
 
 
 def test_ranked_search_is_deterministic_and_immediate_score_dominates(
-    dictionary: tuple[Callable[[str], bool], Callable[[str], bool]],
+    authority: WordAuthority,
 ) -> None:
-    is_word, has_prefix = dictionary
     board = _board()
     kwargs = {
         "bag_count": 86,
@@ -270,10 +264,10 @@ def test_ranked_search_is_deterministic_and_immediate_score_dominates(
         "max_elapsed_ms": 10_000,
     }
     first = find_ranked_scoring_moves(
-        board, list("QUIZERS"), is_word, has_prefix, **kwargs
+        board, list("QUIZERS"), authority=authority, **kwargs
     )
     second = find_ranked_scoring_moves(
-        board, list("QUIZERS"), is_word, has_prefix, **kwargs
+        board, list("QUIZERS"), authority=authority, **kwargs
     )
 
     assert first.status == second.status
@@ -283,7 +277,7 @@ def test_ranked_search_is_deterministic_and_immediate_score_dominates(
     assert first.candidates == second.candidates
     assert first.candidates[0].total_score == 66
     assert first.candidates[0].total_score > find_legal_scoring_move(
-        board, list("QUIZERS"), is_word, has_prefix
+        board, list("QUIZERS"), authority=authority
     ).total_score
     assert [candidate.total_score for candidate in first.candidates] == sorted(
         (candidate.total_score for candidate in first.candidates), reverse=True
@@ -291,14 +285,12 @@ def test_ranked_search_is_deterministic_and_immediate_score_dominates(
 
 
 def test_ranked_search_canonical_dedupe_keeps_blank_identity(
-    dictionary: tuple[Callable[[str], bool], Callable[[str], bool]],
+    authority: WordAuthority,
 ) -> None:
-    is_word, has_prefix = dictionary
     result = find_ranked_scoring_moves(
         _board(),
         ["A", "?"],
-        is_word,
-        has_prefix,
+        authority=authority,
         bag_count=86,
         top_k=MAX_RANKED_TOP_K,
         max_nodes=1_000_000,
@@ -317,16 +309,14 @@ def test_ranked_search_canonical_dedupe_keeps_blank_identity(
 
 
 def test_ranked_status_contract_for_found_none_and_caps(
-    dictionary: tuple[Callable[[str], bool], Callable[[str], bool]],
+    authority: WordAuthority,
 ) -> None:
-    is_word, has_prefix = dictionary
     board = _board()
 
     incomplete_found = find_ranked_scoring_moves(
         board,
         ["A", "T"],
-        is_word,
-        has_prefix,
+        authority=authority,
         bag_count=86,
         max_nodes=4,
         max_elapsed_ms=10_000,
@@ -338,8 +328,7 @@ def test_ranked_status_contract_for_found_none_and_caps(
     exhaustive_none = find_ranked_scoring_moves(
         board,
         ["Q"],
-        is_word,
-        has_prefix,
+        authority=authority,
         bag_count=86,
         max_elapsed_ms=10_000,
     )
@@ -349,8 +338,7 @@ def test_ranked_status_contract_for_found_none_and_caps(
     capped_empty = find_ranked_scoring_moves(
         board,
         list("QUIZERS"),
-        is_word,
-        has_prefix,
+        authority=authority,
         bag_count=86,
         max_nodes=1,
         max_elapsed_ms=10_000,
@@ -361,9 +349,8 @@ def test_ranked_status_contract_for_found_none_and_caps(
 
 
 def test_ranked_search_has_fixed_caps_and_hard_top_k_limit(
-    dictionary: tuple[Callable[[str], bool], Callable[[str], bool]],
+    authority: WordAuthority,
 ) -> None:
-    is_word, has_prefix = dictionary
     assert DEFAULT_MAX_ELAPSED_MS == 2000
     assert DEFAULT_RANKED_TOP_K == 8
     assert MAX_RANKED_TOP_K == 20
@@ -374,8 +361,7 @@ def test_ranked_search_has_fixed_caps_and_hard_top_k_limit(
     result = find_ranked_scoring_moves(
         _board(),
         list("QUIZERS"),
-        is_word,
-        has_prefix,
+        authority=authority,
         bag_count=86,
         top_k=999,
         max_nodes=1_000_000,
@@ -387,18 +373,16 @@ def test_ranked_search_has_fixed_caps_and_hard_top_k_limit(
 
 
 def test_ranked_midgame_prefers_stronger_collins_move(
-    dictionary: tuple[Callable[[str], bool], Callable[[str], bool]],
+    authority: WordAuthority,
 ) -> None:
-    is_word, has_prefix = dictionary
     board = _board((7, 7, "A"), (7, 8, "T"))
     rack = list("QUIZERS")
 
-    witness = find_legal_scoring_move(board, rack, is_word, has_prefix)
+    witness = find_legal_scoring_move(board, rack, authority=authority)
     ranked = find_ranked_scoring_moves(
         board,
         rack,
-        is_word,
-        has_prefix,
+        authority=authority,
         bag_count=50,
         max_nodes=1_000_000,
         max_elapsed_ms=10_000,

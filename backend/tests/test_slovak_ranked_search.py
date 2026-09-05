@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import unicodedata
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import pytest
 
-from game.services import _word_passes_dictionary
 from gamecore.assets import get_premiums_path
 from gamecore.board import Board
 from gamecore.fastdict import load_prefix_index
@@ -17,6 +16,7 @@ from gamecore.move_search import RankedSearchResult, find_ranked_scoring_moves
 from gamecore.tiles import get_tile_points
 from gamecore.types import Placement
 from gamecore.variant_store import VariantDefinition, load_two_tile_words, load_variant
+from gamecore.word_authority import WordAuthority
 
 _REJECTED_CROSSES = frozenset({"ou", "am"})
 
@@ -25,9 +25,12 @@ _REJECTED_CROSSES = frozenset({"ou", "am"})
 class _SlovakSearch:
     variant: VariantDefinition
     allowlist: frozenset[str]
-    is_word: Callable[[str], bool]
-    has_prefix: Callable[[str], bool]
+    authority: WordAuthority
     letters: frozenset[str]
+
+    def is_word(self, word: str) -> bool:
+        """Advisory string query, for the assertions below only."""
+        return self.authority.accepts_word_query(word)
 
 
 @pytest.fixture(scope="module")
@@ -36,25 +39,12 @@ def slovak_search() -> _SlovakSearch:
     index = load_prefix_index(variant.dictionary_path)
     allowlist = load_two_tile_words(variant)
     assert allowlist is not None
-
-    def is_word(word: str) -> bool:
-        return _word_passes_dictionary(
-            index.contains,
-            word,
-            two_letter_allowlist=allowlist,
-        )
-
-    def has_prefix(prefix: str) -> bool:
-        if index.has_prefix(prefix):
-            return True
-        folded = unicodedata.normalize("NFC", prefix).casefold()
-        return len(folded) == 2 and folded in allowlist
-
+    authority = WordAuthority.for_variant(variant)
+    assert authority.contains_main == index.contains
     return _SlovakSearch(
         variant=variant,
         allowlist=allowlist,
-        is_word=is_word,
-        has_prefix=has_prefix,
+        authority=authority,
         letters=frozenset(variant.playable_letters),
     )
 
@@ -98,14 +88,14 @@ def _has_diacritic_placement(payload: Sequence[dict[str, object]]) -> bool:
 def _auto_row7_board() -> Board:
     board = Board(get_premiums_path())
     for col, letter in enumerate("AUTO", start=5):
-        board.cells[7][col].letter = letter
+        board.cells[7][col].token = letter
     return board
 
 
 def _hook_board(*cells: tuple[int, int, str]) -> Board:
     board = Board(get_premiums_path())
     for row, col, letter in cells:
-        board.cells[row][col].letter = letter
+        board.cells[row][col].token = letter
     return board
 
 
@@ -117,8 +107,7 @@ def _ranked(
     return find_ranked_scoring_moves(
         board,
         rack,
-        search.is_word,
-        search.has_prefix,
+        authority=search.authority,
         bag_count=100,
         tile_points=get_tile_points("slovak"),
         blank_letters=search.variant.playable_letters,
@@ -192,13 +181,15 @@ def test_slovak_ranked_search_rejects_ou_and_am_crosses_without_scoring(
     assert slovak_search.is_word("ou") is False
     assert slovak_search.is_word("mi") is True
     assert slovak_search.is_word("am") is False
+    assert slovak_search.authority.accepts_tokens(("U", "M")) is True
+    assert slovak_search.authority.accepts_tokens(("O", "U")) is False
 
     ou_board = _hook_board((6, 7, "O"))
     ou_move = evaluate_scoring_move(
         ou_board,
         ["U", "M"],
         (Placement(7, 7, "U"), Placement(7, 8, "M")),
-        slovak_search.is_word,
+        authority=slovak_search.authority,
         letters=slovak_search.letters,
         variant="slovak",
     )
@@ -211,7 +202,7 @@ def test_slovak_ranked_search_rejects_ou_and_am_crosses_without_scoring(
         am_board,
         ["M", "I"],
         (Placement(7, 7, "M"), Placement(7, 8, "I")),
-        slovak_search.is_word,
+        authority=slovak_search.authority,
         letters=slovak_search.letters,
         variant="slovak",
     )

@@ -10,7 +10,6 @@ import hashlib
 import random
 import unicodedata
 import uuid
-from collections.abc import Callable
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, Literal
@@ -49,10 +48,10 @@ from gamecore.types import Placement
 from gamecore.variant_store import (
     VariantDefinition,
     list_installed_variants,
-    load_two_tile_words,
     load_variant,
     normalise_letter,
 )
+from gamecore.word_authority import WordAuthority
 
 from .models import ChatMessage, ConsumedWsTicket, GameSession, Move, PlayerSlot, default_structured_board
 from . import realtime
@@ -115,37 +114,14 @@ def _get_prefix_index(session: GameSession) -> PrefixIndex:
     return load_prefix_index(load_variant(session.variant_slug).dictionary_path)
 
 
-def _get_dictionary(session: GameSession) -> Callable[[str], bool]:
-    return _get_prefix_index(session).contains
+def _session_authority(session: GameSession) -> WordAuthority:
+    """The ONE word authority for this session's variant.
 
-
-def _is_word(session: GameSession, word: str) -> bool:
-    return _word_checker(session)(word)
-
-
-def _word_checker(session: GameSession) -> Callable[[str], bool]:
-    contains = _get_dictionary(session)
-    allowlist = load_two_tile_words(_session_variant(session))
-
-    def check(word: str) -> bool:
-        return _word_passes_dictionary(contains, word, two_letter_allowlist=allowlist)
-
-    return check
-
-
-def _prefix_checker(session: GameSession) -> Callable[[str], bool]:
-    index = _get_prefix_index(session)
-    allowlist = load_two_tile_words(_session_variant(session))
-
-    def check(prefix: str) -> bool:
-        if index.has_prefix(prefix):
-            return True
-        if allowlist is None:
-            return False
-        folded = unicodedata.normalize("NFC", prefix).casefold()
-        return len(folded) == 2 and folded in allowlist
-
-    return check
+    Resolve it once per operation and pass the same object to every search and
+    every evaluator call, so no two decisions in one turn can consult different
+    lexicons.
+    """
+    return WordAuthority.for_variant(_session_variant(session))
 
 
 def _session_variant(session: GameSession) -> VariantDefinition:
@@ -206,22 +182,6 @@ def _stored_ai_metadata(
     return {} if ai_metadata is None else ai_metadata
 
 
-def _word_passes_dictionary(
-    contains: Callable[[str], bool],
-    word: str,
-    *,
-    two_letter_allowlist: frozenset[str] | None = None,
-) -> bool:
-    w = unicodedata.normalize("NFC", word.strip()).casefold()
-    if len(w) < 2:
-        return False
-    if not w.isalpha():
-        return False
-    if two_letter_allowlist is not None and len(w) == 2:
-        return w in two_letter_allowlist
-    return bool(contains(w))
-
-
 def _board_from_session(session: GameSession) -> Board:
     board = Board(str(settings.PREMIUMS_PATH))
     grid = session.board_state
@@ -247,11 +207,11 @@ def _board_from_session(session: GameSession) -> Board:
                     else None
                 )
                 if blank_as:
-                    board.cells[r][c].letter = blank_as
-                    board.cells[r][c].is_blank = True
+                    board.cells[r][c].token = "?"
+                    board.cells[r][c].blank_as = blank_as
                 elif token:
-                    board.cells[r][c].letter = token
-                    board.cells[r][c].is_blank = False
+                    board.cells[r][c].token = token
+                    board.cells[r][c].blank_as = None
     for pos in session.premium_used or []:
         board.cells[pos["row"]][pos["col"]].premium_used = True
     return board
@@ -697,8 +657,7 @@ def _probe_ai_playability(
         return find_legal_scoring_move(
             board,
             rack,
-            is_word=_word_checker(session),
-            has_prefix=_prefix_checker(session),
+            authority=_session_authority(session),
             blank_letters=variant.playable_letters,
             variant=session.variant_slug,
             **kwargs,
@@ -793,8 +752,7 @@ def _probe_ai_ranked_candidates(
         return find_ranked_scoring_moves(
             board,
             rack,
-            is_word=_word_checker(session),
-            has_prefix=_prefix_checker(session),
+            authority=_session_authority(session),
             bag_count=_bag_remaining_count(session),
             tile_points=get_tile_points(session.variant_slug),
             blank_letters=variant.playable_letters,
@@ -861,13 +819,16 @@ def _submit_move_locked(
     board = _board_from_session(session)
     rack = list(player_slot.rack) if isinstance(player_slot.rack, list) else []
     placements = _placements_from_data(placements_data)
+    # ONE authority for this whole turn: the AI evaluator below and the human
+    # verdict loop further down must not consult two different lexicons.
+    authority = _session_authority(session)
 
     if player_slot.is_ai:
         legality = evaluate_scoring_move(
             board,
             rack,
             placements,
-            _word_checker(session),
+            authority=authority,
             letters=_session_letters(session),
             variant=session.variant_slug,
         )
@@ -905,8 +866,14 @@ def _submit_move_locked(
         return {"ok": False, "error": "No words formed"}
 
     words_coords = [(word.word, word.letters) for word in words_found]
-    is_word = _word_checker(session)
-    invalid_words = [word for word, _ in words_coords if not is_word(word)]
+    # ⭐ THE SIXTH AUTHORITY SITE. This is the HUMAN persisted-move verdict loop
+    # and it never went through the AI evaluator, so an inventory of
+    # `evaluate_scoring_move` call sites does not see it. Only the VERDICT moves
+    # to the authority: the surrounding zero-score and error behaviour of the
+    # human path is unchanged on purpose.
+    invalid_words = [
+        word.word for word in words_found if not authority.accepts_formed_word(word)
+    ]
     if invalid_words:
         return {
             "ok": False,
@@ -1654,7 +1621,7 @@ def validate_move_for_ai(
         board,
         rack,
         placements,
-        _word_checker(session),
+        authority=_session_authority(session),
         letters=_session_letters(session),
         variant=session.variant_slug,
     )
@@ -1688,11 +1655,19 @@ def validate_move_for_ai(
 
 
 def validate_words(*, game_id: str, user_id: int, words: list[str]) -> list[dict[str, Any]]:
+    """Tier-3 ADVISORY string query. ⛔ Not authority.
+
+    These words arrive with NO PLACEMENT EVIDENCE, so they are decided by
+    ``WordAuthority.accepts_word_query`` — the same trimming, normalization,
+    short/nonalphabetic rejection and lexical two-letter behaviour as before,
+    and the same response shape. No scoring path and no search certification
+    may use that method: a bare string must never be able to authorize a move.
+    """
     session, _player_slot = _load_session_for_user(game_id=game_id, user_id=user_id)
-    is_word = _word_checker(session)
+    authority = _session_authority(session)
     source = _lexicon_id(_session_variant(session))
     return [
-        {"word": word, "valid": is_word(word), "source": source}
+        {"word": word, "valid": authority.accepts_word_query(word), "source": source}
         for word in words
     ]
 

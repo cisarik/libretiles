@@ -125,8 +125,8 @@ class AtomicTokenPersistenceTests(TestCase):
         session, _slot, _user = _session_with_slot(username="p3-roundtrip")
         synthetic = _synthetic_digraph_variant()
         board = Board(str(settings.PREMIUMS_PATH))
-        board.cells[3][4].letter = "SZ"
-        board.cells[3][4].is_blank = False
+        board.cells[3][4].token = "SZ"
+        board.cells[3][4].blank_as = None
         _persist_board(session, board)
         _persist_bag(session, TileBag(seed=1, tiles=["SZ", "A"], variant=synthetic))
         session.save()
@@ -159,10 +159,10 @@ class AtomicTokenPersistenceTests(TestCase):
         session, _slot, _user = _session_with_slot(username="p4-blank-cs")
         synthetic = _synthetic_digraph_variant()
         board = Board()
-        board.cells[2][2].letter = "CS"
-        board.cells[2][2].is_blank = True
-        board.cells[2][3].letter = "A"
-        board.cells[2][3].is_blank = False
+        board.cells[2][2].token = "?"
+        board.cells[2][2].blank_as = "CS"
+        board.cells[2][3].token = "A"
+        board.cells[2][3].blank_as = None
         _persist_board(session, board)
         session.save()
 
@@ -292,13 +292,11 @@ class AtomicTokenPersistenceTests(TestCase):
         # change. Hungarian is the first real consumer and lands later.
         session, slot, user = _session_with_slot(username="f1-wire-lossless")
         board = Board(str(settings.PREMIUMS_PATH))
-        board.cells[7][7].letter = "SZ"
-        board.cells[7][7].is_blank = False
-        board.cells[7][8].letter = "DZS"
-        board.cells[7][8].is_blank = False
+        board.cells[7][7].token = "SZ"
+        board.cells[7][8].token = "DZS"
         # Placed as a blank: persisted token "?", blank_as "SZ".
-        board.cells[8][7].letter = "SZ"
-        board.cells[8][7].is_blank = True
+        board.cells[8][7].token = "?"
+        board.cells[8][7].blank_as = "SZ"
         _persist_board(session, board)
         session.save()
         session.refresh_from_db()

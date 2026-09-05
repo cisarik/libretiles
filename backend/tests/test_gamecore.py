@@ -293,15 +293,17 @@ class TestDictionary:
 class TestLegality:
     def test_phantom_rack_and_geometry(self) -> None:
         from gamecore.legality import evaluate_scoring_move
+        from gamecore.word_authority import WordAuthority
 
         board = Board(get_premiums_path())
-        def is_word(word: str) -> bool:
-            return word.upper() in {"AT", "TA"}
+        # Migrated fixture, identical expectations: the same two-word lexicon,
+        # expressed as the one authority instead of an injected callable.
+        authority = WordAuthority.from_words(("AT", "TA"))
         phantom = evaluate_scoring_move(
             board,
             ["A"],
             [Placement(7, 7, "A"), Placement(7, 8, "T")],
-            is_word,
+            authority=authority,
         )
         assert not phantom.ok
         assert phantom.reason_code == "rack_mismatch"
@@ -310,7 +312,7 @@ class TestLegality:
             board,
             ["A", "T"],
             [Placement(7, 7, "A"), Placement(7, 8, "T")],
-            is_word,
+            authority=authority,
         )
         assert legal.ok
         assert legal.total_score > 0
@@ -320,7 +322,7 @@ class TestLegality:
             board,
             ["A", "T"],
             [Placement(7, 7, "A"), Placement(8, 8, "T")],
-            is_word,
+            authority=authority,
         )
         assert not diagonal.ok
         assert diagonal.reason_code == "not_in_line"

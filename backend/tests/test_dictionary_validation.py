@@ -11,6 +11,8 @@ from django.conf import settings
 from gamecore.board import Board
 from gamecore.fastdict import load_dictionary, load_prefix_index
 from gamecore.types import Placement
+from gamecore.variant_store import load_variant
+from gamecore.word_authority import WordAuthority
 
 _BACKEND_ROOT = Path(__file__).resolve().parent.parent
 _PRIMARY_DICT = settings.PRIMARY_DICTIONARY_PATH
@@ -70,29 +72,40 @@ def test_prefix_index_matches_collins_membership(contains: Callable[[str], bool]
     assert not index.has_prefix("qzzz")
 
 
-def test_word_passes_dictionary_english_lock(contains: Callable[[str], bool]) -> None:
-    from game.services import _word_passes_dictionary
+def test_word_query_english_lock(contains: Callable[[str], bool]) -> None:
+    # Migrated fixture, identical expectations: the advisory string-query path
+    # moved from `services._word_passes_dictionary` onto the one authority.
+    authority = WordAuthority.for_variant(load_variant("english"))
+    assert authority.accepts_word_query("qi") is True
+    assert authority.accepts_word_query("za") is True
+    assert authority.accepts_word_query("fe") is True
+    assert authority.accepts_word_query("qlet") is False
+    assert contains("qi") is True
+    assert contains("qlet") is False
 
-    assert _word_passes_dictionary(contains, "qi") is True
-    assert _word_passes_dictionary(contains, "za") is True
-    assert _word_passes_dictionary(contains, "fe") is True
-    assert _word_passes_dictionary(contains, "qlet") is False
 
-
-def test_word_passes_dictionary_rejects_short_and_non_alpha(
+def test_word_query_rejects_short_and_non_alpha(
     contains: Callable[[str], bool],
 ) -> None:
-    from game.services import _word_passes_dictionary
+    authority = WordAuthority.for_variant(load_variant("english"))
+    assert authority.accepts_word_query("a") is False
+    assert authority.accepts_word_query("hi!") is False
+    assert authority.accepts_word_query("12") is False
+    assert authority.accepts_word_query("") is False
+    assert contains("a") is False
 
-    assert _word_passes_dictionary(contains, "a") is False
-    assert _word_passes_dictionary(contains, "hi!") is False
-    assert _word_passes_dictionary(contains, "12") is False
-    assert _word_passes_dictionary(contains, "") is False
 
-
-def test_word_passes_dictionary_has_no_isascii() -> None:
+def test_word_query_has_no_isascii() -> None:
     import inspect
 
-    from game.services import _word_passes_dictionary
+    assert "isascii" not in inspect.getsource(WordAuthority.accepts_word_query)
+    assert "isascii" not in inspect.getsource(WordAuthority.accepts_tokens)
 
-    assert "isascii" not in inspect.getsource(_word_passes_dictionary)
+
+def test_formed_word_authority_is_physical_not_lexical() -> None:
+    """A string query is NOT authority: only a token sequence is."""
+    authority = WordAuthority.for_variant(load_variant("english"))
+    assert authority.accepts_word_query("qi") is True
+    assert authority.accepts_tokens(("Q", "I")) is True
+    # One tile is never a complete word, whatever it spells.
+    assert authority.accepts_tokens(("QI",)) is False

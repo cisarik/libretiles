@@ -1,14 +1,15 @@
 """Shared rack-aware legality evaluator.
 
 Used by AI validation, AI submission, and witness certification so those
-paths cannot drift apart. Pure Python; the caller supplies the dictionary
-predicate (Collins 2019 via the existing loader).
+paths cannot drift apart. Pure Python; the caller supplies the ONE
+``WordAuthority`` that decides word legality over physical tile sequences.
+There is no bare ``is_word`` predicate and no fallback branch.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from collections.abc import Sequence
+from dataclasses import dataclass, field
 
 from .board import BOARD_SIZE, Board
 from .rules import (
@@ -19,7 +20,7 @@ from .rules import (
     placements_in_line,
 )
 from .scoring import score_words
-from .types import Placement, ScoreBreakdown
+from .types import Placement, ScoreBreakdown, WordFound
 from .word_authority import WordAuthority
 
 # ASCII A–Z default for callers that pass no `letters`. This is not a variant
@@ -44,6 +45,9 @@ REASON_GAPS = "gaps"
 REASON_NO_WORDS = "no_words"
 REASON_INVALID_WORD = "invalid_word"
 REASON_NON_SCORING = "non_scoring"
+# New with the cell inversion: a persisted square whose token/blank_as pair
+# cannot be evaluated. Every reason string above is unchanged.
+REASON_MALFORMED_BOARD = "malformed_board_cell"
 
 
 @dataclass(frozen=True)
@@ -61,6 +65,10 @@ class LegalityResult:
     words: tuple[str, ...] = ()
     word_results: tuple[WordVerdict, ...] = ()
     breakdowns: tuple[ScoreBreakdown, ...] = ()
+    # Complete formed words WITH their tile evidence, retained after the
+    # temporary placements are cleared so diagnostics can classify physical
+    # token sequences instead of reverse-segmenting a lexical string.
+    words_found: tuple[WordFound, ...] = field(default=())
 
 
 def _fail(code: str, reason: str) -> LegalityResult:
@@ -72,7 +80,7 @@ def _is_board_int(value: object) -> bool:
 
 
 def board_has_letters(board: Board) -> bool:
-    return any(cell.letter for row in board.cells for cell in row)
+    return any(cell.is_occupied for row in board.cells for cell in row)
 
 
 def rack_covers_placements(rack: Sequence[str], placements: Sequence[Placement]) -> bool:
@@ -105,24 +113,30 @@ def evaluate_scoring_move(
     board: Board,
     rack: Sequence[str],
     placements: Sequence[Placement],
-    is_word: Callable[[str], bool],
     *,
+    authority: WordAuthority,
     letters: frozenset[str] | None = None,
     variant: object = None,
-    authority: WordAuthority | None = None,
 ) -> LegalityResult:
     """Return whether `placements` are a legal scoring move for `rack` on `board`.
 
-    When ``authority`` is supplied it decides word legality over ``WordFound``
-    objects, including physical tile length. When absent, the existing
-    ``is_word`` path behaves exactly as today. F2 re-points services and
-    diagnostics at the authority and deletes ``_word_passes_dictionary``.
+    ``authority`` is REQUIRED and is the only thing that decides word legality.
+    It judges complete formed words as PHYSICAL TILE SEQUENCES, so a two-tile
+    word spelled with three code points routes to the two-tile lexicon.
     """
     alphabet = LETTERS if letters is None else letters
     if not placements:
         return _fail(REASON_EMPTY, "Move must contain at least one tile")
     if len(placements) > MAX_PLACEMENTS:
         return _fail(REASON_TOO_MANY, "Move may place at most seven tiles")
+
+    malformed = board.malformed_cells()
+    if malformed:
+        row, col = malformed[0]
+        return _fail(
+            REASON_MALFORMED_BOARD,
+            f"Cell ({row},{col}) holds an unevaluable tile record",
+        )
 
     seen: set[tuple[int, int]] = set()
     for placement in placements:
@@ -153,7 +167,7 @@ def evaluate_scoring_move(
         return _fail(REASON_NOT_IN_LINE, "Tiles must be in a single row or column")
 
     for placement in placements:
-        if board.cells[placement.row][placement.col].letter:
+        if board.cells[placement.row][placement.col].is_occupied:
             return _fail(
                 REASON_OCCUPIED,
                 f"Cell ({placement.row},{placement.col}) is occupied",
@@ -180,15 +194,11 @@ def evaluate_scoring_move(
             return _fail(REASON_NO_WORDS, "No words formed")
 
         words_coords = [(word.word, word.letters) for word in words_found]
-        if authority is not None:
-            word_results = tuple(
-                WordVerdict(word=found.word, valid=authority.accepts_formed_word(found))
-                for found in words_found
-            )
-        else:
-            word_results = tuple(
-                WordVerdict(word=word, valid=is_word(word)) for word, _ in words_coords
-            )
+        word_results = tuple(
+            WordVerdict(word=found.word, valid=authority.accepts_formed_word(found))
+            for found in words_found
+        )
+        retained = tuple(words_found)
         invalid = [verdict.word for verdict in word_results if not verdict.valid]
         if invalid:
             return LegalityResult(
@@ -197,6 +207,7 @@ def evaluate_scoring_move(
                 reason=f"Invalid word(s): {', '.join(invalid)}",
                 words=tuple(verdict.word for verdict in word_results),
                 word_results=word_results,
+                words_found=retained,
             )
 
         total, breakdowns = score_words(board, placed, words_coords, variant=variant)
@@ -211,6 +222,7 @@ def evaluate_scoring_move(
                 words=tuple(verdict.word for verdict in word_results),
                 word_results=word_results,
                 breakdowns=tuple(breakdowns),
+                words_found=retained,
             )
         return LegalityResult(
             ok=True,
@@ -220,6 +232,7 @@ def evaluate_scoring_move(
             words=tuple(verdict.word for verdict in word_results),
             word_results=word_results,
             breakdowns=tuple(breakdowns),
+            words_found=retained,
         )
     finally:
         board.clear_letters(placed)

@@ -77,7 +77,9 @@ npm run build
 | Multiplayer websocket/auth | `backend/game/consumers.py`, `backend/game/routing.py` |
 | Collins 2019 dictionary (Tier 1) | `backend/assets/dicts/collins2019.txt` |
 | Slovak lexicon (hunspell-sk expansion; playable, not SSS-official) + SSS 100 variant | `backend/assets/dicts/slovak.txt`, `backend/assets/variants/slovak.json` |
-| Word validation (lazy load) | `services._get_dictionary()`, `_word_passes_dictionary()` |
+| ONE formed-word authority | `backend/gamecore/word_authority.py` (`WordAuthority.accepts_tokens`) |
+| Session authority resolution | `services._session_authority()` |
+| Canonical board cell (`token` / `blank_as`) | `backend/gamecore/board.py` (`Cell`) |
 | AI stream (SSE) | `frontend/src/app/api/ai/move/route.ts` |
 | OpenRouter client | `frontend/src/lib/openrouter.ts` |
 | NVIDIA NIM client | `frontend/src/lib/nvidia-nim.ts` |
@@ -130,7 +132,11 @@ Every non-English lexicon is reproducible from a pinned upstream commit by its c
 
 ## Word validation (important)
 
-- The **source of truth** for whether a word is valid is the **backend** — `submit_move` and `validate_move_for_ai` must always go through `_word_passes_dictionary()` + Collins 2019.
+- The **source of truth** for whether a word is valid is the **backend**, and since MEC-C1-A there is exactly **ONE** such path: `WordAuthority` in `backend/gamecore/word_authority.py`. `submit_move` and `validate_move_for_ai` both reach it — the AI path through `evaluate_scoring_move(..., authority=...)`, the human persisted-move verdict loop through `WordAuthority.accepts_formed_word`. `services._word_passes_dictionary()` is **deleted**; there is no bare `is_word` callable and no fallback branch.
+- **Legality is decided over PHYSICAL TILE SEQUENCES, never code-point length.** `WordAuthority.accepts_tokens(tokens)` routes a word of exactly **two tiles** to the variant's two-tile lexicon and everything else to the main lexicon. Hungarian `SZ`+`A` and Slovak-style `Á`+`CS` are two tiles and three code points; one `CS` tile is one tile and never a word. `OSAMENIU` stays legal even though it contains `AM`.
+- `WordAuthority.accepts_word_query()` is the **advisory** Tier-3 string path for `/validate-words/` only. It carries no placement evidence, so ⛔ no scoring path and no search certification may call it. `is_lexical_word()` is a permissive search prune and is likewise never final legality — a lexicon entry such as Slovak `AM` that formed-word authority rejects stays rejected.
+- Board squares store `token` plus `blank_as` (`backend/gamecore/board.py`). An assigned blank is `token="?"`, `blank_as=<target>`, and scores **zero**. `letter` and `is_blank` survive as compatibility accessors over those two fields. A malformed occupied record (`"?"` with no assignment) **fails closed** with `malformed_board_cell` before evaluation; it must never read as an empty square.
+- Verdict equivalence with the pre-collapse helper is proven, not assumed: `backend/tests/test_word_authority_parity.py` freezes the baseline helper as a test-only oracle (digest pinned, re-derivable from the baseline git object) and diffs it against the authority over every shipped tile set. ⛔ Do not edit that oracle to follow the implementation.
 - AI **candidates** in the overlay may show invalid attempts (`valid: false`); the final move is always **re-validated** on the server.
 - If someone reports that the “backend accepted” an invalid word: check whether it was an **overlay candidate** vs. a **persisted move**; add a regression test under `backend/tests/`.
 - The dictionary is not copied from `scrabgpt_sk` — maintain it only in `libretiles/backend/assets/dicts/`.

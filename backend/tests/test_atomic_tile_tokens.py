@@ -34,7 +34,7 @@ from gamecore.variant_store import (
     load_two_tile_words,
     load_variant,
 )
-from gamecore.word_authority import WordAuthority
+from gamecore.word_authority import WordAuthority, variant_entry_predicate
 
 _TWO_TILE_SHA256 = "e2587f15c19c9046d013d161a06ba54deab0d05bee9f2dd2ac47c3d151048402"
 _BASELINE_FIRST20 = {
@@ -240,10 +240,24 @@ def test_alphabet_letter_without_tile_is_accepted_on_slovak() -> None:
 # --- 3. L·L canary --------------------------------------------------------------------
 
 
-def test_interpunct_token_loads_places_scores_and_validates(tmp_path: Path) -> None:
+def test_interpunct_token_loads_places_scores_and_validates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     token = "L·L"
     assert token.isalpha() is False
     assert len(token) == 3
+    # ⭐ ON THE AUTHORITY PATH. This used to reach its verdict through an
+    # INJECTED CALLABLE, which bypassed service authority entirely and so could
+    # not prove that a token containing a nonletter survives the real index. The
+    # variant now resolves against a throwaway assets root holding a REAL
+    # temporary lexicon, and `WordAuthority.for_variant` derives the entry
+    # predicate from the variant's own declared nonletters. ⛔ No shipped asset
+    # is written to and no shipped index is broadened.
+    root = tmp_path / "assets"
+    (root / "dicts").mkdir(parents=True)
+    (root / "variants").mkdir(parents=True)
+    (root / "dicts" / "interpunct.txt").write_text("L·LA\nAAAA\n", encoding="utf-8")
+    monkeypatch.setattr("gamecore.variant_store.get_assets_path", lambda: root)
     variant = _load(
         tmp_path,
         letters=[
@@ -252,36 +266,47 @@ def test_interpunct_token_loads_places_scores_and_validates(tmp_path: Path) -> N
             {"letter": token, "count": 2, "points": 8},
         ],
         alphabet_order=["A", token],
+        extra={"dictionary_file": "interpunct.txt"},
     )
     assert token in variant.distribution
+    authority = WordAuthority.for_variant(variant)
+    assert variant_entry_predicate(variant) is not None
+    assert authority.contains_main("L·LA") is True
+
     board = Board(get_premiums_path())
     placements = [Placement(7, 7, token), Placement(7, 8, "A")]
     board.place_letters(placements)
     assert board.cells[7][7].letter == token
     assert board.cells[7][7].token == token
+    assert board.cells[7][7].blank_as is None
     assert board.cells[7][8].letter == "A"
     words = board.build_words_for_move(placements)
     assert words[0].tokens == [token, "A"]
     assert words[0].word == "L·LA"
+    # TWO physical tiles, four code points.
+    assert len(words[0].tokens) == 2
+    assert authority.route(words[0]) == "main"
+    assert authority.accepts_formed_word(words[0]) is True
     total, _ = score_words(
         board, placements, [(w.word, w.letters) for w in words], variant=variant
     )
     assert total > 0
     board.clear_letters(placements)
 
-    def is_word(word: str) -> bool:
-        return word == "L·LA"
-
     legality = evaluate_scoring_move(
         board,
         [token, "A"],
         placements,
-        is_word,
+        authority=authority,
         letters=frozenset(variant.playable_letters),
         variant=variant,
     )
     assert legality.ok
     assert "L·LA" in legality.words
+    assert legality.words_found[0].tokens == [token, "A"]
+    # And the advisory string query still rejects it, because a bare string has
+    # no tile boundaries and `L·LA` is not alphabetic.
+    assert authority.accepts_word_query("L·LA") is False
 
 
 def test_prefix_index_cache_includes_predicate_identity(tmp_path: Path) -> None:
@@ -350,10 +375,9 @@ def test_physical_two_lexical_three_routes_to_two_tile_authority(tmp_path: Path)
         board,
         ["Á", "CS"],
         placements,
-        lambda _word: False,
+        authority=authority,
         letters=frozenset({"Á", "CS"}),
         variant=points_variant,
-        authority=authority,
     )
     assert legality.ok
     assert legality.words == ("ÁCS",)
@@ -410,18 +434,15 @@ def test_hungarian_synthetic_draw_exchange_place_score_bingo_no_split(
         Placement(7, 10, "E"),
     ]
     word = "AGYASZATE"
-
-    def is_word(candidate: str) -> bool:
-        return candidate == word
-
-    def has_prefix(prefix: str) -> bool:
-        return word.startswith(prefix) or prefix == ""
+    # Migrated fixture, identical expectations: the injected callables became one
+    # authority over the same tiny lexicon.
+    authority = WordAuthority.from_words((word,))
 
     legality = evaluate_scoring_move(
         board,
         ["A", "GY", "A", "SZ", "A", "T", "E"],
         placements,
-        is_word,
+        authority=authority,
         letters=frozenset(variant.playable_letters),
         variant=variant,
     )
@@ -455,8 +476,7 @@ def test_hungarian_synthetic_draw_exchange_place_score_bingo_no_split(
     search = find_legal_scoring_move(
         empty,
         ["A", "SZ"],
-        lambda candidate: candidate in {"ASZ", "SZA"},
-        lambda prefix: prefix in {"", "A", "ASZ", "SZ", "SZA"},
+        authority=WordAuthority.from_words(("ASZ", "SZA")),
         blank_letters=variant.playable_letters,
         variant=variant,
     )
@@ -488,10 +508,10 @@ def test_starting_draw_blank_lowest_slovak_a_acute_beats_z_english_unchanged() -
 
 def test_save_schema_4_round_trip_and_rejects_legacy() -> None:
     board = Board(get_premiums_path())
-    board.cells[7][7].letter = "SZ"
-    board.cells[7][8].letter = "GY"
-    board.cells[8][7].letter = "SZ"
-    board.cells[8][7].is_blank = True
+    board.cells[7][7].token = "SZ"
+    board.cells[7][8].token = "GY"
+    board.cells[8][7].token = "?"
+    board.cells[8][7].blank_as = "SZ"
     board.cells[7][7].premium_used = True
     bag = TileBag(seed=1, tiles=["A", "SZ", "GY", "?"], variant="english")
     state = build_save_state_dict(
@@ -525,8 +545,8 @@ def test_save_schema_4_round_trip_and_rejects_legacy() -> None:
     assert restored_bag.tiles == ["A", "SZ", "GY", "?"]
 
     english_board = Board(get_premiums_path())
-    english_board.cells[7][7].letter = "A"
-    english_board.cells[7][8].letter = "T"
+    english_board.cells[7][7].token = "A"
+    english_board.cells[7][8].token = "T"
     ai = build_ai_state_dict(english_board, ["Q", "I"], 1, 2, "HUMAN")
     assert list(ai.keys()) == ["grid", "blanks", "ai_rack", "human_score", "ai_score", "turn"]
     assert all(isinstance(row, str) and len(row) == 15 for row in ai["grid"])
@@ -609,8 +629,7 @@ def test_declared_vowels_change_leave_quality_slovak_stays_on_default(
         searcher = _RankedSearcher(
             board=Board(get_premiums_path()),
             rack=["Á", "B"],
-            is_word=lambda _word: True,
-            has_prefix=lambda _prefix: True,
+            authority=WordAuthority.from_words(("ÁB", "BÁ")),
             bag_count=10,
             top_k=1,
             max_nodes=1,

@@ -13,7 +13,7 @@ from rest_framework.test import APIClient
 from accounts.models import User
 from gamecore.fastdict import load_prefix_index
 from gamecore.variant_store import load_two_tile_words, load_variant
-from game.services import _word_passes_dictionary
+from gamecore.word_authority import WordAuthority
 
 _SUMMARY_KEYS = frozenset({"slug", "display_name", "language_code", "readiness"})
 _CZECH_TILELESS = frozenset({"CH", "Q", "W"})
@@ -100,12 +100,21 @@ def polish_contains():
 
 
 def test_t6_inflected_lexicon_membership(czech_contains, polish_contains) -> None:
-    assert _word_passes_dictionary(czech_contains, "domu") is True
-    assert _word_passes_dictionary(czech_contains, "knihy") is True
-    assert _word_passes_dictionary(czech_contains, "qxqxqxqxq") is False
-    assert _word_passes_dictionary(polish_contains, "domach") is True
-    assert _word_passes_dictionary(polish_contains, "książki") is True
-    assert _word_passes_dictionary(polish_contains, "qxqxqxqxq") is False
+    # Migrated fixture, identical expectations: the string-query verdict moved
+    # from `services._word_passes_dictionary` onto the one authority.
+    czech = WordAuthority.for_variant(load_variant("czech"))
+    polish = WordAuthority.for_variant(load_variant("polish"))
+    assert czech.accepts_word_query("domu") is True
+    assert czech.accepts_word_query("knihy") is True
+    assert czech.accepts_word_query("qxqxqxqxq") is False
+    assert polish.accepts_word_query("domach") is True
+    assert polish.accepts_word_query("książki") is True
+    assert polish.accepts_word_query("qxqxqxqxq") is False
+    assert czech_contains("domu") is True
+    assert polish_contains("domach") is True
+    # Physical tile sequences give the same verdicts on single-code-point sets.
+    assert czech.accepts_tokens(tuple("DOMU")) is True
+    assert polish.accepts_tokens(tuple("DOMACH")) is True
 
 
 def _auth_client() -> APIClient:
@@ -395,7 +404,7 @@ def test_t13_present_but_corrupt_lexicon_reads_unavailable(
     manifest reported ``playable`` while every word lookup against it would fail. The
     file below exists, is non-empty and is valid UTF-8; it simply yields no line that
     survives the loader's own filter (``gamecore/fastdict.py:_read_words`` plus the
-    two-code-point floor at ``game/services.py:216``).
+    two-code-point floor now owned by ``WordAuthority.accepts_word_query``).
     """
     root = _synthetic_asset_root(tmp_path)
     (root / "dicts" / "corrupt_lexicon.txt").write_text(
