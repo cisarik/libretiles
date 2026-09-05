@@ -17,6 +17,19 @@ sentence-initial by position, and twelve rows that match scan faster than
 five lowercase plus seven capitalized. The choice is identical in every
 catalog and is never a per-catalog judgement.
 
+## Reviewed locales in tests
+
+Tests pin exact expected strings for the four locales that have been through
+review — `REVIEWED_LOCALES` = `en sk cs pl` in `i18n.test.ts`. The other eight
+catalogs are machine-authored and have had no second opinion, so copying their
+own values into expectations would assert only that a string equals itself.
+They are covered STRUCTURALLY instead, over all of `LOCALES`: shared key set,
+non-empty resolution, no long English value leaking byte-identically, every
+interpolation parameter surviving, no stray placeholder, and ASCII-foldable
+picker labels. Where an assertion states a PROPERTY rather than a wording it
+keeps all twelve even inside an otherwise narrowed block. A trailing `-4` in a
+test name now means "the four reviewed locales", not the shipped total.
+
 ## D2 — Informal Slavic register
 
 Slovak, Czech, and Polish copy uses informal 2nd person singular (`ty` /
@@ -560,7 +573,14 @@ announces.
 Flag images sit next to their own labels and are treated as decorative
 (`alt=""` plus `aria-hidden="true"`) so a screen reader does not announce
 "Vlajka: Slovenčina, Slovenčina". The parameterized `picker.flagAlt` keys
-remain in all four catalogs so that decision is reversible without a new slice.
+remain in all twelve catalogs so that decision is reversible without a new
+slice.
+
+Only four locale flags exist under `frontend/public/` (`en`, `sk`, `cs`, `pl`),
+so `flagSrc` is optional and eight of the twelve interface-language rows render
+their endonym with no image. Both pickers use a lookup table plus a conditional
+spread rather than a `/${value}.png` template, which would request eight missing
+files that no type checker can see.
 
 | Key | English | Slovak | Czech | Polish |
 |---|---|---|---|---|

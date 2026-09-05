@@ -31,22 +31,36 @@ import type { GameHistoryResponse, VariantSummary } from "@/lib/types";
 import { t, tf } from "./index";
 import {
   detectBrowserLocale,
+  foldForSearch,
   isLocale,
   localeSyncDecision,
   LOCALES,
   LOCALE_COOKIE_NAME,
   type Locale,
 } from "./locales";
+import { afFn, afText } from "./messages.af";
 import { csFn, csText } from "./messages.cs";
+import { daFn, daText } from "./messages.da";
+import { deFn, deText } from "./messages.de";
 import {
   aiPassBodyKey,
   enFn,
   enText,
   lexiconRejectionKey,
 } from "./messages.en";
+import { isFn, isText } from "./messages.is";
+import { itFn, itText } from "./messages.it";
+import { nlFn, nlText } from "./messages.nl";
 import { plFn, plText } from "./messages.pl";
+import { ptFn, ptText } from "./messages.pt";
 import { skFn, skText } from "./messages.sk";
+import { svFn, svText } from "./messages.sv";
 import { pluralCs, pluralPl, pluralSk } from "./plural";
+
+// Exact expected strings are pinned for the four locales that have been through review. The other
+// eight are asserted STRUCTURALLY over all of LOCALES — see AC-STRUCT-12. Copying a catalog's own
+// value into an expectation would assert that a string equals itself.
+const REVIEWED_LOCALES = ["en", "sk", "cs", "pl"] as const;
 
 const {
   BOARD_THEME_CHOICES,
@@ -146,16 +160,48 @@ describe("AC-SYNC localeSyncDecision", () => {
   });
 });
 
+// Every shipped catalog, keyed by locale. The `Record<Locale, …>` annotation is the point of the
+// duplication: a thirteenth locale added to LOCALES cannot compile until it is listed here too, so
+// key-set equality can never silently skip a catalog.
+const TEXT_TABLES: Record<Locale, Record<string, string>> = {
+  en: enText,
+  sk: skText,
+  cs: csText,
+  pl: plText,
+  de: deText,
+  pt: ptText,
+  is: isText,
+  it: itText,
+  nl: nlText,
+  da: daText,
+  sv: svText,
+  af: afText,
+};
+
+const FN_TABLES: Record<Locale, Record<string, unknown>> = {
+  en: enFn,
+  sk: skFn,
+  cs: csFn,
+  pl: plFn,
+  de: deFn,
+  pt: ptFn,
+  is: isFn,
+  it: itFn,
+  nl: nlFn,
+  da: daFn,
+  sv: svFn,
+  af: afFn,
+};
+
 describe("AC-EXHAUST catalogs share one key set", () => {
-  it("matches en/sk/cs/pl text and function keys at runtime", () => {
+  it("matches the text and function key sets of every shipped catalog at runtime", () => {
     const textKeys = Object.keys(enText).sort();
-    expect(Object.keys(skText).sort()).toEqual(textKeys);
-    expect(Object.keys(csText).sort()).toEqual(textKeys);
-    expect(Object.keys(plText).sort()).toEqual(textKeys);
     const fnKeys = Object.keys(enFn).sort();
-    expect(Object.keys(skFn).sort()).toEqual(fnKeys);
-    expect(Object.keys(csFn).sort()).toEqual(fnKeys);
-    expect(Object.keys(plFn).sort()).toEqual(fnKeys);
+    expect(LOCALES.length).toBe(12);
+    for (const locale of LOCALES) {
+      expect(Object.keys(TEXT_TABLES[locale]).sort()).toEqual(textKeys);
+      expect(Object.keys(FN_TABLES[locale]).sort()).toEqual(fnKeys);
+    }
     // 304 text keys + 20 function keys. This total is deliberately hardcoded so
     // that adding a key is a decision rather than an accident: every catalog
     // must define every key, so the cost of a new one is paid in all twelve
@@ -163,6 +209,289 @@ describe("AC-EXHAUST catalogs share one key set", () => {
     expect(textKeys.length).toBe(304);
     expect(fnKeys.length).toBe(20);
     expect(textKeys.length + fnKeys.length).toBe(324);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC-STRUCT-12 — what actually protects twelve locales.
+//
+// Exact expected strings exist for REVIEWED_LOCALES only. Everything in this block is STRUCTURAL:
+// it asserts properties of the rendered surface rather than wordings, so it runs over all of
+// LOCALES without anyone hand-typing a Danish sentence into a test file. It goes through `t`/`tf`
+// and imports no `messages.*.ts` table, so it also proves the twelve rows wired into translate.ts
+// really resolve.
+// ---------------------------------------------------------------------------
+
+// English values of at least this many characters must NOT be byte-identical in the eight
+// unreviewed locales. Derived from the measured inventory of every value that is ever
+// byte-identical to English: apart from the three exemptions below, the longest legitimately
+// shared value is ten characters (the `Nederlands` and `Slovenčina` endonyms) and every other one
+// is a label, an initialism or a naturalized loanword of at most nine. Eleven is therefore the
+// smallest threshold that accuses none of them; it was derived from that inventory rather than
+// lowered until this test went green.
+const ENGLISH_LEAKAGE_MIN_LENGTH = 11;
+
+// Byte-identity is CORRECT for these, so they are exemptions rather than failures. The prefix is a
+// family so that a future endonym of eleven or more characters stays exempt without an edit.
+const ENGLISH_LEAKAGE_EXEMPT_PREFIXES = ["settings.uiLanguage."];
+const ENGLISH_LEAKAGE_EXEMPT_KEYS = [
+  "landing.brand", // a product name
+  "landing.titleLine1", // a product tagline, deliberately shared
+  "game.toast.chatOffline", // correct Dutch; the nl catalog carries a comment saying so
+];
+
+// A `{{` or a surviving `{name}`-shaped run is a template that never got interpolated.
+const STRAY_PLACEHOLDER = /\{\{|\{[A-Za-z_][A-Za-z0-9_]*\}/;
+
+// Sentinel parameters. 4242, 9317, 7185, "Qxzvv" and "Wkjpp" cannot occur accidentally in twelve
+// languages of UI prose, so a substring hit is proof the parameter was interpolated rather than a
+// coincidence of the surrounding copy.
+const SN = { n1: 4242, n2: 9317, n3: 7185, s1: "Qxzvv", s2: "Wkjpp" };
+
+// One row per FnKey. `must` lists the rendered fragments that have to survive into every locale.
+// Each `render` closes over a single `tf` call so the per-key parameter types stay checked.
+const FN_PARITY: Array<{
+  key: keyof typeof enFn;
+  render: (locale: Locale) => string;
+  must: readonly string[];
+}> = [
+  {
+    key: "a11y.rackTile",
+    render: (l) => tf(l, "a11y.rackTile", { letter: SN.s1, points: SN.n1 }),
+    must: [SN.s1, String(SN.n1)],
+  },
+  {
+    key: "overlay.stats.tried",
+    render: (l) => tf(l, "overlay.stats.tried", { count: SN.n1 }),
+    must: [String(SN.n1)],
+  },
+  {
+    key: "overlay.stats.valid",
+    render: (l) => tf(l, "overlay.stats.valid", { count: SN.n1 }),
+    must: [String(SN.n1)],
+  },
+  {
+    key: "overlay.stats.rejected",
+    render: (l) => tf(l, "overlay.stats.rejected", { count: SN.n1 }),
+    must: [String(SN.n1)],
+  },
+  {
+    key: "error.throttled.minutes",
+    render: (l) => tf(l, "error.throttled.minutes", { minutes: SN.n1 }),
+    must: [String(SN.n1)],
+  },
+  {
+    key: "draw.reason.closer",
+    render: (l) => tf(l, "draw.reason.closer", { winner: SN.s1, loser: SN.s2 }),
+    must: [SN.s1, SN.s2],
+  },
+  {
+    key: "controls.tilesSelected",
+    render: (l) => tf(l, "controls.tilesSelected", { count: SN.n1 }),
+    must: [String(SN.n1)],
+  },
+  {
+    key: "game.ai.exploring",
+    render: (l) => tf(l, "game.ai.exploring", { model: SN.s1 }),
+    must: [SN.s1],
+  },
+  {
+    key: "game.ai.attempt",
+    render: (l) =>
+      tf(l, "game.ai.attempt", { index: SN.n1, total: SN.n2, label: SN.s1 }),
+    must: [String(SN.n1), String(SN.n2), SN.s1],
+  },
+  {
+    key: "game.toast.aiPlayedWord",
+    render: (l) => tf(l, "game.toast.aiPlayedWord", { word: SN.s1 }),
+    must: [SN.s1],
+  },
+  {
+    key: "game.status.opponentPlaying",
+    render: (l) => tf(l, "game.status.opponentPlaying", { name: SN.s1 }),
+    must: [SN.s1],
+  },
+  {
+    key: "game.toast.invalidWordHeading",
+    // `must` is deliberately EMPTY rather than omitted: `count` selects a grammatical form and is
+    // not expected to appear in the output. The row still asserts non-emptiness and no stray
+    // placeholder in all twelve locales.
+    render: (l) => tf(l, "game.toast.invalidWordHeading", { count: SN.n1 }),
+    must: [],
+  },
+  {
+    key: "game.ai.routeFailed",
+    render: (l) => tf(l, "game.ai.routeFailed", { status: SN.n1 }),
+    must: [String(SN.n1)],
+  },
+  {
+    key: "game.ai.routeFailedBeforeStream",
+    render: (l) => tf(l, "game.ai.routeFailedBeforeStream", { status: SN.n1 }),
+    must: [String(SN.n1)],
+  },
+  {
+    key: "game.ai.routeFailedWithPreview",
+    render: (l) =>
+      tf(l, "game.ai.routeFailedWithPreview", { status: SN.n1, preview: SN.s1 }),
+    must: [String(SN.n1), SN.s1],
+  },
+  {
+    key: "play.humanQueue.queueFor",
+    render: (l) => tf(l, "play.humanQueue.queueFor", { variant: SN.s1 }),
+    must: [SN.s1],
+  },
+  {
+    key: "queue.room",
+    render: (l) => tf(l, "queue.room", { code: SN.s1 }),
+    must: [SN.s1],
+  },
+  {
+    key: "history.pageOf",
+    render: (l) => tf(l, "history.pageOf", { page: SN.n1, total: SN.n2 }),
+    must: [String(SN.n1), String(SN.n2)],
+  },
+  {
+    key: "history.showing",
+    render: (l) =>
+      tf(l, "history.showing", { from: SN.n1, to: SN.n2, total: SN.n3 }),
+    must: [String(SN.n1), String(SN.n2), String(SN.n3)],
+  },
+  {
+    key: "picker.flagAlt",
+    render: (l) => tf(l, "picker.flagAlt", { language: SN.s1 }),
+    must: [SN.s1],
+  },
+];
+
+describe("AC-STRUCT-12 structural invariants over every shipped locale", () => {
+  const textKeys = Object.keys(enText) as Array<keyof typeof enText>;
+  const fnKeys = Object.keys(enFn) as Array<keyof typeof enFn>;
+  const reviewed = new Set<string>(REVIEWED_LOCALES);
+  const unreviewed = LOCALES.filter((locale) => !reviewed.has(locale));
+
+  it("resolves every text key to non-empty, non-whitespace copy in all twelve locales", () => {
+    let cells = 0;
+    for (const locale of LOCALES) {
+      for (const key of textKeys) {
+        const value = t(locale, key);
+        expect(typeof value).toBe("string");
+        expect(value.trim()).not.toBe("");
+        cells += 1;
+      }
+    }
+    // 304 text keys × 12 locales = 3648. Reconciled by construction against AC-EXHAUST's pinned
+    // key count and LOCALES.length, so a loop that quietly visited four locales fails here.
+    expect(cells).toBe(3648);
+  });
+
+  it("keeps long English copy from leaking byte-identically into the eight unreviewed locales", () => {
+    expect(unreviewed.length).toBe(8);
+    const eligible = textKeys.filter((key) => {
+      if (t("en", key).length < ENGLISH_LEAKAGE_MIN_LENGTH) return false;
+      if (ENGLISH_LEAKAGE_EXEMPT_KEYS.includes(key)) return false;
+      return !ENGLISH_LEAKAGE_EXEMPT_PREFIXES.some((prefix) =>
+        key.startsWith(prefix),
+      );
+    });
+    let cells = 0;
+    for (const key of eligible) {
+      const english = t("en", key);
+      for (const locale of unreviewed) {
+        expect(t(locale, key)).not.toBe(english);
+        cells += 1;
+      }
+    }
+    // Hardcoded like AC-EXHAUST's 304/20: a new key long enough to be checked is a decision, not
+    // an accident. 190 eligible keys × 8 unreviewed locales = 1520.
+    expect(eligible.length).toBe(190);
+    expect(cells).toBe(1520);
+  });
+
+  it("carries every interpolated parameter through into all twelve locales", () => {
+    expect(FN_PARITY.length).toBe(fnKeys.length);
+    expect(new Set(FN_PARITY.map((row) => row.key)).size).toBe(fnKeys.length);
+    for (const key of fnKeys) {
+      expect(FN_PARITY.some((row) => row.key === key)).toBe(true);
+    }
+    let cells = 0;
+    for (const locale of LOCALES) {
+      for (const row of FN_PARITY) {
+        const rendered = row.render(locale);
+        expect(rendered.trim()).not.toBe("");
+        for (const fragment of row.must) {
+          expect(rendered).toContain(fragment);
+        }
+        cells += 1;
+      }
+    }
+    // 20 function keys × 12 locales = 240.
+    expect(cells).toBe(240);
+  });
+
+  it("leaves no stray placeholder in any rendered value of either table", () => {
+    let cells = 0;
+    for (const locale of LOCALES) {
+      for (const key of textKeys) {
+        expect(t(locale, key)).not.toMatch(STRAY_PLACEHOLDER);
+        cells += 1;
+      }
+      for (const row of FN_PARITY) {
+        expect(row.render(locale)).not.toMatch(STRAY_PLACEHOLDER);
+        cells += 1;
+      }
+    }
+    // (304 + 20) × 12 = 3888.
+    expect(cells).toBe(3888);
+  });
+});
+
+describe("AC-FOLD-ASCII-12 every searched picker label folds to pure ASCII", () => {
+  // The twelve installed variant slugs, from backend/assets/variants/. Key names are built from
+  // the slugs so a thirteenth variant cannot appear without this test needing an entry.
+  const VARIANT_SLUGS = [
+    "afrikaans",
+    "czech",
+    "danish",
+    "dutch",
+    "english",
+    "german",
+    "icelandic",
+    "italian",
+    "polish",
+    "portuguese",
+    "slovak",
+    "swedish",
+  ] as const;
+
+  const ASCII_ONLY = /^[\x20-\x7E]*$/;
+
+  // GREEN THE MOMENT IT WAS WRITTEN, and that is the point: this is a regression guard, not a
+  // repair. An earlier slice shipped Icelandic variant names that no plain-keyboard query could
+  // reach, because foldForSearch folded đ U+0111 D-STROKE but not ð U+00F0 ETH — two different
+  // letters that look alike. It survived four catalog slices and was repaired in c9078f2 because
+  // nothing asserted the property. Assert the LABELS, not the fold table: a test that listed
+  // EXPLICIT_SEARCH_FOLDS' entries and checked they were present would have passed throughout that
+  // bug, since the table was complete with respect to itself. What failed was the labels.
+  it("folds every interface-language and game-variant label in every locale to ASCII only", () => {
+    let uiCells = 0;
+    for (const locale of LOCALES) {
+      for (const named of LOCALES) {
+        const key = `settings.uiLanguage.${named}` as const;
+        expect(foldForSearch(t(locale, key))).toMatch(ASCII_ONLY);
+        uiCells += 1;
+      }
+    }
+    let variantCells = 0;
+    for (const locale of LOCALES) {
+      for (const slug of VARIANT_SLUGS) {
+        const key = `settings.gameVariant.${slug}` as const;
+        expect(foldForSearch(t(locale, key))).toMatch(ASCII_ONLY);
+        variantCells += 1;
+      }
+    }
+    // 12 labels × 12 locales, for each of the two searched families.
+    expect(uiCells).toBe(144);
+    expect(variantCells).toBe(144);
   });
 });
 
@@ -201,7 +530,7 @@ describe("AC-RACKTILE-4 accessible rack-tile names", () => {
       ],
     } as const;
 
-    for (const locale of LOCALES) {
+    for (const locale of REVIEWED_LOCALES) {
       const rendered = COUNTS.map((points) =>
         tf(locale, "a11y.rackTile", { letter: "A", points }),
       );
@@ -229,9 +558,15 @@ describe("AC-RACKBLANK-4 accessible blank-tile names", () => {
       pl: "Blank",
     } as const;
 
+    for (const locale of REVIEWED_LOCALES) {
+      expect(t(locale, "a11y.rackBlank")).toBe(expected[locale]);
+    }
+
+    // A blank's accessible name never collides with a lettered tile's. That is a PROPERTY rather
+    // than a wording, so it keeps all twelve: a new catalog that reused the tile noun for the
+    // blank is caught here even though its exact strings have not been reviewed.
     for (const locale of LOCALES) {
       const blank = t(locale, "a11y.rackBlank");
-      expect(blank).toBe(expected[locale]);
       for (const points of [1, 2, 4, 5, 10]) {
         expect(blank).not.toBe(
           tf(locale, "a11y.rackTile", { letter: "?", points }),
@@ -284,7 +619,7 @@ describe("AC-A11Y-COPY-4 accessible UI copy", () => {
 
   it("renders every remaining a11y key verbatim in all four locales", () => {
     for (const key of Object.keys(expected) as (keyof typeof expected)[]) {
-      for (const locale of LOCALES) {
+      for (const locale of REVIEWED_LOCALES) {
         expect(t(locale, key)).toBe(expected[key][locale]);
       }
     }
@@ -1001,7 +1336,7 @@ function queueLabel(
 
 describe("AC-QUEUE-VARIANT uii-01-F14 queue label follows the variant", () => {
   it("renders each installed variant's own name and never another variant's", () => {
-    const ownName: Record<(typeof INSTALLED_VARIANTS)[number], Record<(typeof LOCALES)[number], string>> = {
+    const ownName: Record<(typeof INSTALLED_VARIANTS)[number], Record<(typeof REVIEWED_LOCALES)[number], string>> = {
       english: {
         en: "English",
         sk: "Angličtina",
@@ -1028,7 +1363,7 @@ describe("AC-QUEUE-VARIANT uii-01-F14 queue label follows the variant", () => {
       },
     };
 
-    for (const locale of LOCALES) {
+    for (const locale of REVIEWED_LOCALES) {
       for (const slug of INSTALLED_VARIANTS) {
         const label = queueLabel(
           locale,
@@ -1047,6 +1382,8 @@ describe("AC-QUEUE-VARIANT uii-01-F14 queue label follows the variant", () => {
     expect(czechSk).not.toContain("Angličtina");
     expect(czechSk).not.toContain("Slovenčina");
 
+    // A PROPERTY, so it keeps all twelve: no locale's Czech queue label may leak the English
+    // exonym. It needs no reviewed expected string to be worth running.
     for (const locale of LOCALES) {
       expect(queueLabel(locale, variantForSlug("czech", "NOT-czech"))).not.toContain(
         "English",
@@ -1083,8 +1420,13 @@ describe("AC-CATALOG-COPY-4 unreachable catalog copy", () => {
       pl: "Katalog rywali jest chwilowo niedostępny. Spróbuj za chwilę.",
     } as const;
     const key = "play.error.catalogUnavailable" as keyof typeof enText;
-    for (const locale of LOCALES) {
+    for (const locale of REVIEWED_LOCALES) {
       expect(t(locale, key)).toBe(expected[locale]);
+    }
+
+    // "reachable but empty" and "unreachable" are two different messages. That is a PROPERTY, so
+    // it keeps all twelve: a catalog that collapsed the two would ship a misleading error.
+    for (const locale of LOCALES) {
       expect(t(locale, key)).not.toBe(t(locale, "play.error.catalogEmpty"));
     }
   });
@@ -1136,7 +1478,7 @@ const HEADER_KEYS = [
   "header.games",
 ] as const;
 
-const HEADER_EXPECTED: Record<(typeof HEADER_KEYS)[number], Record<(typeof LOCALES)[number], string>> = {
+const HEADER_EXPECTED: Record<(typeof HEADER_KEYS)[number], Record<(typeof REVIEWED_LOCALES)[number], string>> = {
   "header.giveUp": {
     en: "Give up",
     sk: "Vzdať sa",
@@ -1190,7 +1532,7 @@ const HEADER_EXPECTED: Record<(typeof HEADER_KEYS)[number], Record<(typeof LOCAL
 describe("AC-HEADER-4 header.* keys", () => {
   it("renders the eight header keys as the authored string in all four locales", () => {
     for (const key of HEADER_KEYS) {
-      for (const locale of LOCALES) {
+      for (const locale of REVIEWED_LOCALES) {
         expect(t(locale, key)).toBe(HEADER_EXPECTED[key][locale]);
       }
     }
@@ -1205,7 +1547,7 @@ const OVERLAY_KEYS = [
   "overlay.filtering",
 ] as const;
 
-const OVERLAY_EXPECTED: Record<(typeof OVERLAY_KEYS)[number], Record<(typeof LOCALES)[number], string>> = {
+const OVERLAY_EXPECTED: Record<(typeof OVERLAY_KEYS)[number], Record<(typeof REVIEWED_LOCALES)[number], string>> = {
   "overlay.aiThinking": {
     en: "AI Thinking",
     sk: "AI premýšľa",
@@ -1241,7 +1583,7 @@ const OVERLAY_EXPECTED: Record<(typeof OVERLAY_KEYS)[number], Record<(typeof LOC
 describe("AC-OVERLAY-4 overlay.* keys", () => {
   it("renders the five overlay keys as the authored string in all four locales", () => {
     for (const key of OVERLAY_KEYS) {
-      for (const locale of LOCALES) {
+      for (const locale of REVIEWED_LOCALES) {
         expect(t(locale, key)).toBe(OVERLAY_EXPECTED[key][locale]);
       }
     }
@@ -1416,7 +1758,7 @@ describe("AC-PROFILE-4 profile catalog", () => {
     for (const key of Object.keys(PROFILE_EXPECTED) as Array<
       keyof typeof PROFILE_EXPECTED
     >) {
-      for (const locale of LOCALES) {
+      for (const locale of REVIEWED_LOCALES) {
         expect(t(locale, key)).toBe(PROFILE_EXPECTED[key][locale]);
       }
     }
@@ -1425,10 +1767,18 @@ describe("AC-PROFILE-4 profile catalog", () => {
 
 describe("AC-PROFILE-DUP intentional profile catalog duplicates", () => {
   it("keeps current-password label and placeholder equal and Email unchanged", () => {
+    // An INTENTIONAL duplicate is a property, not a wording, so it keeps all twelve: a future
+    // editor who "fixed" the label and placeholder to differ is caught in every locale.
     for (const locale of LOCALES) {
       expect(t(locale, "profile.field.current")).toBe(
         t(locale, "profile.ph.current"),
       );
+    }
+
+    // `Email` untranslated is a WORDING, and only five catalogs share it. The other seven
+    // correctly localize the noun — E-Mail · E-mail · E-post · E-pos · Netfang — so this stays on
+    // the reviewed four: the narrowing is a fact about the word, not about review status.
+    for (const locale of REVIEWED_LOCALES) {
       expect(t(locale, "profile.email")).toBe("Email");
     }
   });
@@ -1499,7 +1849,7 @@ const HISTORY_EXPECTED = {
 describe("AC-HISTORY-4 history columns and outcomes", () => {
   it("renders every authored column and outcome string in all four locales", () => {
     for (const [key, expected] of Object.entries(HISTORY_EXPECTED)) {
-      for (const locale of LOCALES) {
+      for (const locale of REVIEWED_LOCALES) {
         expect(t(locale, key as keyof typeof enText)).toBe(expected[locale]);
       }
     }
@@ -1515,17 +1865,22 @@ describe("AC-PAGING-4 saved-board pagination", () => {
       pl: { pageOf: "Strona 2 z 7", showing: "Pokazane 11-20 z 63" },
     } as const;
 
-    for (const locale of LOCALES) {
+    for (const locale of REVIEWED_LOCALES) {
       expect(tf(locale, "history.pageOf", { page: 2, total: 7 })).toBe(
         expected[locale].pageOf,
       );
-      const showing = tf(locale, "history.showing", {
-        from: 11,
-        to: 20,
-        total: 63,
-      });
-      expect(showing).toBe(expected[locale].showing);
-      if (locale !== "en") expect(showing).not.toContain("games");
+      expect(
+        tf(locale, "history.showing", { from: 11, to: 20, total: 63 }),
+      ).toBe(expected[locale].showing);
+    }
+
+    // Omitting the English counted noun is a PROPERTY of every non-English catalog, so it keeps
+    // all eleven: a translator who pasted the English template through is caught here.
+    for (const locale of LOCALES) {
+      if (locale === "en") continue;
+      expect(
+        tf(locale, "history.showing", { from: 11, to: 20, total: 63 }),
+      ).not.toContain("games");
     }
   });
 });
@@ -1621,7 +1976,7 @@ const SETTINGS_EXPECTED = {
 describe("AC-SETTINGS-4 settings choice copy", () => {
   it("renders timeout, step, and board labels exactly in all four locales", () => {
     for (const [key, expected] of Object.entries(SETTINGS_EXPECTED)) {
-      for (const locale of LOCALES) {
+      for (const locale of REVIEWED_LOCALES) {
         expect(t(locale, key as keyof typeof enText)).toBe(expected[locale]);
       }
     }
@@ -1670,7 +2025,7 @@ const TOGGLE_EXPECTED = {
 describe("AC-TOGGLE-4 shared labels and distinct descriptions", () => {
   it("renders the authored toggle copy and keeps all four descriptions distinct", () => {
     for (const [key, expected] of Object.entries(TOGGLE_EXPECTED)) {
-      for (const locale of LOCALES) {
+      for (const locale of REVIEWED_LOCALES) {
         expect(t(locale, key as keyof typeof enText)).toBe(expected[locale]);
       }
     }
@@ -1680,6 +2035,8 @@ describe("AC-TOGGLE-4 shared labels and distinct descriptions", () => {
       "settings.premium.onDesc",
       "settings.premium.offDesc",
     ] as const;
+    // Mutual distinctness is a PROPERTY, so it keeps all twelve: it is what catches a copy-paste
+    // error in a new catalog, and it costs nothing to run over the eight unreviewed languages.
     for (const locale of LOCALES) {
       expect(new Set(descriptionKeys.map((key) => t(locale, key))).size).toBe(4);
     }

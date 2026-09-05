@@ -1,3 +1,5 @@
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import { foldForSearch } from "@/lib/i18n/locales";
@@ -5,14 +7,26 @@ import { foldForSearch } from "@/lib/i18n/locales";
 import {
   filterPickerOptions,
   nextPickerHighlight,
+  PremiumPicker,
   type PremiumPickerOption,
 } from "./PremiumPicker";
 
+// The twelve shipped interface-language endonyms, in LOCALES order. Only four locale flags exist
+// under frontend/public/, so only four rows carry a flagSrc: a fixture where every row has one
+// cannot represent the configuration this product actually ships.
 const ENDONYMS: readonly PremiumPickerOption[] = [
   { value: "en", label: "English", flagSrc: "/en.png" },
   { value: "sk", label: "Slovenčina", flagSrc: "/sk.png" },
   { value: "cs", label: "Čeština", flagSrc: "/cs.png" },
   { value: "pl", label: "Polski", flagSrc: "/pl.png" },
+  { value: "de", label: "Deutsch" },
+  { value: "pt", label: "Português" },
+  { value: "is", label: "Íslenska" },
+  { value: "it", label: "Italiano" },
+  { value: "nl", label: "Nederlands" },
+  { value: "da", label: "Dansk" },
+  { value: "sv", label: "Svenska" },
+  { value: "af", label: "Afrikaans" },
 ];
 
 describe("AC-FOLD foldForSearch", () => {
@@ -82,22 +96,33 @@ describe("AC-FOLD-MATCH query matching", () => {
 });
 
 describe("AC-PICKER-FILTER filterPickerOptions", () => {
-  it("returns the expected subsets over the four endonyms", () => {
+  it("returns the expected subsets over the twelve endonyms", () => {
     expect(filterPickerOptions(ENDONYMS, "polski").map((o) => o.value)).toEqual([
       "pl",
     ]);
     expect(filterPickerOptions(ENDONYMS, "eng").map((o) => o.value)).toEqual([
       "en",
     ]);
+    // Over twelve label shapes, a bare "c" also reaches Deutsch. That widening is the point of
+    // covering the shipped set rather than four of it.
     expect(filterPickerOptions(ENDONYMS, "c").map((o) => o.value)).toEqual([
       "sk",
       "cs",
+      "de",
     ]);
     expect(filterPickerOptions(ENDONYMS, "").map((o) => o.value)).toEqual([
       "en",
       "sk",
       "cs",
       "pl",
+      "de",
+      "pt",
+      "is",
+      "it",
+      "nl",
+      "da",
+      "sv",
+      "af",
     ]);
   });
 });
@@ -139,5 +164,47 @@ describe("AC-PICKER-NAV nextPickerHighlight", () => {
     expect(nextPickerHighlight(none, 0, "ArrowUp")).toBe(-1);
     expect(nextPickerHighlight(none, 1, "Home")).toBe(-1);
     expect(nextPickerHighlight(none, 1, "End")).toBe(-1);
+  });
+});
+
+function pickerMarkup(value: string): string {
+  return renderToStaticMarkup(
+    createElement(PremiumPicker, {
+      id: "endonym-picker",
+      options: ENDONYMS,
+      value,
+      onChange: () => undefined,
+      searchPlaceholder: "Search",
+      emptyText: "No match",
+      ariaLabel: "Interface language",
+    }),
+  );
+}
+
+function rowMarkup(markup: string, value: string): string {
+  const start = markup.indexOf(`data-option-value="${value}"`);
+  expect(start).toBeGreaterThan(-1);
+  return markup.slice(start, markup.indexOf("</li>", start));
+}
+
+describe("AC-PICKER-FLAGLESS rows without a flag", () => {
+  it("renders every label and an image only for the four rows that have a flag", () => {
+    // `de` is selected, and it has no flag, so the closed trigger contributes no image either.
+    const markup = pickerMarkup("de");
+    for (const option of ENDONYMS) {
+      const row = rowMarkup(markup, option.value);
+      expect(row).toContain(option.label);
+      if (option.flagSrc) {
+        expect(row).toContain(`src="${option.flagSrc}"`);
+      } else {
+        expect(row).not.toContain("<img");
+      }
+    }
+    expect(markup.match(/<img/g)?.length ?? 0).toBe(4);
+  });
+
+  it("adds the trigger image only when the selected row has a flag", () => {
+    expect(pickerMarkup("sk").match(/<img/g)?.length ?? 0).toBe(5);
+    expect(pickerMarkup("is").match(/<img/g)?.length ?? 0).toBe(4);
   });
 });

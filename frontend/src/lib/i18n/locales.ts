@@ -1,4 +1,21 @@
-export const LOCALES = ["en", "sk", "cs", "pl"] as const;
+// Picker row order. The four reviewed locales keep their original positions so no
+// existing user's list is reordered under them; the eight that follow are in the
+// order their catalogs were authored (de · pt · is · it · nl · da · sv · af), which
+// makes the order derivable from the commit history rather than invented here.
+export const LOCALES = [
+  "en",
+  "sk",
+  "cs",
+  "pl",
+  "de",
+  "pt",
+  "is",
+  "it",
+  "nl",
+  "da",
+  "sv",
+  "af",
+] as const;
 export type Locale = (typeof LOCALES)[number];
 export const DEFAULT_LOCALE: Locale = "en";
 export const LOCALE_COOKIE_NAME = "libretiles_locale";

@@ -348,6 +348,18 @@ function PremiumLookPanel({
   );
 }
 
+// Only these four flags exist under frontend/public/. An unconditional
+// `/${value}.png` would request eight missing images once LOCALES carries twelve
+// locales, and TypeScript cannot see that: a template string always has a value.
+// GameLanguagePanel solves the identical problem the same way. `hu.png` also sits
+// in public/ but `hu` is not a locale and must never be offered as one.
+const LOCALE_FLAG_SRC: Partial<Record<Locale, string>> = {
+  en: "/en.png",
+  sk: "/sk.png",
+  cs: "/cs.png",
+  pl: "/pl.png",
+};
+
 function InterfaceLanguagePanel() {
   const { t } = useT();
   const locale = useLocale();
@@ -358,6 +370,14 @@ function InterfaceLanguagePanel() {
     sk: "settings.uiLanguage.sk",
     cs: "settings.uiLanguage.cs",
     pl: "settings.uiLanguage.pl",
+    de: "settings.uiLanguage.de",
+    pt: "settings.uiLanguage.pt",
+    is: "settings.uiLanguage.is",
+    it: "settings.uiLanguage.it",
+    nl: "settings.uiLanguage.nl",
+    da: "settings.uiLanguage.da",
+    sv: "settings.uiLanguage.sv",
+    af: "settings.uiLanguage.af",
   };
 
   return (
@@ -369,11 +389,17 @@ function InterfaceLanguagePanel() {
     >
       <PremiumPicker
         id="ui-language-picker"
-        options={LOCALES.map((value) => ({
-          value,
-          label: t(localeLabelKey[value]),
-          flagSrc: `/${value}.png`,
-        }))}
+        options={LOCALES.map((value) => {
+          const flagSrc = LOCALE_FLAG_SRC[value];
+          // A row with no flag renders its endonym alone, which is what the
+          // endonym rule asks a user to scan for. PremiumPicker treats flagSrc
+          // as optional and renders no image element when it is absent.
+          return {
+            value,
+            label: t(localeLabelKey[value]),
+            ...(flagSrc ? { flagSrc } : {}),
+          };
+        })}
         value={locale}
         onChange={(next) => {
           if (!isLocale(next)) return;
