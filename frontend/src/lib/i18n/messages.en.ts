@@ -89,7 +89,7 @@ export const enText = {
     "Menus, buttons, and messages. Changes immediately, on this device only.",
   // Interface-language names are endonyms, identical in every catalog, so a
   // user who accidentally selected a language they cannot read can still find
-  // their own language. Do not translate these four strings back into exonyms.
+  // their own language. Do not translate these twelve strings back into exonyms.
   "settings.uiLanguage.en": "English",
   "settings.uiLanguage.sk": "Slovenčina",
   "settings.uiLanguage.cs": "Čeština",

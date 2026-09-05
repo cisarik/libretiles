@@ -1,8 +1,9 @@
 # Libre Tiles interface-language glossary
 
 Project rules for later localization slices. English is the default locale and
-the shape-defining catalog. No new runtime i18n dependency: a missing key in
-any of `en` / `sk` / `cs` / `pl` is a TypeScript error.
+the shape-defining catalog. No new runtime i18n dependency: every catalog but
+`en` is declared `Record<TextKey, string>`, so a missing key in any of the
+eleven is a TypeScript error.
 
 Interface-language names (`settings.uiLanguage.*`) are **endonyms**, identical
 in every catalog (`English`, `Slovenčina`, `Čeština`, `Polski`, `Afrikaans`,
