@@ -156,13 +156,13 @@ describe("AC-EXHAUST catalogs share one key set", () => {
     expect(Object.keys(skFn).sort()).toEqual(fnKeys);
     expect(Object.keys(csFn).sort()).toEqual(fnKeys);
     expect(Object.keys(plFn).sort()).toEqual(fnKeys);
-    // 296 text keys + 20 function keys. This total is deliberately hardcoded so
+    // 304 text keys + 20 function keys. This total is deliberately hardcoded so
     // that adding a key is a decision rather than an accident: every catalog
     // must define every key, so the cost of a new one is paid in all twelve
     // files. Update it in the same commit that adds or removes a key.
-    expect(textKeys.length).toBe(296);
+    expect(textKeys.length).toBe(304);
     expect(fnKeys.length).toBe(20);
-    expect(textKeys.length + fnKeys.length).toBe(316);
+    expect(textKeys.length + fnKeys.length).toBe(324);
   });
 });
 

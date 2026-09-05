@@ -5,9 +5,16 @@ the shape-defining catalog. No new runtime i18n dependency: a missing key in
 any of `en` / `sk` / `cs` / `pl` is a TypeScript error.
 
 Interface-language names (`settings.uiLanguage.*`) are **endonyms**, identical
-in every catalog (`English`, `Slovenčina`, `Čeština`, `Polski`), so a user who
-cannot read the current UI can still find their own language. Game-variant
-names remain translated exonyms.
+in every catalog (`English`, `Slovenčina`, `Čeština`, `Polski`, `Afrikaans`,
+`Dansk`, `Deutsch`, `Íslenska`, `Italiano`, `Nederlands`, `Português`,
+`Svenska`), so a user who cannot read the current UI can still find their own
+language. Game-variant names remain translated exonyms.
+
+All twelve are capitalized although CLDR returns `dansk`, `íslenska`,
+`italiano`, `português` and `svenska` lowercase: a picker row is
+sentence-initial by position, and twelve rows that match scan faster than
+five lowercase plus seven capitalized. The choice is identical in every
+catalog and is never a per-catalog judgement.
 
 ## D2 — Informal Slavic register
 
@@ -187,6 +194,14 @@ Login 401 must not distinguish an unknown user from a wrong password.
 | settings.uiLanguage.sk | Slovenčina | Slovenčina |
 | settings.uiLanguage.cs | Čeština | Čeština |
 | settings.uiLanguage.pl | Polski | Polski |
+| settings.uiLanguage.af | Afrikaans | Afrikaans |
+| settings.uiLanguage.da | Dansk | Dansk |
+| settings.uiLanguage.de | Deutsch | Deutsch |
+| settings.uiLanguage.is | Íslenska | Íslenska |
+| settings.uiLanguage.it | Italiano | Italiano |
+| settings.uiLanguage.nl | Nederlands | Nederlands |
+| settings.uiLanguage.pt | Português | Português |
+| settings.uiLanguage.sv | Svenska | Svenska |
 | settings.gameVariant.title | Game variant | Variant hry |
 | settings.gameVariant.description | Tiles, bag, and lexicon. Applies to NEW games only and never changes a running game. This is not the interface language. | Písmená, vrecko a lexikón. Platí pre NOVÉ partie a nemení prebiehajúcu partiu. Toto nie je jazyk rozhrania. |
 | settings.gameVariant.english | English | Angličtina |

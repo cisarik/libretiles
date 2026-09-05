@@ -198,6 +198,14 @@ export const daText: Record<TextKey, string> = {
   "settings.uiLanguage.sk": "Slovenčina",
   "settings.uiLanguage.cs": "Čeština",
   "settings.uiLanguage.pl": "Polski",
+  "settings.uiLanguage.af": "Afrikaans",
+  "settings.uiLanguage.da": "Dansk",
+  "settings.uiLanguage.de": "Deutsch",
+  "settings.uiLanguage.is": "Íslenska",
+  "settings.uiLanguage.it": "Italiano",
+  "settings.uiLanguage.nl": "Nederlands",
+  "settings.uiLanguage.pt": "Português",
+  "settings.uiLanguage.sv": "Svenska",
   "picker.search": "Søg",
   // `Ingen resultater` and not `Intet match`: `match` is a neuter loan in Danish, so the negative
   // determiner would have to be `intet`, and the plural noun phrase avoids that entirely.
