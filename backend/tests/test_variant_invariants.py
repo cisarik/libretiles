@@ -135,7 +135,7 @@ _MANIFEST_STEMS = [path.stem for path in _MANIFEST_PATHS]
 # are legitimate declared INPUTS whose derived twins are dictionary_path and
 # two_tile_words_path.
 # ⛔ lexicon_provenance is a DECLARED key, not a derived property, and must never be added
-# here: all four shipped manifests declare it.
+# here: all TWELVE shipped manifests declare it.
 _FORBIDDEN_DERIVED_KEYS = (
     "total_tiles",
     "distribution",

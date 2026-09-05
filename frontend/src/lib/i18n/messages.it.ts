@@ -72,12 +72,16 @@ export const itText: Record<TextKey, string> = {
   "landing.card.saved.body": "Riprendi le partite con l'AI o con umani",
   "landing.footnote":
     "Open source • Collins Scrabble Words 2019 • 279.496 parole valide",
+  // `Account` is byte-identical to English at both this eyebrow and `nav.account`, and it is the
+  // ordinary Italian noun (un account) — Italian has no competing native term in software UI.
   "auth.eyebrow": "Account",
   "auth.heading.login": "Accesso",
   "auth.heading.register": "Nuovo account",
   "auth.tab.login": "Accedi",
   "auth.tab.register": "Registrati",
   "auth.field.username": "Nome utente",
+  // Byte-identical to English and correct Italian: `password` (la password) is the standard term;
+  // `parola d'ordine` exists but reads as military rather than as a login field.
   "auth.field.password": "Password",
   "a11y.chatInput": "Messaggio della chat",
   "a11y.dialog.profile": "Profilo",
@@ -204,9 +208,12 @@ export const itText: Record<TextKey, string> = {
   "settings.rival.description":
     "L'avversario delle nuove partite è scelto dall'amministratore.",
   "nav.settings": "Impostazioni",
+  // Byte-identical to English, same naturalized noun as `auth.eyebrow` above.
   "nav.account": "Account",
   "profile.subtitle":
     "Dati dell'account e sicurezza della password in un unico posto.",
+  // Byte-identical to English and correct Italian: `email` (la email) is the standard form.
+  // ⚠ NOT `e-mail` — Italian has settled on the unhyphenated spelling, unlike German and Dutch.
   "profile.email": "Email",
   "profile.noEmail": "Nessuna email impostata",
   "profile.memberSince": "Membro dal",

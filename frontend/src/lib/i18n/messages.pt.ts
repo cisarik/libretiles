@@ -294,6 +294,8 @@ export const ptText: Record<TextKey, string> = {
   "controls.exchange": "Trocar",
   "controls.confirmExchange": "Confirmar troca",
   "controls.cancel": "Cancelar",
+  // Byte-identical to English and correct Portuguese: `PTS` abbreviates `pontos` exactly as it
+  // abbreviates `points`, so the shared form is the right one rather than an untranslated leftover.
   "board.pts": "PTS",
   "board.pinchToZoom": "Zoom com dois dedos",
   "board.dragToPan": "Arrastar para mover",

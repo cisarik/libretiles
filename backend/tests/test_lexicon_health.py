@@ -238,8 +238,8 @@ def test_audit_rejects_a_duplicate_surviving_token(tmp_path: Path) -> None:
 
     The index collapses duplicates into a ``frozenset`` (``gamecore/fastdict.py:37``), so a
     duplicate is invisible waste that only a whole-file audit can see. Measured at this
-    baseline: all four shipped lexicons carry ZERO duplicates, so the policy costs the
-    shipped assets nothing.
+    baseline: all THIRTEEN shipped assets — twelve dictionaries plus the Slovak two-tile list —
+    carry ZERO duplicates, so the policy costs the shipped assets nothing.
     """
     audit = audit_lexicon(
         _write_text(tmp_path, "dup.txt", "alpha\nbeta\nALPHA\ngamma\n"), min_words=1

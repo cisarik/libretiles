@@ -55,7 +55,7 @@ LICENSE_SENTENCE = (
 # ⛔ THE EXPANDER IS PINNED, AND A MISMATCH IS FATAL. ``unmunch`` prints no version of its own,
 # so the identity comes from ``hunspell -vv``. A different expander may expand the same affix
 # file into a DIFFERENT word list, and this script writes a shipped asset.
-# ⛔ Keep this value IDENTICAL in all four build scripts; test P13 asserts exactly that.
+# ⛔ Keep this value IDENTICAL in all ELEVEN build scripts; test P13 asserts exactly that.
 EXPECTED_EXPANDER = "hunspell 1.7.3"
 
 # ⛔ THE ONE RULE THAT MAKES THIS LANGUAGE PLAYABLE, AND IT IS SOURCED.

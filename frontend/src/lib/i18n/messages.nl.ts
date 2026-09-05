@@ -83,6 +83,8 @@ export const nlText: Record<TextKey, string> = {
   "landing.card.saved.body": "Partijen tegen AI of mensen voortzetten",
   "landing.footnote":
     "Open source • Collins Scrabble Words 2019 • 279.496 geldige woorden",
+  // `Account` is byte-identical to English at both this eyebrow and `nav.account`, and it is the
+  // ordinary Dutch noun (het account) — the same naturalization as `chat` documented above.
   "auth.eyebrow": "Account",
   // Dutch sentence case collapses English's "Sign in" / "Sign In" pair into one string, so the
   // heading and the tab are deliberately identical rather than artificially distinguished.
@@ -215,6 +217,7 @@ export const nlText: Record<TextKey, string> = {
   "settings.rival.description":
     "De beheerder kiest de tegenstander voor nieuwe partijen.",
   "nav.settings": "Instellingen",
+  // Byte-identical to English, same naturalized noun as `auth.eyebrow` above.
   "nav.account": "Account",
   "profile.subtitle":
     "Accountgegevens en wachtwoordbeveiliging op één plek.",
@@ -291,6 +294,8 @@ export const nlText: Record<TextKey, string> = {
   "history.col.rival": "Tegenstander",
   "history.col.mode": "Modus",
   "history.col.result": "Resultaat",
+  // Byte-identical to English and correct Dutch: `score` (de score) is the native noun for a
+  // points total; `puntenstand` exists but is too long for a table column head.
   "history.col.score": "Score",
   "history.col.moves": "Zetten",
   "history.col.updated": "Bijgewerkt",
