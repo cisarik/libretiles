@@ -1309,12 +1309,30 @@ describe("AC-GAME-TERM Czech kámen and Polish płytki on the exchange prompt", 
   });
 });
 
+// The twelve installed variant slugs, in VARIANT_NAME_KEYS order (GameLanguagePanel.tsx), which is
+// the same set as the manifests under backend/assets/variants/. This is the SHIPPED axis.
 const INSTALLED_VARIANTS = [
   "english",
   "slovak",
   "czech",
   "polish",
+  "afrikaans",
+  "italian",
+  "dutch",
+  "german",
+  "portuguese",
+  "danish",
+  "swedish",
+  "icelandic",
 ] as const;
+
+// The REVIEWED axis, and it is deliberately narrower than the shipped one — the same narrowing
+// REVIEWED_LOCALES makes, for the same reason. Exact expected exonyms are hand-written below, and
+// twelve slugs × twelve locales would be 144 hand-typed exonyms, 96 of them in languages that have
+// had no second-opinion review, all of which would have to be re-typed whenever a translator
+// improved a word. The shipped axis is covered by the zero-hand-written-cell property assertion in
+// the same test instead.
+const REVIEWED_VARIANTS = ["english", "slovak", "czech", "polish"] as const;
 
 function variantForSlug(slug: string, displayName: string): VariantSummary {
   return {
@@ -1336,7 +1354,7 @@ function queueLabel(
 
 describe("AC-QUEUE-VARIANT uii-01-F14 queue label follows the variant", () => {
   it("renders each installed variant's own name and never another variant's", () => {
-    const ownName: Record<(typeof INSTALLED_VARIANTS)[number], Record<(typeof REVIEWED_LOCALES)[number], string>> = {
+    const ownName: Record<(typeof REVIEWED_VARIANTS)[number], Record<(typeof REVIEWED_LOCALES)[number], string>> = {
       english: {
         en: "English",
         sk: "Angličtina",
@@ -1364,13 +1382,13 @@ describe("AC-QUEUE-VARIANT uii-01-F14 queue label follows the variant", () => {
     };
 
     for (const locale of REVIEWED_LOCALES) {
-      for (const slug of INSTALLED_VARIANTS) {
+      for (const slug of REVIEWED_VARIANTS) {
         const label = queueLabel(
           locale,
           variantForSlug(slug, `NOT-${slug}`),
         );
         expect(label).toContain(ownName[slug][locale]);
-        for (const other of INSTALLED_VARIANTS) {
+        for (const other of REVIEWED_VARIANTS) {
           if (other === slug) continue;
           expect(label).not.toContain(ownName[other][locale]);
         }
@@ -1389,6 +1407,62 @@ describe("AC-QUEUE-VARIANT uii-01-F14 queue label follows the variant", () => {
         "English",
       );
     }
+
+    // ── THE PROPERTY HALF: the whole shipped axis, with ZERO hand-written exonyms ─────────────
+    // Both sides are read from the catalog, so nothing here asserts that a string equals itself.
+    // What is asserted is that the LABEL BUILDER routed the right catalog value into the right
+    // slot and did not smuggle a second language's name in alongside it.
+    //
+    // The negative half folds first and then requires a WHOLE-WORD match, and that shape is
+    // load-bearing rather than decorative. A naive case-SENSITIVE `not.toContain` also measures
+    // zero collisions on this tree today — but only by an accident of capitalization. In
+    // Icelandic, `Enska` (English) sits inside `Hollenska` (Dutch), `Íslenska` (Icelandic) and
+    // `Sænska` (Swedish), and the case-sensitive check survives solely because the embedded
+    // occurrence is lowercase `enska` while the standalone name is capitalized `Enska`. Any future
+    // label that renders a language name lowercase mid-sentence breaks that, and Icelandic and
+    // Portuguese both treat language names as ordinary common nouns, so it is a matter of time.
+    // Folding first makes the comparison case-INSENSITIVE, which is strictly stronger — and which
+    // a naive substring check would fail on exactly those three pairs. The word boundary is what
+    // keeps the stronger comparison green. There is deliberately NO exemption list: measured over
+    // all 1584 ordered pairs, none is needed.
+    //
+    // `\b` behaves as expected because every folded label here is pure ASCII; AC-FOLD-ASCII-12
+    // asserts exactly that over these same 144 cells, so it is not re-asserted.
+    let cells = 0;
+    let pairs = 0;
+    for (const locale of LOCALES) {
+      // Fold each installed variant's name in this locale once. `\b` is exact only for a token of
+      // word characters, so the token shape is checked rather than assumed: a future name folding
+      // to something else fails loudly here instead of making the collision check vacuously true,
+      // and the check is also what makes interpolating the name into a RegExp safe.
+      const foldedNames = INSTALLED_VARIANTS.map((slug) => {
+        const key = `settings.gameVariant.${slug}` as const;
+        const folded = foldForSearch(t(locale, key));
+        expect(folded).toMatch(/^[a-z]+$/);
+        return folded;
+      });
+
+      for (let i = 0; i < INSTALLED_VARIANTS.length; i += 1) {
+        const slug = INSTALLED_VARIANTS[i];
+        const key = `settings.gameVariant.${slug}` as const;
+        const label = queueLabel(locale, variantForSlug(slug, `NOT-${slug}`));
+        expect(label).toContain(t(locale, key));
+        cells += 1;
+
+        const foldedLabel = foldForSearch(label);
+        for (let j = 0; j < INSTALLED_VARIANTS.length; j += 1) {
+          if (j === i) continue;
+          expect(foldedLabel).not.toMatch(new RegExp(`\\b${foldedNames[j]}\\b`));
+          pairs += 1;
+        }
+      }
+    }
+
+    // 12 slugs × 12 locales = 144 cells, and each cell checks the other eleven names, so
+    // 12 × 12 × 11 = 1584 ordered pairs. Pinned the way AC-STRUCT-12 pins its cell counts, so a
+    // loop that silently visited fewer cannot pass.
+    expect(cells).toBe(144);
+    expect(pairs).toBe(1584);
   });
 });
 
