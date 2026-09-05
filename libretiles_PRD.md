@@ -156,7 +156,6 @@ Libre Tiles is an open-source web-based Libre Tiles game playable in twelve boar
 
 - The eight newest interface catalogs (German, Portuguese, Icelandic, Italian, Dutch, Danish, Swedish, Afrikaans) are machine-authored and have had no second-opinion review.
 - Localization tests pin exact expected wording for four of the twelve locales (`REVIEWED_LOCALES` = `en sk cs pl`) and cover the other eight structurally instead.
-- Flags exist for only four of the twelve locales, so eight interface-language picker rows deliberately render an endonym with no flag.
 - The Slovak word list is a hunspell expansion of the LibreOffice `sk_SK` dictionary: playable, not an SSS-official list.
 - Human vs human multiplayer deferred to v2.
 - Online dictionary API (Tier 2) may not be needed if the local Collins 2019 list is sufficient.

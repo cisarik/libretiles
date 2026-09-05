@@ -40,7 +40,6 @@ What this does **not** claim:
 
 - The eight newest interface catalogs (German, Portuguese, Icelandic, Italian, Dutch, Danish, Swedish, Afrikaans) are machine-authored and have had **no second-opinion review**.
 - The test suite pins exact expected wording for four of the twelve locales (`REVIEWED_LOCALES` = `en sk cs pl`) and covers the other eight structurally.
-- Flags exist for only four of the twelve locales, so eight picker rows deliberately render an endonym with no flag.
 - The Slovak word list is a hunspell expansion of the LibreOffice `sk_SK` dictionary — playable, **not** an SSS-official list.
 
 ## Quick Start

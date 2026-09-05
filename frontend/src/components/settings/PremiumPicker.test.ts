@@ -11,22 +11,31 @@ import {
   type PremiumPickerOption,
 } from "./PremiumPicker";
 
-// The twelve shipped interface-language endonyms, in LOCALES order. Only four locale flags exist
-// under frontend/public/, so only four rows carry a flagSrc: a fixture where every row has one
-// cannot represent the configuration this product actually ships.
+// The twelve shipped interface-language endonyms, in LOCALES order, each with the flag that now
+// exists for it under frontend/public/. This fixture mirrors the shipping configuration exactly.
 const ENDONYMS: readonly PremiumPickerOption[] = [
   { value: "en", label: "English", flagSrc: "/en.png" },
   { value: "sk", label: "Slovenčina", flagSrc: "/sk.png" },
   { value: "cs", label: "Čeština", flagSrc: "/cs.png" },
   { value: "pl", label: "Polski", flagSrc: "/pl.png" },
-  { value: "de", label: "Deutsch" },
-  { value: "pt", label: "Português" },
-  { value: "is", label: "Íslenska" },
-  { value: "it", label: "Italiano" },
-  { value: "nl", label: "Nederlands" },
-  { value: "da", label: "Dansk" },
-  { value: "sv", label: "Svenska" },
-  { value: "af", label: "Afrikaans" },
+  { value: "de", label: "Deutsch", flagSrc: "/de.png" },
+  { value: "pt", label: "Português", flagSrc: "/pt.png" },
+  { value: "is", label: "Íslenska", flagSrc: "/is.png" },
+  { value: "it", label: "Italiano", flagSrc: "/it.png" },
+  { value: "nl", label: "Nederlands", flagSrc: "/nl.png" },
+  { value: "da", label: "Dansk", flagSrc: "/da.png" },
+  { value: "sv", label: "Svenska", flagSrc: "/sv.png" },
+  { value: "af", label: "Afrikaans", flagSrc: "/af.png" },
+];
+
+// ⛔ THE FLAGLESS PATH MUST STAY COVERED EVEN THOUGH NOTHING SHIPS IT TODAY. `flagSrc` is optional
+// on PremiumPickerOption, and the GAME-VARIANT picker still reaches this path for any variant slug
+// absent from VARIANT_FLAG_SRC. A fixture that only ever supplies a flag would leave the conditional
+// render untested and let a future thirteenth locale or variant regress it silently.
+const MIXED_FLAGS: readonly PremiumPickerOption[] = [
+  { value: "en", label: "English", flagSrc: "/en.png" },
+  { value: "xx", label: "Ruritanian" },
+  { value: "sk", label: "Slovenčina", flagSrc: "/sk.png" },
 ];
 
 describe("AC-FOLD foldForSearch", () => {
@@ -181,6 +190,20 @@ function pickerMarkup(value: string): string {
   );
 }
 
+function mixedMarkup(value: string): string {
+  return renderToStaticMarkup(
+    createElement(PremiumPicker, {
+      id: "mixed-picker",
+      options: MIXED_FLAGS,
+      value,
+      onChange: () => undefined,
+      searchPlaceholder: "Search",
+      emptyText: "No match",
+      ariaLabel: "Mixed flags",
+    }),
+  );
+}
+
 function rowMarkup(markup: string, value: string): string {
   const start = markup.indexOf(`data-option-value="${value}"`);
   expect(start).toBeGreaterThan(-1);
@@ -188,23 +211,28 @@ function rowMarkup(markup: string, value: string): string {
 }
 
 describe("AC-PICKER-FLAGLESS rows without a flag", () => {
-  it("renders every label and an image only for the four rows that have a flag", () => {
-    // `de` is selected, and it has no flag, so the closed trigger contributes no image either.
+  it("renders a flag on every shipped row and the trigger image too", () => {
     const markup = pickerMarkup("de");
     for (const option of ENDONYMS) {
       const row = rowMarkup(markup, option.value);
       expect(row).toContain(option.label);
-      if (option.flagSrc) {
-        expect(row).toContain(`src="${option.flagSrc}"`);
-      } else {
-        expect(row).not.toContain("<img");
-      }
+      expect(row).toContain(`src="${option.flagSrc}"`);
     }
-    expect(markup.match(/<img/g)?.length ?? 0).toBe(4);
+    // Twelve rows plus the closed trigger, which repeats the selected row's flag.
+    expect(markup.match(/<img/g)?.length ?? 0).toBe(13);
   });
 
-  it("adds the trigger image only when the selected row has a flag", () => {
-    expect(pickerMarkup("sk").match(/<img/g)?.length ?? 0).toBe(5);
-    expect(pickerMarkup("is").match(/<img/g)?.length ?? 0).toBe(4);
+  it("renders a label and NO image for a row that has no flag", () => {
+    const markup = mixedMarkup("en");
+    expect(rowMarkup(markup, "xx")).toContain("Ruritanian");
+    expect(rowMarkup(markup, "xx")).not.toContain("<img");
+    expect(rowMarkup(markup, "en")).toContain('src="/en.png"');
+    // Two flagged rows plus the trigger; the flagless row contributes nothing.
+    expect(markup.match(/<img/g)?.length ?? 0).toBe(3);
+  });
+
+  it("omits the trigger image when the SELECTED row has no flag", () => {
+    const markup = mixedMarkup("xx");
+    expect(markup.match(/<img/g)?.length ?? 0).toBe(2);
   });
 });

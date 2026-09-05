@@ -24,11 +24,22 @@ const VARIANT_NAME_KEYS: Record<string, TextKey> = {
   icelandic: "settings.gameVariant.icelandic",
 };
 
+// Slug-keyed rather than locale-keyed: a game variant is not an interface locale, and
+// the two sets only happen to coincide today. Kept PARTIAL with a conditional spread
+// so a thirteenth variant cannot silently request a missing image.
 const VARIANT_FLAG_SRC: Record<string, string> = {
   english: "/en.png",
   slovak: "/sk.png",
   czech: "/cs.png",
   polish: "/pl.png",
+  german: "/de.png",
+  portuguese: "/pt.png",
+  icelandic: "/is.png",
+  italian: "/it.png",
+  dutch: "/nl.png",
+  danish: "/da.png",
+  swedish: "/sv.png",
+  afrikaans: "/af.png",
 };
 
 export function variantDisplayName(

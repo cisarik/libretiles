@@ -348,9 +348,11 @@ function PremiumLookPanel({
   );
 }
 
-// Only these four flags exist under frontend/public/. An unconditional
-// `/${value}.png` would request eight missing images once LOCALES carries twelve
-// locales, and TypeScript cannot see that: a template string always has a value.
+// A lookup rather than an unconditional `/${value}.png`, because a template string
+// always has a value and TypeScript cannot see a missing file. Every locale in
+// LOCALES now has a flag, but the map stays PARTIAL and the spread stays
+// conditional on purpose: a thirteenth locale would otherwise silently request an
+// image that does not exist, which is the defect this shape was introduced to fix.
 // GameLanguagePanel solves the identical problem the same way. `hu.png` also sits
 // in public/ but `hu` is not a locale and must never be offered as one.
 const LOCALE_FLAG_SRC: Partial<Record<Locale, string>> = {
@@ -358,6 +360,14 @@ const LOCALE_FLAG_SRC: Partial<Record<Locale, string>> = {
   sk: "/sk.png",
   cs: "/cs.png",
   pl: "/pl.png",
+  de: "/de.png",
+  pt: "/pt.png",
+  is: "/is.png",
+  it: "/it.png",
+  nl: "/nl.png",
+  da: "/da.png",
+  sv: "/sv.png",
+  af: "/af.png",
 };
 
 function InterfaceLanguagePanel() {
