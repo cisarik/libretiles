@@ -1041,6 +1041,29 @@ class GameAPITest(TestCase):
         data = resp.json()
         assert "compact_state" in data
         assert "grid:" in data["compact_state"]
+        # ⭐ The AUTHORITATIVE copy beside that string is structured: a 15x15 cell
+        # grid and an ordered rack of complete tokens, so a multi-code-point tile
+        # can never occupy two columns on the wire to the prompt builder.
+        ai_state = data["ai_state"]
+        assert sorted(ai_state) == [
+            "ai_rack",
+            "ai_score",
+            "grid",
+            "human_score",
+            "turn",
+        ]
+        assert "blanks" not in ai_state
+        assert len(ai_state["grid"]) == 15
+        assert all(isinstance(row, list) and len(row) == 15 for row in ai_state["grid"])
+        assert all(cell is None for row in ai_state["grid"] for cell in row)
+        assert isinstance(ai_state["ai_rack"], list)
+        assert len(ai_state["ai_rack"]) == 7
+        assert all(isinstance(token, str) and token for token in ai_state["ai_rack"])
+        # English is a single-code-point tile set, so the legacy human-readable
+        # string keeps its exact shape, including the derived `blanks:` line.
+        assert "blanks:[]" in data["compact_state"]
+        assert f"ai_rack:{''.join(ai_state['ai_rack'])}" in data["compact_state"]
+        assert "ai_state_json" not in data["compact_state"]
         assert data["variant"] == "english"
         assert data["lexicon_id"] == "collins2019"
         assert "A" in data["alphabet"]

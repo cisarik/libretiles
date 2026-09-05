@@ -1152,6 +1152,64 @@ describe("POST /api/ai/move", () => {
     expect(opts.prompt).not.toContain("Q=10");
   });
 
+  it("sends a truthful token grid and rack for a structured multigraph context", async () => {
+    // ⭐ The whole slice, end to end through the SSE route: the backend's
+    // structured cell grid and ordered rack reach the provider prompt with tile
+    // boundaries intact. At the baseline this same board arrived as the
+    // eighteen-character row `.......SZDZS......`, the fifteen-character gate
+    // dropped it, anchors collapsed to the literal `(7,7)`, and the rack
+    // `SZDZS?` was fabricated into `S Z D Z S ?`.
+    const grid = Array.from({ length: 15 }, () =>
+      Array.from({ length: 15 }, () => null as { token: string; blank_as: string | null } | null),
+    );
+    grid[7][7] = { token: "SZ", blank_as: null };
+    grid[7][8] = { token: "DZS", blank_as: null };
+    grid[8][7] = { token: "?", blank_as: "CS" };
+
+    mockBackend({
+      context: {
+        body: {
+          ...defaultContext(),
+          is_first_move: false,
+          compact_state: `ai_state_json:\n${JSON.stringify({
+            grid,
+            ai_rack: ["SZ", "DZS", "?"],
+            human_score: 0,
+            ai_score: 0,
+            turn: "AI",
+          })}\n`,
+          ai_state: {
+            grid,
+            ai_rack: ["SZ", "DZS", "?"],
+            human_score: 0,
+            ai_score: 0,
+          },
+          variant: "multigraph",
+          lexicon_id: "multigraph",
+          alphabet: ["A", "Á", "CS", "DZS", "L·L", "S", "SZ", "Z"],
+          tile_points: { "?": 0, A: 1, CS: 5, DZS: 8, S: 1, SZ: 5, Z: 3 },
+        },
+      },
+      "/validate-move/": {
+        body: { valid: true, total_score: 6, words: [{ word: "SZA", valid: true }] },
+      },
+      "/ai-move/": {
+        body: { ok: true, action: "place", points: 6, words: [{ word: "SZA", score: 6 }] },
+      },
+    });
+
+    await runRoute();
+    const opts = generateTextMock.mock.calls[0][0] as { prompt: string };
+
+    expect(opts.prompt).toContain("RACK: SZ DZS ?");
+    expect(opts.prompt).not.toContain("RACK: S Z D Z S ?");
+    expect(opts.prompt).toContain("row 07 |.|.|.|.|.|.|.|SZ|DZS|.|.|.|.|.|.|");
+    expect(opts.prompt).toContain("row 08 |.|.|.|.|.|.|.|?=CS|.|.|.|.|.|.|.|");
+    expect(opts.prompt).toContain("(6,7) (6,8) (7,6) (7,9) (8,6) (8,8) (9,7)");
+    expect(opts.prompt).not.toContain("SZDZS");
+    expect(opts.prompt).toContain("DZS=8");
+  });
+
   it("keeps ranked Unicode diacritic placements instead of dropping the candidate", async () => {
     generateTextMock.mockResolvedValue({ text: "I would play ĽÁŤ.", steps: [stepFinish(0)] });
     const fetchMock = mockBackend({

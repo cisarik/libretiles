@@ -5,6 +5,7 @@ import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { useGameStore } from "@/hooks/useGameStore";
 import { useT } from "@/lib/i18n";
 import { providerBadgeLabel } from "@/lib/ai-fallback";
+import { containsMultigraphToken } from "@/lib/prompts";
 import {
   PREMIUM_PING_PONG_TILE_STYLE,
   isAttemptPingPongActive,
@@ -32,6 +33,7 @@ function MiniTile({
   const pts = tilePoints?.[key] ?? TILE_POINTS[key] ?? 0;
   return (
     <div
+      data-testid="candidate-tile"
       className={`
         relative w-8 h-8 rounded-md flex items-center justify-center
         font-bold text-sm uppercase select-none shrink-0
@@ -59,6 +61,7 @@ function WordCandidate({
   isNew,
   rank,
   tilePoints,
+  lexicalOnly,
 }: {
   word: string;
   score: number;
@@ -67,9 +70,15 @@ function WordCandidate({
   isNew: boolean;
   rank: number;
   tilePoints?: Record<string, number>;
+  /**
+   * The variant's tile alphabet holds a multigraph, so the physical tiles a
+   * candidate played CANNOT be recovered from its lexical string: `SZA` is
+   * `SZ`+`A` or `S`+`Z`+`A`. Render the word as text with the authoritative
+   * total score instead of inventing one tile per character.
+   */
+  lexicalOnly: boolean;
 }) {
   const { t } = useT();
-  const letters = word.toUpperCase().split("");
 
   return (
     <motion.div
@@ -91,12 +100,33 @@ function WordCandidate({
         {valid ? `#${rank}` : "—"}
       </span>
 
-      {/* Tiles */}
-      <div className="flex gap-0.5 flex-1 min-w-0">
-        {letters.map((ch, i) => (
-          <MiniTile key={`${ch}-${i}`} letter={ch} highlight={isBest} tilePoints={tilePoints} />
-        ))}
-      </div>
+      {/* Tiles, or the lexical word when tiles are not derivable */}
+      {lexicalOnly ? (
+        <div className="flex gap-0.5 flex-1 min-w-0">
+          <span
+            data-testid="candidate-lexical"
+            className={`truncate text-sm font-bold uppercase tracking-wide ${
+              isBest ? "text-amber-200" : "text-stone-200"
+            }`}
+          >
+            {word.toUpperCase()}
+          </span>
+        </div>
+      ) : (
+        <div className="flex gap-0.5 flex-1 min-w-0">
+          {word
+            .toUpperCase()
+            .split("")
+            .map((ch, i) => (
+              <MiniTile
+                key={`${ch}-${i}`}
+                letter={ch}
+                highlight={isBest}
+                tilePoints={tilePoints}
+              />
+            ))}
+        </div>
+      )}
 
       {/* Score */}
       <div className={`flex items-center gap-1 shrink-0 ${
@@ -249,7 +279,13 @@ export function AIThinkingOverlay() {
   const aiCandidates = useGameStore((s) => s.aiCandidates);
   const aiStatusMessage = useGameStore((s) => s.aiStatusMessage);
   const tilePoints = useGameStore((s) => s.gameState?.tile_points);
+  const alphabet = useGameStore((s) => s.gameState?.alphabet);
   const feedEndRef = useRef<HTMLDivElement>(null);
+
+  // ONE predicate, shared with the prompt builder, over the variant's TILE SET.
+  // With a single-code-point alphabet the presentation below is unchanged, which
+  // is what all twelve shipped languages need.
+  const lexicalOnly = containsMultigraphToken(alphabet ?? []);
 
   const urgent = aiCountdown > 0 && aiCountdown <= 10;
 
@@ -334,6 +370,7 @@ export function AIThinkingOverlay() {
                     isNew={c === aiCandidates[aiCandidates.length - 1]}
                     rank={i + 1}
                     tilePoints={tilePoints}
+                    lexicalOnly={lexicalOnly}
                   />
                 ))}
                 {validSorted.length === 0 && rejectedCount > 0 && (

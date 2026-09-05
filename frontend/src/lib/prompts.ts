@@ -9,6 +9,8 @@
  * the same factory with a different spec; it must not name Collins.
  */
 
+import { boardCellLetter, type BoardCell } from "./types";
+
 export const MOVE_PROMPT_VERSION = "pfr-s2-core-1";
 
 export type MovePromptLexiconId = "collins2019" | "slovak";
@@ -43,16 +45,48 @@ export type JudgePromptSpec = {
 export type MoveUserPromptContext = {
   compact_state: string;
   ai_state: {
-    ai_rack: string;
+    /**
+     * 15x15 CELL grid, the same shape the game-state wire uses. Present on
+     * every modern context; absent on a legacy one.
+     */
+    grid?: BoardCell[][] | null;
+    /** Modern: an ORDERED array of complete tokens. Legacy: a bare string. */
+    ai_rack: string | string[];
     human_score: number;
     ai_score: number;
     tile_points?: Record<string, number>;
   };
   is_first_move: boolean;
   tile_points?: Record<string, number>;
+  alphabet?: string[];
   lexicon_id?: string;
   variant?: string;
 };
+
+/**
+ * A legacy (unstructured) context arrived for a variant whose TILE SET holds a
+ * multigraph.
+ *
+ * ⛔ Thrown rather than rendered. Reverse-segmenting `SZDZS` back into tiles is
+ * exactly the lie this path exists to remove — `SZ`+`DZS`, `S`+`Z`+`D`+`Z`+`S`
+ * and `SZ`+`D`+`ZS` are indistinguishable — so a "best effort" fallback would
+ * reintroduce it in the one place nobody inspects. The AI move route turns this
+ * into a terminal error, which is loud, instead of a board the model misreads.
+ */
+export class UnstructuredMultigraphContextError extends Error {
+  readonly code = "unstructured_multigraph_context";
+
+  constructor(tokens: string[]) {
+    super(
+      "Refusing to render a multigraph board from an unstructured AI context " +
+        `(multigraph tile tokens: ${tokens.join(", ")}). ` +
+        "A structured ai_state.grid and ai_rack array are required; tile " +
+        "boundaries must never be reconstructed from a joined string.",
+    );
+    this.name = "UnstructuredMultigraphContextError";
+  }
+}
+
 
 const ENGLISH_TILE_VALUES =
   "A=1 B=3 C=3 D=2 E=1 F=4 G=2 H=4 I=1 J=8 K=5 L=1 M=3 " +
@@ -187,9 +221,45 @@ export const MOVE_SYSTEM_PROMPT = moveSystemPromptFor(englishMoveSpec);
 
 export const JUDGE_SYSTEM_PROMPT = judgeSystemPromptFor(englishJudgeSpec);
 
+/**
+ * Gate for the LEGACY string board only.
+ *
+ * ⛔ It is never consulted for a structured context: a fifteen-CELL row whose
+ * tokens are several code points wide can never match a fifteen-CHARACTER
+ * regex, which is precisely how an 18-character row used to be dropped in
+ * silence. It stays here because it is the only way to find the board rows
+ * inside a free-form legacy string, and its behaviour is pinned by tests.
+ */
 const GRID_ROW = /^[\p{L}.]{15}$/u;
 const SEARCH_PROFILE_BEGIN = "=== SEARCH_PROFILE (advisory only) ===";
 const SEARCH_PROFILE_END = "=== END SEARCH_PROFILE ===";
+
+const BOARD_SIZE = 15;
+
+const TOKEN_GRID_LEGEND =
+  "TOKEN GRID — each row lists 15 columns separated by '|'. '.' is an empty " +
+  "square. ONE tile may be several letters (SZ, DZS), so a column is a whole " +
+  "tile, never a letter. '?=CS' is a blank played as CS and scores zero.";
+
+/** True when this ONE tile token is more than one code point wide. */
+export function isMultigraphToken(token: string): boolean {
+  return [...token].length > 1;
+}
+
+/**
+ * THE multigraph predicate for the frontend, in ONE place.
+ *
+ * Callers pass a TILE SET — the variant snapshot's tile tokens, or the game
+ * state's alphabet — never the current board contents. Code points, not UTF-16
+ * units: `[...token]` iterates code points, and every shipped tile token is
+ * NFC, so a single accented letter such as `Á` counts as one.
+ */
+export function containsMultigraphToken(tokens: Iterable<string>): boolean {
+  for (const token of tokens) {
+    if (isMultigraphToken(token)) return true;
+  }
+  return false;
+}
 
 export function movePromptSpecFromContext(context: {
   lexicon_id?: unknown;
@@ -241,17 +311,43 @@ export function renderLabeledBoard(rows: string[]): string {
     .join("\n");
 }
 
-export function formatRackMultiset(rack: string): string {
-  const trimmed = rack.trim();
-  if (!trimmed) return "";
-  if (/\s/.test(trimmed)) {
-    return trimmed.split(/\s+/).join(" ");
-  }
-  return trimmed.split("").join(" ");
+/**
+ * ONE internal board representation for every path: the wire's cell shape.
+ *
+ * A legacy fifteen-character row is widened into fifteen single-code-point
+ * cells, so anchors and rendering read COORDINATES rather than string indices
+ * and the two paths cannot drift apart.
+ */
+function cellRowsFromGridStrings(rows: string[]): BoardCell[][] {
+  return rows.map((row) =>
+    [...row].map((character) =>
+      character === "." ? null : { token: character, blank_as: null },
+    ),
+  );
 }
 
-export function listAnchorSquares(rows: string[]): string {
-  if (rows.length !== 15) {
+function isCellGrid(value: unknown): value is BoardCell[][] {
+  if (!Array.isArray(value) || value.length !== BOARD_SIZE) return false;
+  return value.every(
+    (row) => Array.isArray(row) && row.length === BOARD_SIZE,
+  );
+}
+
+/** Realized tokens actually sitting on the board, empty squares excluded. */
+function occupantTokens(rows: BoardCell[][]): string[] {
+  const tokens: string[] = [];
+  for (const row of rows) {
+    for (const cell of row) {
+      const token = boardCellLetter(cell);
+      if (token) tokens.push(token);
+    }
+  }
+  return tokens;
+}
+
+/** Empty squares beside an occupied one, by COORDINATE. Opening returns center. */
+function anchorsFromCells(rows: BoardCell[][]): string {
+  if (rows.length !== BOARD_SIZE) {
     return "(7,7)";
   }
   let occupied = 0;
@@ -262,16 +358,15 @@ export function listAnchorSquares(rows: string[]): string {
     [0, -1],
     [0, 1],
   ];
-  for (let row = 0; row < 15; row += 1) {
-    for (let col = 0; col < 15; col += 1) {
-      const letter = rows[row][col];
-      if (!letter || letter === ".") continue;
+  for (let row = 0; row < BOARD_SIZE; row += 1) {
+    for (let col = 0; col < BOARD_SIZE; col += 1) {
+      if (!boardCellLetter(rows[row][col] ?? null)) continue;
       occupied += 1;
       for (const [dRow, dCol] of dirs) {
         const nextRow = row + dRow;
         const nextCol = col + dCol;
         if (nextRow < 0 || nextRow > 14 || nextCol < 0 || nextCol > 14) continue;
-        if (rows[nextRow][nextCol] === ".") {
+        if (!boardCellLetter(rows[nextRow][nextCol] ?? null)) {
           anchors.add(`(${nextRow},${nextCol})`);
         }
       }
@@ -281,6 +376,55 @@ export function listAnchorSquares(rows: string[]): string {
     return "(7,7) — center; first move must cover this square";
   }
   return [...anchors].sort().join(" ");
+}
+
+/**
+ * `row NN |...............|` — the packed form the CORE describes.
+ *
+ * ⛔ Only legal when every occupant is one code point wide; a multigraph tile
+ * here is the original defect, where one tile ate two columns.
+ */
+function renderPackedCellBoard(rows: BoardCell[][]): string {
+  return renderLabeledBoard(
+    rows.map((row) =>
+      row.map((cell) => boardCellLetter(cell) ?? ".").join(""),
+    ),
+  );
+}
+
+/** `row NN |.|.|SZ|?=CS|…|` — one column per TILE, blanks named explicitly. */
+function renderTokenGridBoard(rows: BoardCell[][]): string {
+  return rows
+    .map((row, index) => {
+      const faces = row.map((cell) => {
+        if (!cell || !cell.token) return ".";
+        if (cell.blank_as) return `?=${cell.blank_as}`;
+        return cell.token;
+      });
+      return `row ${String(index).padStart(2, "0")} |${faces.join("|")}|`;
+    })
+    .join("\n");
+}
+
+export function listAnchorSquares(rows: string[]): string {
+  return anchorsFromCells(cellRowsFromGridStrings(rows));
+}
+
+export function formatRackMultiset(rack: string | string[]): string {
+  if (Array.isArray(rack)) {
+    // Modern: complete tokens already separated. Order and duplicates survive,
+    // and nothing is ever split — "SZ DZS ?" is three tiles, not six.
+    return rack
+      .map((token) => token.trim())
+      .filter((token) => token.length > 0)
+      .join(" ");
+  }
+  const trimmed = rack.trim();
+  if (!trimmed) return "";
+  if (/\s/.test(trimmed)) {
+    return trimmed.split(/\s+/).join(" ");
+  }
+  return trimmed.split("").join(" ");
 }
 
 function snapshotTilePoints(
@@ -302,23 +446,70 @@ function formatTileValues(points: Record<string, number> | null): string {
     .join(" ");
 }
 
+/** Tile tokens the context declares: the snapshot's points keys plus the alphabet. */
+function tileSnapshotTokens(context: MoveUserPromptContext): string[] {
+  const points = snapshotTilePoints(context);
+  return [
+    ...new Set([
+      ...(points ? Object.keys(points) : []),
+      ...(context.alphabet ?? []),
+    ]),
+  ];
+}
+
 /**
  * Build the user prompt for AI move generation.
  * Includes compact board state, rack, scores, and tile values.
+ *
+ * THE COMPATIBILITY RULE, and it is the whole point of the shape change:
+ * · a modern context carries `ai_state.grid` cells and an `ai_rack` array and
+ *   is always read as arrays;
+ * · a legacy single-character context still parses through the old string path,
+ *   byte for byte;
+ * · ⛔ an UNSTRUCTURED context whose tile snapshot holds a multigraph is
+ *   REJECTED, never reverse-segmented.
+ *
+ * A single-code-point board renders exactly as it always did — the packed
+ * `row NN |...............|` rows, the same anchors, the same rack spacing —
+ * because twelve shipped languages send those bytes to a provider.
  */
 export function buildMoveUserPrompt(context: MoveUserPromptContext): string {
   const tileValues = formatTileValues(snapshotTilePoints(context));
 
   const premiumLegend =
     "TW=Triple Word, DW=Double Word, TL=Triple Letter, DL=Double Letter";
-  const gridRows = extractGridRows(context.compact_state);
-  const boardRendered =
-    gridRows.length === 15
-      ? renderLabeledBoard(gridRows)
-      : context.compact_state;
-  const anchors = listAnchorSquares(gridRows);
 
-  return `RACK: ${formatRackMultiset(context.ai_state.ai_rack)}
+  const rawGrid = context.ai_state.grid;
+  const rawRack = context.ai_state.ai_rack;
+  const structured = isCellGrid(rawGrid) && Array.isArray(rawRack);
+  const snapshotMultigraphs = tileSnapshotTokens(context).filter(isMultigraphToken);
+
+  if (!structured && snapshotMultigraphs.length > 0) {
+    throw new UnstructuredMultigraphContextError(snapshotMultigraphs);
+  }
+
+  const legacyRows = structured ? [] : extractGridRows(context.compact_state);
+  const cells = structured
+    ? (rawGrid as BoardCell[][])
+    : cellRowsFromGridStrings(legacyRows);
+  const rack = structured ? (rawRack as string[]) : rawRack;
+
+  // The tile set decides the FORMAT, so it does not change mid-game; the board
+  // and rack are checked too, so good data can never be packed into a lying row.
+  const multigraph =
+    snapshotMultigraphs.length > 0 ||
+    containsMultigraphToken(occupantTokens(cells)) ||
+    containsMultigraphToken(Array.isArray(rack) ? rack : []);
+
+  const renderable = cells.length === BOARD_SIZE;
+  const boardRendered = !renderable
+    ? context.compact_state
+    : multigraph
+      ? `${TOKEN_GRID_LEGEND}\n${renderTokenGridBoard(cells)}`
+      : renderPackedCellBoard(cells);
+  const anchors = anchorsFromCells(cells);
+
+  return `RACK: ${formatRackMultiset(rack)}
 TILE VALUES: ${tileValues}
 PREMIUM LEGEND: ${premiumLegend}
 ${context.is_first_move ? "THIS IS THE FIRST MOVE — must cover center (7,7)." : ""}

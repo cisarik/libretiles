@@ -331,3 +331,68 @@ describe("F3 setGameState refuses an unknown state_schema_version", () => {
     expect(useGameStore.getState().gameState).toBe(accepted);
   });
 });
+
+/**
+ * The store is where the overlay reads the two facts it needs to stop
+ * fabricating tiles (MEC-C1-B): the variant's TILE ALPHABET, and a candidate's
+ * lexical word. Neither may be transformed on the way through.
+ */
+describe("atomic tokens survive the store ingress", () => {
+  beforeEach(() => {
+    useGameStore.setState(useGameStore.getInitialState(), true);
+  });
+
+  it("carries a multigraph alphabet and multi-code-point board cells verbatim", () => {
+    const state = stateWithSchemaVersion(WIRE_STATE_SCHEMA_VERSION);
+    const multigraph = {
+      ...state,
+      variant_slug: "multigraph",
+      alphabet: ["A", "Á", "CS", "DZS", "L·L", "S", "SZ", "Z"],
+      tile_points: { A: 1, CS: 5, DZS: 8, SZ: 5 },
+      board: state.board.map((row) => [...row]),
+    } as unknown as GameState;
+    multigraph.board[7][7] = { token: "SZ", blank_as: null };
+    multigraph.board[7][8] = { token: "DZS", blank_as: null };
+    multigraph.board[8][7] = { token: "?", blank_as: "CS" };
+
+    useGameStore.getState().setGameState(multigraph);
+    const stored = useGameStore.getState().gameState!;
+
+    expect(stored.alphabet).toEqual(["A", "Á", "CS", "DZS", "L·L", "S", "SZ", "Z"]);
+    expect(stored.board[7][7]).toEqual({ token: "SZ", blank_as: null });
+    expect(stored.board[7][8]).toEqual({ token: "DZS", blank_as: null });
+    expect(stored.board[8][7]).toEqual({ token: "?", blank_as: "CS" });
+    expect(stored.board[7].length).toBe(15);
+    expect(stored.tile_points?.DZS).toBe(8);
+  });
+
+  it("stores an AI candidate's word and placements without segmenting either", () => {
+    useGameStore.getState().addAICandidate({
+      word: "SZA",
+      score: 14,
+      valid: true,
+      isBest: true,
+      timestamp: 1,
+      placements: [
+        { row: 7, col: 7, letter: "SZ" },
+        { row: 7, col: 8, letter: "A" },
+      ],
+    });
+    const [candidate] = useGameStore.getState().aiCandidates;
+
+    // THREE code points, TWO tiles. The word is a lexical string and the
+    // placements are the only tile-truthful channel; nothing derives one from
+    // the other.
+    expect(candidate.word).toBe("SZA");
+    expect(candidate.score).toBe(14);
+    expect(candidate.placements).toEqual([
+      { row: 7, col: 7, letter: "SZ" },
+      { row: 7, col: 8, letter: "A" },
+    ]);
+    expect(candidate.placements).toHaveLength(2);
+
+    useGameStore.getState().clearAICandidates();
+    expect(useGameStore.getState().aiCandidates).toEqual([]);
+  });
+});
+

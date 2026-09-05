@@ -42,7 +42,11 @@ from gamecore.rules import (
     placements_in_line,
 )
 from gamecore.scoring import apply_premium_consumption, score_words
-from gamecore.state import build_ai_state_dict
+from gamecore.state import (
+    build_ai_state_dict,
+    build_compact_state,
+    has_multigraph_tile_token,
+)
 from gamecore.tiles import TileBag, get_tile_points
 from gamecore.types import Placement
 from gamecore.variant_store import (
@@ -1577,13 +1581,16 @@ def get_ai_context(game_id: str, user_id: int) -> dict[str, Any]:
         ai_score=ai_slot.score,
         turn="AI",
     )
-    compact = (
-        "grid:\n"
-        + "\n".join(ai_state["grid"])
-        + f"\nblanks:{ai_state['blanks']}\n"
-        f"ai_rack:{ai_state['ai_rack']}\n"
-        f"scores: H={ai_state['human_score']} AI={ai_state['ai_score']}\n"
-        f"turn:{ai_state['turn']}\n"
+    # ⭐ `ai_state` above is the AUTHORITATIVE structured copy: a 15x15 cell grid
+    # and an ordered rack of complete tokens. `compact_state` is the
+    # human-readable convenience beside it — byte-frozen for a single-code-point
+    # tile set, and lossless JSON for a multigraph one, where the concatenated
+    # form cannot represent column indices at all. The ONE predicate decides,
+    # and it reads the VARIANT'S TILE SET rather than the current board.
+    variant = _session_variant(session)
+    compact = build_compact_state(
+        ai_state,
+        multigraph=has_multigraph_tile_token(variant.playable_letters),
     )
     return {
         "compact_state": compact,

@@ -232,3 +232,69 @@ describe("AIThinkingOverlay fallback attempt pills", () => {
     expect(markup.match(/data-pingpong="active"/g)?.length).toBe(1);
   });
 });
+
+/**
+ * ⭐ The candidate list must not FABRICATE tiles.
+ *
+ * Measured at the baseline `cbb2865`, the overlay split a candidate's lexical
+ * string into characters and gave each one a per-tile point value, so the
+ * Hungarian candidate `SZA` — TWO tiles, `SZ`+`A` — rendered as THREE tiles
+ * `S`, `Z`, `A` with invented values. It looked correct and it was a lie.
+ */
+describe("AIThinkingOverlay candidate truthfulness", () => {
+  const MULTIGRAPH_ALPHABET = ["A", "Á", "CS", "DZS", "L·L", "S", "SZ", "Z"];
+  const MULTIGRAPH_POINTS = { A: 1, Á: 4, CS: 5, DZS: 8, "L·L": 8, S: 1, SZ: 5, Z: 3 };
+  const ENGLISH_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
+
+  function candidate(word: string, score: number) {
+    return { word, score, valid: true, isBest: true, timestamp: 1 };
+  }
+
+  function primeCandidates(alphabet: string[], tilePoints: Record<string, number>) {
+    primeStore([], null, {
+      premiumLookEnabled: true,
+      aiCandidates: [candidate("SZA", 14), candidate("ACS", 9)],
+      gameState: {
+        alphabet,
+        tile_points: tilePoints,
+        variant_slug: "multigraph",
+      },
+    });
+  }
+
+  it("renders a multigraph candidate as lexical text with the backend score", () => {
+    primeCandidates(MULTIGRAPH_ALPHABET, MULTIGRAPH_POINTS);
+    const markup = renderOverlay();
+
+    expect(markup).toContain('data-testid="candidate-lexical"');
+    expect(markup).toContain("SZA");
+    expect(markup).toContain("ACS");
+    // ⛔ No per-character tile, therefore no invented per-tile value.
+    expect(markup).not.toContain('data-testid="candidate-tile"');
+    // The authoritative total score still renders, unrecomputed.
+    expect(markup).toContain(">14<");
+    expect(markup).toContain(">9<");
+  });
+
+  it("retains today's per-tile presentation for a single-code-point alphabet", () => {
+    primeCandidates(ENGLISH_ALPHABET, { A: 1, S: 1, Z: 10, C: 3 });
+    const markup = renderOverlay();
+
+    expect(markup).not.toContain('data-testid="candidate-lexical"');
+    // Two candidates of three characters each: six tiles, exactly as before.
+    expect(markup.match(/data-testid="candidate-tile"/g)?.length).toBe(6);
+    expect(markup).toContain(">14<");
+  });
+
+  it("treats a missing alphabet as single-code-point rather than guessing", () => {
+    primeStore([], null, {
+      premiumLookEnabled: true,
+      aiCandidates: [candidate("RATE", 8)],
+      gameState: { variant_slug: "english" },
+    });
+    const markup = renderOverlay();
+    expect(markup).not.toContain('data-testid="candidate-lexical"');
+    expect(markup.match(/data-testid="candidate-tile"/g)?.length).toBe(4);
+  });
+});
+

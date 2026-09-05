@@ -300,3 +300,181 @@ describe("board and rack helpers", () => {
     expect(renderLabeledBoard(rows)).toContain("row 07 |......ÁRATE....|");
   });
 });
+
+/**
+ * ⭐ THE BYTE ORACLE. No other gate covers this.
+ *
+ * `CORE_SHA256` above pins the system prompt, and the assertions above pin
+ * section headings, but the USER PROMPT for a given board was pinned NOWHERE:
+ * reordering two lines of the board rendering would have passed every gate while
+ * silently changing what twelve shipped languages send a provider.
+ *
+ * These three digests were captured from the baseline `cbb2865` builder BEFORE
+ * the AI state became structured (MEC-C1-B), over contexts produced by the real
+ * backend producer. ⛔ Do not recompute them from the implementation.
+ *
+ * Each fixture is asserted TWICE: once through the legacy string context that
+ * produced the digest, and once through the modern structured context for the
+ * same board. Identical bytes from both is what proves the new path preserves
+ * the old one.
+ */
+const BASELINE_USER_PROMPT_SHA256 = {
+  emptyBoard: "c9010a7d0e6520da4ad4226a2936389cad24d640c0eda7ec02cfda0c7ef46441",
+  midBoard: "f026936bec05dc9c8d9323eb03a091b65ce271ca9aec30be96063ae40a6bb395",
+  blankAndPremium:
+    "ce76be70ef95cb92d4c066ff1927ca360d71854379b3cbb1f6f592cfed5546a5",
+} as const;
+
+const ENGLISH_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
+const ENGLISH_TILE_POINTS: Record<string, number> = {
+  "?": 0, A: 1, B: 3, C: 3, D: 2, E: 1, F: 4, G: 2, H: 4, I: 1, J: 8, K: 5,
+  L: 1, M: 3, N: 1, O: 1, P: 3, Q: 10, R: 1, S: 1, T: 1, U: 1, V: 4, W: 4,
+  X: 8, Y: 4, Z: 10,
+};
+
+type Occupant = [number, number, string, string | null];
+
+function boardRows(occupants: Occupant[]): string[] {
+  const rows = Array.from({ length: 15 }, () => Array.from({ length: 15 }, () => "."));
+  for (const [row, col, token, blankAs] of occupants) {
+    rows[row][col] = blankAs ?? token;
+  }
+  return rows.map((row) => row.join(""));
+}
+
+function structuredGrid(occupants: Occupant[]) {
+  const grid: Array<Array<{ token: string; blank_as: string | null } | null>> =
+    Array.from({ length: 15 }, () => Array.from({ length: 15 }, () => null));
+  for (const [row, col, token, blankAs] of occupants) {
+    grid[row][col] = { token, blank_as: blankAs };
+  }
+  return grid;
+}
+
+/** The exact `compact_state` the backend emits for a single-code-point board. */
+function compactState(
+  occupants: Occupant[],
+  rack: string,
+  human: number,
+  ai: number,
+): string {
+  const blanks = occupants
+    .filter(([, , token]) => token === "?")
+    .map(([row, col]) => `{'row': ${row}, 'col': ${col}}`)
+    .join(", ");
+  return (
+    `grid:\n${boardRows(occupants).join("\n")}\n` +
+    `blanks:[${blanks}]\nai_rack:${rack}\n` +
+    `scores: H=${human} AI=${ai}\nturn:AI\n`
+  );
+}
+
+const RATE_ROAD: Occupant[] = [
+  [7, 7, "R", null],
+  [7, 8, "A", null],
+  [7, 9, "T", null],
+  [7, 10, "E", null],
+  [8, 7, "O", null],
+  [9, 7, "A", null],
+  [10, 7, "D", null],
+];
+const RATES_ROAD: Occupant[] = [...RATE_ROAD, [7, 11, "?", "S"]];
+
+const ORACLE_FIXTURES = {
+  emptyBoard: {
+    occupants: [] as Occupant[],
+    rack: ["A", "E", "I", "R", "S", "T", "?"],
+    human: 0,
+    ai: 0,
+    isFirstMove: true,
+    tilePoints: undefined as Record<string, number> | undefined,
+  },
+  midBoard: {
+    occupants: RATE_ROAD,
+    rack: ["A", "E", "I", "N", "O", "S", "T"],
+    human: 100,
+    ai: 120,
+    isFirstMove: false,
+    tilePoints: undefined as Record<string, number> | undefined,
+  },
+  blankAndPremium: {
+    occupants: RATES_ROAD,
+    rack: ["?", "B", "E", "L", "O", "W", "Z"],
+    human: 137,
+    ai: 152,
+    isFirstMove: false,
+    tilePoints: ENGLISH_TILE_POINTS,
+  },
+} as const;
+
+function legacyContext(fixture: (typeof ORACLE_FIXTURES)[keyof typeof ORACLE_FIXTURES]) {
+  return {
+    compact_state: compactState(
+      [...fixture.occupants],
+      fixture.rack.join(""),
+      fixture.human,
+      fixture.ai,
+    ),
+    ai_state: {
+      ai_rack: fixture.rack.join(""),
+      human_score: fixture.human,
+      ai_score: fixture.ai,
+    },
+    is_first_move: fixture.isFirstMove,
+    variant: "english",
+    lexicon_id: "collins2019",
+    alphabet: ENGLISH_ALPHABET,
+    ...(fixture.tilePoints ? { tile_points: fixture.tilePoints } : {}),
+  };
+}
+
+function modernContext(fixture: (typeof ORACLE_FIXTURES)[keyof typeof ORACLE_FIXTURES]) {
+  const legacy = legacyContext(fixture);
+  return {
+    ...legacy,
+    ai_state: {
+      grid: structuredGrid([...fixture.occupants]),
+      ai_rack: [...fixture.rack],
+      human_score: fixture.human,
+      ai_score: fixture.ai,
+    },
+  };
+}
+
+describe("single-code-point user prompts are byte-frozen", () => {
+  for (const [name, digest] of Object.entries(BASELINE_USER_PROMPT_SHA256)) {
+    const fixture = ORACLE_FIXTURES[name as keyof typeof ORACLE_FIXTURES];
+
+    it(`${name}: the legacy string context still produces the pinned bytes`, () => {
+      const prompt = buildMoveUserPrompt(legacyContext(fixture));
+      expect(createHash("sha256").update(prompt).digest("hex")).toBe(digest);
+    });
+
+    it(`${name}: the structured context produces the SAME bytes`, () => {
+      const fromLegacy = buildMoveUserPrompt(legacyContext(fixture));
+      const fromStructured = buildMoveUserPrompt(modernContext(fixture));
+      expect(fromStructured).toBe(fromLegacy);
+      expect(createHash("sha256").update(fromStructured).digest("hex")).toBe(digest);
+    });
+  }
+
+  it("renders a structured single-code-point board in the packed CORE format", () => {
+    const prompt = buildMoveUserPrompt(modernContext(ORACLE_FIXTURES.blankAndPremium));
+    expect(prompt).toContain("row 07 |.......RATES...|");
+    expect(prompt).toContain("row 00 |...............|");
+    expect(prompt).toContain("row 14 |...............|");
+    expect(prompt).toContain("RACK: ? B E L O W Z");
+    // A blank still renders as the letter it realizes, exactly as before, and
+    // `blanks:` inside the compact state remains its only explicit channel.
+    expect(prompt).toContain("blanks:[{'row': 7, 'col': 11}]");
+    expect(prompt).not.toContain("?=S");
+    expect(prompt).not.toContain("TOKEN GRID");
+  });
+
+  it("keeps CORE_SHA256 unchanged while the user prompt shape is extended", () => {
+    expect(createHash("sha256").update(MOVE_SYSTEM_PROMPT).digest("hex")).toBe(
+      CORE_SHA256,
+    );
+  });
+});
+

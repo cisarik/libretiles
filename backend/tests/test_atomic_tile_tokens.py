@@ -548,10 +548,15 @@ def test_save_schema_4_round_trip_and_rejects_legacy() -> None:
     english_board.cells[7][7].token = "A"
     english_board.cells[7][8].token = "T"
     ai = build_ai_state_dict(english_board, ["Q", "I"], 1, 2, "HUMAN")
-    assert list(ai.keys()) == ["grid", "blanks", "ai_rack", "human_score", "ai_score", "turn"]
-    assert all(isinstance(row, str) and len(row) == 15 for row in ai["grid"])
-    assert ai["grid"][7][7] == "A"
-    assert ai["ai_rack"] == "QI"
+    # ⭐ The AI PROJECTION is structured (MEC-C1-B) while the SAVE state above is
+    # unchanged: one atomic tile per column instead of a joined row, and an
+    # ordered rack instead of a string, so a two-code-point token can no longer
+    # occupy two columns. Blank identity lives inside the cell, so this shape has
+    # no `blanks` sidecar; save schema 4 keeps its own, asserted above.
+    assert list(ai.keys()) == ["grid", "ai_rack", "human_score", "ai_score", "turn"]
+    assert all(isinstance(row, list) and len(row) == 15 for row in ai["grid"])
+    assert ai["grid"][7][7] == {"token": "A", "blank_as": None}
+    assert ai["ai_rack"] == ["Q", "I"]
 
     for bad in ("2", "3", None, 4, "4.0", ""):
         with pytest.raises(ValueError, match="schema_version"):

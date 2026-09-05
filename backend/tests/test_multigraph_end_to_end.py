@@ -11,7 +11,10 @@ illegal as ``S``+``Z``+``A``, while ``ASZ`` is illegal as ``A``+``SZ`` and legal
 as ``A``+``S``+``Z``. A path that reconstructed boundaries from the lexical
 string could not tell those apart.
 
-⛔ AI context and prompt construction are SLICE B's and are deliberately absent.
+⭐ MEC-C1-B adds the AI CONTEXT of that same played board at the end: the
+structured cell grid, the ordered AI rack and the lossless JSON convenience
+string. Prompt construction itself is the frontend's and lives in
+``frontend/src/lib/prompts.test.ts`` and ``atomic-tiles.test.ts``.
 """
 
 from __future__ import annotations
@@ -406,3 +409,59 @@ class MultigraphEndToEndTests(TestCase):
         rejected = self._validate(game_id, [(8, 6, "A", None)])
         assert rejected["valid"] is False
         assert rejected["reason_code"] == "malformed_board_cell"
+
+    # -- Slice B: the AI context of the very same game --------------------
+
+    def test_ai_context_of_a_played_multigraph_board_is_lossless(self) -> None:
+        """⭐ SLICE B. The same seven tiles, seen through the AI projection.
+
+        The board this asserts over is the one the production service layer
+        actually persisted above, so nothing here is a fixture of the AI path:
+        the digraph and trigraph tiles arrive as WHOLE tokens in their own
+        columns, and the AI rack keeps its boundaries and its duplicates.
+        """
+        session, slot, game_id = self._create()
+        self._force_turn(session, slot, list(BINGO_TOKENS))
+        assert self._place(
+            game_id,
+            [(7, column, token, None) for column, token in zip(range(4, 11), BINGO_TOKENS)],
+        )["ok"] is True
+
+        # A blank realizing a DIGRAPH, which widened its row in the old string.
+        self._force_turn(session, slot, ["?", "A", "A", "A", "A", "A", "A"])
+        assert self._place(game_id, [(6, 7, "?", "CS")])["ok"] is True
+
+        ai_slot = session.slots.get(slot=1)
+        ai_slot.rack = ["SZ", "SZ", "DZS", "?", "A", "CS", "L·L"]
+        ai_slot.save(update_fields=["rack"])
+
+        context = services.get_ai_context(game_id, self.user.id)
+        ai_state = context["ai_state"]
+
+        assert "blanks" not in ai_state
+        assert len(ai_state["grid"]) == BOARD_SIZE
+        assert all(len(row) == BOARD_SIZE for row in ai_state["grid"])
+        # Seven tiles, seven columns — ELEVEN code points that used to widen the
+        # row to eighteen characters and shift every later column index.
+        assert [ai_state["grid"][7][column] for column in range(4, 11)] == [
+            {"token": token, "blank_as": None} for token in BINGO_TOKENS
+        ]
+        assert "".join(BINGO_TOKENS) == BINGO_WORD
+        assert len(BINGO_WORD) == 11
+        # The blank carries its own identity, in its own cell.
+        assert ai_state["grid"][6][7] == {"token": "?", "blank_as": "CS"}
+        # The rack is an ordered array: duplicates kept, order kept, and the
+        # interpunct tile is one entry rather than three characters.
+        assert ai_state["ai_rack"] == ["SZ", "SZ", "DZS", "?", "A", "CS", "L·L"]
+
+        # This variant's TILE SET holds multigraphs, so the human-readable
+        # convenience is lossless JSON instead of an unrepresentable joined grid.
+        compact = context["compact_state"]
+        assert compact.startswith("ai_state_json:\n")
+        assert "ACSASZADZSA" not in compact
+        decoded = json.loads(compact.split("\n", 1)[1])
+        assert decoded["grid"] == ai_state["grid"]
+        assert decoded["ai_rack"] == ai_state["ai_rack"]
+        assert context["alphabet"] == list(ALPHABET_ORDER)
+        assert context["tile_points"]["DZS"] == 8
+
