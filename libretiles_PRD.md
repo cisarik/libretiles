@@ -30,12 +30,14 @@ Libre Tiles is an open-source web-based Libre Tiles game with an eye-candy anima
 
 ## 5. Functional Requirements
 
-### FR-01: Game Core (English Variant)
+### FR-01: Game Core (Twelve Playable Variants)
 - Standard 15x15 board with premium squares (TW, DW, TL, DL).
-- English tile distribution (100 tiles, Collins Scrabble Words 2019 dictionary with 279,496 words).
+- Twelve playable board languages, one manifest each under `backend/assets/variants/`: english, slovak, czech, polish, german, portuguese, icelandic, italian, dutch, danish, swedish, afrikaans. `game.views.list_variant_summaries()` reports `readiness: "playable"` for all twelve.
+- Per-variant alphabet order, tile distribution and tile points (100-120 tiles depending on the variant), and word list. English uses Collins Scrabble Words 2019 with 279,496 words; `manage.py validate_lexicons` audits thirteen assets with zero failures.
+- Every non-English lexicon is reproducible from a pinned upstream commit by one of eleven committed scripts under `backend/scripts/`, each pinning the SHA-256 of every source file it fetches plus the host expander `hunspell 1.7.3`, and failing closed on a mismatch.
 - Full move validation: placement rules, word formation, scoring with premiums, bingo (+50).
 - Tile exchange, pass, endgame detection, and final scoring.
-- Status: **Implemented** (gamecore/).
+- Status: **Implemented** (gamecore/, backend/assets/variants/).
 
 ### FR-02: User Authentication
 - Register with username/email/password.
@@ -62,7 +64,7 @@ Libre Tiles is an open-source web-based Libre Tiles game with an eye-candy anima
 - Status: **Implemented** (frontend/src/app/api/ai/, frontend/src/lib/prompts.ts, openrouter.ts, nvidia-nim.ts, ai-runtimes.ts, ai-fallback.ts, model-catalog.ts, AIThinkingOverlay.tsx).
 
 ### FR-05: 3-Tier Word Validation
-- Tier 1: Local Collins 2019 dictionary (in-memory frozenset, O(1) lookup).
+- Tier 1: Local per-variant word list, Collins 2019 for the English variant (in-memory frozenset, O(1) lookup).
 - Tier 2: Online dictionary API for words not in the Collins 2019 list (optional; the local list is comprehensive).
 - Tier 3: AI Judge via the shared free-rival fallback queue (up to three attempts; HTTP 503 on exhaustion).
 - Status: **Tier 1 + 3 implemented**, Tier 2 optional.
@@ -115,6 +117,12 @@ Libre Tiles is an open-source web-based Libre Tiles game with an eye-candy anima
 - Rollback: set the flag false and restart Django; pause the schedule and/or deactivate rows in Admin; roll backend selection to curated-only before rolling back the dynamic-capable frontend.
 - Status: **Documented**. Scheduler installation is not part of this cut.
 
+### FR-12: Interface Localization
+- Twelve interface locales. `LOCALES` in `frontend/src/lib/i18n/locales.ts` is `en sk cs pl de pt is it nl da sv af`, `translate.ts` wires all twelve `messages.XX.ts` catalogs, and every catalog defines the same 324 keys (304 text + 20 parameterised).
+- Locale resolution: `Accept-Language` primary-subtag detection, the `libretiles_locale` cookie, and an explicit interface-language picker in Settings that offers all twelve endonyms.
+- Localized variant names: `VARIANT_NAME_KEYS` in `GameLanguagePanel.tsx` covers all twelve slugs, so the variant picker, the human-queue label, and lexicon-rejection copy name the language in the active interface locale.
+- Status: **Implemented for gameplay** (frontend/src/lib/i18n/, GameLanguagePanel.tsx, frontend/src/app/settings/page.tsx). Second-opinion review of the eight machine-authored catalogs is open work — see Known Gaps.
+
 ## 6. Non-Functional Requirements
 
 ### NFR-01: Code Quality
@@ -146,6 +154,10 @@ Libre Tiles is an open-source web-based Libre Tiles game with an eye-candy anima
 
 ## 8. Known Gaps
 
+- The eight newest interface catalogs (German, Portuguese, Icelandic, Italian, Dutch, Danish, Swedish, Afrikaans) are machine-authored and have had no second-opinion review.
+- Localization tests pin exact expected wording for four of the twelve locales (`REVIEWED_LOCALES` = `en sk cs pl`) and cover the other eight structurally instead.
+- Flags exist for only four of the twelve locales, so eight interface-language picker rows deliberately render an endonym with no flag.
+- The Slovak word list is a hunspell expansion of the LibreOffice `sk_SK` dictionary: playable, not an SSS-official list.
 - Human vs human multiplayer deferred to v2.
 - Online dictionary API (Tier 2) may not be needed if the local Collins 2019 list is sufficient.
 - Starting draw animation not yet eye-candy (basic flow implemented).

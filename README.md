@@ -8,7 +8,8 @@ Open-source web Libre Tiles game with AI opponents, live human-vs-human multipla
 
 ## Features
 
-- Full Libre Tiles game engine (English variant, Collins 2019 dictionary ~279k words, Tier-1 strict validation in Django)
+- Full Libre Tiles game engine with **twelve playable board languages** — English (Collins 2019, 279,496 words), Slovak, Czech, Polish, German, Portuguese, Icelandic, Italian, Dutch, Danish, Swedish, Afrikaans — each with its own alphabet, tile distribution (100-120 tiles) and word list, Tier-1 strict validation in Django
+- Interface localized in **twelve languages** (`en sk cs pl de pt is it nl da sv af`), selectable in Settings and applied across gameplay
 - AI opponents via provider-diverse free rivals with tool calling. The canonical direct priority is Groq → Google Gemini → Cloudflare Workers AI → Mistral → IBM watsonx.ai; NVIDIA NIM and OpenRouter remain the compatibility tail
 - Live human-vs-human multiplayer with waiting-room matchmaking, realtime board sync, and in-game chat
 - AI plays as a tool-calling agent: validates moves, checks words, calculates scores
@@ -19,7 +20,28 @@ Open-source web Libre Tiles game with AI opponents, live human-vs-human multipla
 - Settings page with the selectable free-rival shortlist from `GET /api/catalog/models/`
 - Free-only play: the product does not handle money, app credits, USD balances, token prices, or per-game charges. Play and Judge use the selectable free-rival catalog only. Provider quotas or trial terms are external and may change — they are not Libre Tiles credits or charges. Stripe is rejected for this product direction.
 - Responsive design (desktop, tablet, mobile)
-- 3-tier word validation: local Collins 2019, online API (optional), AI judge
+- 3-tier word validation: local per-variant word list (Collins 2019 for English), online API (optional), AI judge
+
+## Languages
+
+**Twelve board languages ship playable.** `ls backend/assets/variants/` lists twelve manifests and `game.views.list_variant_summaries()` reports `readiness: "playable"` for all twelve: english, slovak, czech, polish, german, portuguese, icelandic, italian, dutch, danish, swedish, afrikaans. Each carries its own alphabet order, tile distribution and points, and word list. `poetry run python manage.py validate_lexicons` audits every shipped asset:
+
+```
+validate_lexicons: 13 asset(s) audited, 0 failed
+```
+
+Surviving word counts at this commit: English 279,496 · Afrikaans 148,267 · Icelandic 200,182 · Danish 317,167 · German 709,844 · Swedish 822,919 · Dutch 1,293,086 · Slovak 3,005,250 · Italian 3,128,429 · Polish 3,721,704 · Czech 3,930,497 · Portuguese 4,119,831, plus the Slovak two-tile allowlist at 103.
+
+Every non-English lexicon is reproducible from source: eleven committed scripts under `backend/scripts/` each pin an upstream commit and the SHA-256 of every source file they fetch, pin the host expander (`hunspell 1.7.3`), and fail closed on a mismatch. `--check --check-dir <dir outside backend/assets/>` re-verifies a committed asset instead of rebuilding it. They are host tools: not imported by Django, and they add no Poetry or npm dependency.
+
+**The interface is localized in twelve languages.** `LOCALES` in `frontend/src/lib/i18n/locales.ts` is `en sk cs pl de pt is it nl da sv af`, `translate.ts` wires all twelve `messages.XX.ts` catalogs, and the interface-language picker offers all twelve endonyms. Variant names are translated too, so the variant picker and the human-queue label show a localized exonym in every shipped locale.
+
+What this does **not** claim:
+
+- The eight newest interface catalogs (German, Portuguese, Icelandic, Italian, Dutch, Danish, Swedish, Afrikaans) are machine-authored and have had **no second-opinion review**.
+- The test suite pins exact expected wording for four of the twelve locales (`REVIEWED_LOCALES` = `en sk cs pl`) and covers the other eight structurally.
+- Flags exist for only four of the twelve locales, so eight picker rows deliberately render an endonym with no flag.
+- The Slovak word list is a hunspell expansion of the LibreOffice `sk_SK` dictionary — playable, **not** an SSS-official list.
 
 ## Quick Start
 
@@ -381,9 +403,9 @@ The `gamecore/` package is a pure Python Libre Tiles engine with zero framework 
 - `board.py` -- 15x15 board with premium squares
 - `rules.py` -- Move validation (center coverage, line placement, connectivity, gaps)
 - `scoring.py` -- Score calculation with premium multipliers and bingo bonus
-- `tiles.py` -- Tile bag with English distribution (100 tiles)
+- `tiles.py` -- Tile bag built from the selected variant's distribution (100-120 tiles depending on the variant)
 - `game.py` -- Full game simulation with endgame detection
-- `variant_store.py` -- Variant loading (English by default)
+- `variant_store.py` -- Variant loading (twelve installed manifests; English is the default slug)
 - `fastdict.py` -- In-memory dictionary lookup (O(1) via frozenset)
 
 Conceptually aligned with the desktop `scrabgpt` engine; this tree ships its **own** `gamecore/` and dictionary file.
