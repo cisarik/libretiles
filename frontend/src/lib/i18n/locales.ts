@@ -20,7 +20,14 @@ export function localeFromCookieValue(value: unknown): Locale {
   return isLocale(value) ? value : DEFAULT_LOCALE;
 }
 
-/** Letters NFD + \p{Diacritic} cannot fold: stroke (ł), D-stroke (đ), slashed O (ø). */
+/**
+ * Letters NFD + \p{Diacritic} CANNOT fold — they carry no combining mark — so an unfolded letter
+ * leaves a picker row unreachable by any ASCII query. ł U+0142 L-STROKE, ø U+00F8 SLASHED O,
+ * æ U+00E6 AE, þ U+00FE THORN, ß U+00DF SHARP S, œ U+0153 OE, ı U+0131 DOTLESS I, and the two
+ * look-alikes ð U+00F0 ETH and đ U+0111 D-STROKE, different letters that each need their own
+ * entry. Covers the languages this product targets and is NOT a complete inventory of unfoldable
+ * Latin letters — extend it rather than assuming a letter is already handled.
+ */
 const EXPLICIT_SEARCH_FOLDS: Record<string, string> = {
   ł: "l",
   Ł: "l",
@@ -28,6 +35,16 @@ const EXPLICIT_SEARCH_FOLDS: Record<string, string> = {
   Đ: "d",
   ø: "o",
   Ø: "o",
+  æ: "ae",
+  Æ: "ae",
+  þ: "th",
+  Þ: "th",
+  ð: "d",
+  Ð: "d",
+  ß: "ss",
+  œ: "oe",
+  Œ: "oe",
+  ı: "i",
 };
 
 export function foldForSearch(value: string): string {

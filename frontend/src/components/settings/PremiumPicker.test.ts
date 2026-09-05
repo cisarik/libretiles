@@ -16,7 +16,7 @@ const ENDONYMS: readonly PremiumPickerOption[] = [
 ];
 
 describe("AC-FOLD foldForSearch", () => {
-  it("folds every diacritic these four locales use, including stroke letters NFD cannot fold", () => {
+  it("folds every diacritic the twelve shipped catalogs use, including the letters NFD cannot fold", () => {
     expect(foldForSearch("Čeština")).toBe("cestina");
     expect(foldForSearch("Slovenčina")).toBe("slovencina");
     expect(foldForSearch("Poľština")).toBe("polstina");
@@ -30,6 +30,35 @@ describe("AC-FOLD foldForSearch", () => {
     expect(foldForSearch("đ")).toBe("d");
     expect(foldForSearch("Ø")).toBe("o");
     expect(foldForSearch("ø")).toBe("o");
+
+    // The regression: two shipped messages.is.ts game-variant labels that no ASCII query could
+    // reach, because the fold left them as "þyska" and "sænska".
+    expect(foldForSearch("Þýska")).toBe("thyska");
+    expect(foldForSearch("Sænska")).toBe("saenska");
+
+    expect(foldForSearch("Æ")).toBe("ae");
+    expect(foldForSearch("æ")).toBe("ae");
+    expect(foldForSearch("Þ")).toBe("th");
+    expect(foldForSearch("þ")).toBe("th");
+    expect(foldForSearch("Ð")).toBe("d");
+    expect(foldForSearch("ð")).toBe("d");
+    expect(foldForSearch("Œ")).toBe("oe");
+    expect(foldForSearch("œ")).toBe("oe");
+    expect(foldForSearch("ß")).toBe("ss");
+    expect(foldForSearch("ı")).toBe("i");
+
+    // ð U+00F0 ETH and đ U+0111 D-STROKE are different letters that look alike in many fonts and
+    // both fold to "d". Escaped deliberately: this expectation is about codepoints, and it fails
+    // if a later edit drops either entry instead of silently collapsing the two.
+    expect(foldForSearch("\u00F0\u0111\u00D0\u0110")).toBe("dddd");
+
+    // Word level, because a single-letter assertion would pass even if the defect survived in
+    // real labels: one word per new letter from the campaign's target languages.
+    expect(foldForSearch("maður")).toBe("madur");
+    expect(foldForSearch("Kærlighed")).toBe("kaerlighed");
+    expect(foldForSearch("Straße")).toBe("strasse");
+    expect(foldForSearch("cœur")).toBe("coeur");
+    expect(foldForSearch("Işık")).toBe("isik");
   });
 });
 
