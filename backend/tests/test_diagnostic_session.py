@@ -14,6 +14,7 @@ from django.db import IntegrityError
 from django.test import TestCase
 from django.urls import reverse
 from rest_framework.test import APIClient
+from rest_framework_simplejwt.tokens import RefreshToken
 
 from accounts.models import User
 from catalog.models import AIModel
@@ -369,6 +370,128 @@ class DiagnosticSessionTests(TestCase):
         managed_id = managed.id
         unensure(django_apps, None)
         assert not User.objects.filter(pk=managed_id).exists()
+
+    def test_f_q_flagged_account_rename_is_rejected(self) -> None:
+        """Pre-fix finding proof (APMC-S4-IA-F02 P09): PATCH rename returned 200.
+
+        Captured verbatim before this correction:
+        PRE-FIX rename status: 200
+        PRE-FIX rename username field: renamed-service
+        """
+        service = User.objects.get(username=services.DIAGNOSTIC_SERVICE_USERNAME)
+        assert service.is_service_account is True
+        client = APIClient()
+        client.credentials(
+            HTTP_AUTHORIZATION=f"Bearer {RefreshToken.for_user(service).access_token}"
+        )
+        resp = client.patch(
+            "/api/auth/me/",
+            {"username": "renamed-service"},
+            format="json",
+        )
+        assert 400 <= resp.status_code < 500
+        service.refresh_from_db()
+        assert service.username == services.DIAGNOSTIC_SERVICE_USERNAME
+        assert service.is_service_account is True
+
+    def test_f_r_service_jwt_rename_create_queue_chain_fails_at_rename(self) -> None:
+        """The exact P03→P09 chain must now fail at the rename step.
+
+        Captured verbatim before this correction:
+        PRE-FIX rename status: 200
+        PRE-FIX create status: 201
+        PRE-FIX queue status: 200
+        PRE-FIX queue ok/waiting/matched: True True False
+        """
+        service = User.objects.get(username=services.DIAGNOSTIC_SERVICE_USERNAME)
+        client = APIClient()
+        client.credentials(
+            HTTP_AUTHORIZATION=f"Bearer {RefreshToken.for_user(service).access_token}"
+        )
+        before_product = GameSession.objects.filter(is_diagnostic=False).count()
+        before_human = GameSession.objects.filter(game_mode="vs_human").count()
+
+        rename = client.patch(
+            "/api/auth/me/",
+            {"username": "renamed-service"},
+            format="json",
+        )
+        assert 400 <= rename.status_code < 500
+        service.refresh_from_db()
+        assert service.username == services.DIAGNOSTIC_SERVICE_USERNAME
+
+        created = client.post(
+            "/api/game/create/",
+            {"game_mode": "vs_ai", "ai_model_id": self.seat0.id},
+        )
+        assert created.status_code == 400
+        body = created.json()
+        assert body.get("ok") is False
+        assert GameSession.objects.filter(is_diagnostic=False).count() == before_product
+
+        queue = client.post(
+            "/api/game/queue/join/",
+            {"variant_slug": "english"},
+            format="json",
+        )
+        assert queue.status_code == 400
+        qbody = queue.json()
+        assert qbody.get("ok") is False
+        assert qbody.get("waiting") is not True
+        assert qbody.get("matched") is not True
+        assert GameSession.objects.filter(game_mode="vs_human").count() == before_human
+
+    def test_f_s_ensure_restores_cleared_service_account_flag(self) -> None:
+        managed = services.ensure_diagnostic_service_user()
+        assert managed.is_service_account is True
+        managed.is_service_account = False
+        managed.save(update_fields=["is_service_account"])
+        again = services.ensure_diagnostic_service_user()
+        assert again.id == managed.id
+        again.refresh_from_db()
+        assert again.is_service_account is True
+
+    def test_f_t_ordinary_user_rename_and_participation_unaffected(self) -> None:
+        client = APIClient()
+        login = client.post(
+            "/api/auth/login/",
+            {"username": "player1", "password": "pass1234"},
+        )
+        assert login.status_code == 200
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {login.json()['access']}")
+        resp = client.patch(
+            "/api/auth/me/",
+            {"username": "player1-renamed"},
+            format="json",
+        )
+        assert resp.status_code == 200
+        assert resp.json()["username"] == "player1-renamed"
+        created = client.post(
+            "/api/game/create/",
+            {"game_mode": "vs_ai", "ai_model_id": self.seat0.id},
+        )
+        assert created.status_code == 201
+        queue = client.post(
+            "/api/game/queue/join/",
+            {"variant_slug": "english"},
+            format="json",
+        )
+        assert queue.status_code == 200
+        qbody = queue.json()
+        assert qbody.get("ok") is not False
+
+    def test_f_u_fresh_db_applies_flag_before_diagnostic_seed(self) -> None:
+        from django.db import connection
+        from django.db.migrations.loader import MigrationLoader
+
+        accounts_0005 = ("accounts", "0005_service_account_flag")
+        game_0009 = ("game", "0009_diagnostic_session_foundation")
+        loader = MigrationLoader(connection)
+        assert accounts_0005 in loader.disk_migrations[game_0009].dependencies
+        plan = loader.graph.forwards_plan(game_0009)
+        assert plan.index(accounts_0005) < plan.index(game_0009)
+        seeded = User.objects.get(username=services.DIAGNOSTIC_SERVICE_USERNAME)
+        assert seeded.is_service_account is True
 
     def test_f_k_second_inflight_diagnostic_run_raises_integrity_error(self) -> None:
         self._create_diagnostic()

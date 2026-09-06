@@ -24,6 +24,12 @@ class User(AbstractUser):
             "whose iat is strictly before this timestamp's Unix second are rejected."
         ),
     )
+    is_service_account = models.BooleanField(
+        default=False,
+        help_text=(
+            "Reserved diagnostic runner identity; participation-restricted; never renamed"
+        ),
+    )
 
     class Meta:
         db_table = "accounts_user"

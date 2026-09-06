@@ -49,6 +49,17 @@ class UserSerializer(serializers.ModelSerializer[User]):
         )
         read_only_fields = ("id", "date_joined")
 
+    def validate_username(self, value: str) -> str:
+        if (
+            self.instance is not None
+            and self.instance.is_service_account
+            and value != self.instance.username
+        ):
+            raise serializers.ValidationError(
+                "The diagnostic service identity cannot be renamed."
+            )
+        return value
+
     def validate_preferred_ai_model_id(self, value: str) -> str:
         if not value:
             return value

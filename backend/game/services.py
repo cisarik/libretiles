@@ -1080,18 +1080,26 @@ def _submit_pass_locked(
 
 
 def _reject_service_account_user(user_id: int) -> None:
-    """Refuse ordinary player participation by the reserved diagnostic identity."""
+    """Refuse ordinary player participation when the durable flag is set OR the username matches.
+
+    Refuse when user.is_service_account is True OR the username equals
+    DIAGNOSTIC_SERVICE_USERNAME (belt-and-braces for any path that predates the flag).
+    """
     user_model = get_user_model()
-    username = (
-        user_model.objects.filter(pk=user_id).values_list("username", flat=True).first()
+    row = (
+        user_model.objects.filter(pk=user_id)
+        .values_list("is_service_account", "username")
+        .first()
     )
-    if username != DIAGNOSTIC_SERVICE_USERNAME:
+    if row is None:
         return
-    raise ImproperlyConfigured(
-        f"Reserved diagnostic service account {DIAGNOSTIC_SERVICE_USERNAME!r} "
-        "cannot create product games or join human matchmaking. Use an ordinary "
-        "player account."
-    )
+    is_service_account, username = row
+    if is_service_account or username == DIAGNOSTIC_SERVICE_USERNAME:
+        raise ImproperlyConfigured(
+            f"Reserved diagnostic service account {DIAGNOSTIC_SERVICE_USERNAME!r} "
+            "cannot create product games or join human matchmaking. Use an ordinary "
+            "player account."
+        )
 
 
 def create_game(
@@ -1164,6 +1172,8 @@ def ensure_diagnostic_service_user() -> Any:
     if created:
         user.set_unusable_password()
         dirty.append("password")
+        user.is_service_account = True
+        dirty.append("is_service_account")
     else:
         if user.has_usable_password():
             raise ImproperlyConfigured(
@@ -1186,6 +1196,9 @@ def ensure_diagnostic_service_user() -> Any:
         if preferred:
             user.preferred_ai_model_id = ""
             dirty.append("preferred_ai_model_id")
+        if not user.is_service_account:
+            user.is_service_account = True
+            dirty.append("is_service_account")
     if dirty:
         user.save(update_fields=dirty)
     user.groups.clear()

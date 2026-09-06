@@ -45,6 +45,7 @@ def unensure_diagnostic_service_user(apps: Any, schema_editor: Any) -> None:
 class Migration(migrations.Migration):
 
     dependencies = [
+        ("accounts", "0005_service_account_flag"),
         ("catalog", "0003_aiprompt"),
         ("game", "0008_atomic_token_state_schema"),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
