@@ -10,11 +10,13 @@ import hashlib
 import random
 import unicodedata
 import uuid
+from collections.abc import Mapping
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, Literal
 
 from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.core import signing
 from django.core.paginator import Paginator
 from django.db import IntegrityError, connection, transaction
@@ -57,7 +59,15 @@ from gamecore.variant_store import (
 )
 from gamecore.word_authority import WordAuthority
 
-from .models import ChatMessage, ConsumedWsTicket, GameSession, Move, PlayerSlot, default_structured_board
+from .models import (
+    ChatMessage,
+    ConsumedWsTicket,
+    DiagnosticRun,
+    GameSession,
+    Move,
+    PlayerSlot,
+    default_structured_board,
+)
 from . import realtime
 
 CHAT_HISTORY_LIMIT = 50
@@ -71,6 +81,13 @@ def _ws_ticket_max_age_seconds() -> int:
 
 class GameNotFoundError(Exception):
     """Raised when a user is not allowed to access a game."""
+
+
+class DiagnosticSessionError(Exception):
+    """Fail-closed diagnostic setup or mutation."""
+
+
+DIAGNOSTIC_SERVICE_USERNAME = "libretiles-diagnostic"
 
 
 def _empty_board_state() -> list[list[None]]:
@@ -454,6 +471,8 @@ def _load_session_for_user(
 ) -> tuple[GameSession, PlayerSlot]:
     queryset = GameSession.objects.select_related("ai_model", "ai_prompt").prefetch_related(
         "slots__user",
+        "slots__ai_model",
+        "slots__ai_prompt",
         "chat_messages__user",
         "moves__player_slot",
     )
@@ -471,6 +490,14 @@ def _load_session_for_user(
     return session, player_slot
 
 
+def _resolve_acting_ai_slot(session: GameSession) -> PlayerSlot | None:
+    if session.is_diagnostic:
+        if session.current_turn_slot not in (0, 1):
+            return None
+        return session.slots.filter(slot=session.current_turn_slot, is_ai=True).first()
+    return session.slots.filter(is_ai=True).first()
+
+
 def _load_vs_ai_session(
     *,
     game_id: str,
@@ -484,7 +511,7 @@ def _load_vs_ai_session(
     )
     if session.game_mode != "vs_ai":
         raise GameNotFoundError("Game not found")
-    ai_slot = session.slots.filter(is_ai=True).first()
+    ai_slot = _resolve_acting_ai_slot(session)
     if ai_slot is None:
         raise GameNotFoundError("Game not found")
     return session, player_slot, ai_slot
@@ -509,8 +536,15 @@ def _perform_starting_draw(bag: TileBag, variant: VariantDefinition) -> dict[str
     }
 
 
-def _initialize_session(session: GameSession, *, slot0: PlayerSlot, slot1: PlayerSlot) -> dict[str, Any]:
-    seed = random.randint(0, 2**31)
+def _initialize_session(
+    session: GameSession,
+    *,
+    slot0: PlayerSlot,
+    slot1: PlayerSlot,
+    seed: int | None = None,
+) -> dict[str, Any]:
+    if seed is None:
+        seed = random.randint(0, 2**31)
     bag = TileBag(seed=seed, variant=session.variant_slug)
     draw = _perform_starting_draw(bag, _session_variant(session))
 
@@ -1092,6 +1126,216 @@ def create_game(
     }
 
 
+def ensure_diagnostic_service_user() -> Any:
+    """Idempotent reserved account: unusable password, never staff, never superuser."""
+    user_model = get_user_model()
+    user, created = user_model.objects.get_or_create(
+        username=DIAGNOSTIC_SERVICE_USERNAME,
+        defaults={
+            "is_staff": False,
+            "is_superuser": False,
+            "is_active": True,
+            "preferred_ai_model_id": "",
+            "email": "",
+        },
+    )
+    dirty: list[str] = []
+    if created:
+        user.set_unusable_password()
+        dirty.append("password")
+    else:
+        if user.is_staff:
+            user.is_staff = False
+            dirty.append("is_staff")
+        if user.is_superuser:
+            user.is_superuser = False
+            dirty.append("is_superuser")
+        if not user.is_active:
+            user.is_active = True
+            dirty.append("is_active")
+        preferred = getattr(user, "preferred_ai_model_id", "")
+        if preferred:
+            user.preferred_ai_model_id = ""
+            dirty.append("preferred_ai_model_id")
+    if dirty:
+        user.save(update_fields=dirty)
+    user.groups.clear()
+    user.user_permissions.clear()
+    return user
+
+
+def create_diagnostic_game(
+    *,
+    variant_slug: str,
+    seed: int,
+    seat0_model_id: str,
+    seat1_model_id: str,
+    prompt_id: int | None,
+    created_by_id: int,
+    assist_mode: str,
+) -> dict[str, Any]:
+    if assist_mode not in ("assisted", "authorship"):
+        raise DiagnosticSessionError("Unknown assist_mode")
+    unknown = _unknown_variant_payload(variant_slug)
+    if unknown is not None:
+        raise DiagnosticSessionError(str(unknown["error"]))
+
+    with transaction.atomic():
+        service_user = ensure_diagnostic_service_user()
+        seat0_model = _resolve_ai_model(ai_model_id=None, ai_model_model_id=seat0_model_id)
+        seat1_model = _resolve_ai_model(ai_model_id=None, ai_model_model_id=seat1_model_id)
+        if seat0_model is None or seat1_model is None:
+            raise DiagnosticSessionError("Unknown or unavailable AI model")
+        selected_prompt = None
+        if prompt_id is not None:
+            selected_prompt = next(
+                (item for item in get_selectable_prompts() if item.id == prompt_id),
+                None,
+            )
+            if selected_prompt is None:
+                raise DiagnosticSessionError("Unknown or unavailable AI prompt")
+        user_model = get_user_model()
+        if not user_model.objects.filter(pk=created_by_id).exists():
+            raise DiagnosticSessionError("Unknown created_by")
+
+        session = GameSession.objects.create(
+            game_mode="vs_ai",
+            is_diagnostic=True,
+            status="active",
+            variant_slug=variant_slug,
+            board_state=_empty_board_state(),
+            premium_used=[],
+            current_turn_slot=None,
+            bag_seed=seed,
+            ai_model=seat1_model,
+            ai_prompt=selected_prompt,
+        )
+        slot0 = PlayerSlot.objects.create(
+            game=session,
+            slot=0,
+            user=service_user,
+            is_ai=True,
+            rack=[],
+            ai_model=seat0_model,
+            ai_prompt=selected_prompt,
+        )
+        slot1 = PlayerSlot.objects.create(
+            game=session,
+            slot=1,
+            user=None,
+            is_ai=True,
+            rack=[],
+            ai_model=seat1_model,
+            ai_prompt=selected_prompt,
+        )
+        _initialize_session(session, slot0=slot0, slot1=slot1, seed=seed)
+        run = DiagnosticRun.objects.create(
+            status="queued",
+            assist_mode=assist_mode,
+            instrument="full-game",
+            variant_slug=variant_slug,
+            seat0_model_id=seat0_model.model_id,
+            seat1_model_id=seat1_model.model_id,
+            prompt=selected_prompt,
+            session=session,
+            created_by_id=created_by_id,
+            parameters_json={
+                "variant_slug": variant_slug,
+                "seed": seed,
+                "seat0_model_id": seat0_model.model_id,
+                "seat1_model_id": seat1_model.model_id,
+                "prompt_id": prompt_id,
+                "assist_mode": assist_mode,
+            },
+            executed_runtime_mode="",
+            score_authority="",
+        )
+        return {
+            "game_id": str(session.public_id),
+            "run_id": str(run.id),
+            "current_turn_slot": session.current_turn_slot,
+            "service_user_id": service_user.id,
+        }
+
+
+def apply_position_snapshot(session: GameSession, snapshot: Mapping[str, Any]) -> None:
+    if not session.is_diagnostic:
+        raise DiagnosticSessionError("Position snapshots are diagnostic-only")
+    from .position_sets import game_from_snapshot
+
+    game = game_from_snapshot(snapshot)
+    slot0 = session.slots.filter(slot=0).first()
+    slot1 = session.slots.filter(slot=1).first()
+    if slot0 is None or slot1 is None:
+        raise DiagnosticSessionError("Diagnostic session is missing seats")
+    _persist_board(session, game.board)
+    _persist_bag(session, game.bag)
+    session.bag_rng_state = snapshot.get("bag_rng_state")
+    to_move = snapshot.get("to_move_seat_index")
+    session.current_turn_slot = to_move if to_move in (0, 1) else None
+    session.consecutive_scoreless_turns = game.consecutive_scoreless_turns
+    session.game_over = bool(game.ended)
+    session.game_end_reason = game.end_reason.name if game.end_reason is not None else ""
+    if game.ended:
+        session.status = "finished"
+        session.finished_at = timezone.now()
+    else:
+        session.status = "active"
+        session.finished_at = None
+    names = [player.name for player in game.players]
+    if game.winner_name in names:
+        session.winner_slot = names.index(game.winner_name)
+    else:
+        session.winner_slot = None
+    session.save(
+        update_fields=[
+            "board_state",
+            "premium_used",
+            "bag_tiles",
+            "bag_rng_state",
+            "current_turn_slot",
+            "consecutive_scoreless_turns",
+            "game_over",
+            "game_end_reason",
+            "status",
+            "finished_at",
+            "winner_slot",
+            "updated_at",
+        ]
+    )
+    for slot, player in ((slot0, game.players[0]), (slot1, game.players[1])):
+        slot.rack = list(player.rack)
+        slot.score = player.score
+        slot.pass_streak = player.pass_streak
+        slot.save(update_fields=["rack", "score", "pass_streak"])
+
+
+def abort_diagnostic_run(*, run_id: uuid.UUID, reason: str) -> dict[str, Any]:
+    with transaction.atomic():
+        try:
+            run = DiagnosticRun.objects.select_for_update().select_related("session").get(pk=run_id)
+        except DiagnosticRun.DoesNotExist as exc:
+            raise DiagnosticSessionError("Diagnostic run not found") from exc
+        session = run.session
+        if not session.is_diagnostic:
+            raise DiagnosticSessionError("Abort is diagnostic-only")
+        now = timezone.now()
+        run.status = "failed"
+        run.diagnostic_end_reason = reason
+        run.ended_at = now
+        run.save(update_fields=["status", "diagnostic_end_reason", "ended_at", "updated_at"])
+        session.status = "abandoned"
+        session.game_end_reason = ""
+        session.save(update_fields=["status", "game_end_reason", "updated_at"])
+        return {
+            "ok": True,
+            "run_id": str(run.id),
+            "game_id": str(session.public_id),
+            "diagnostic_end_reason": run.diagnostic_end_reason,
+            "move_count": session.moves.count(),
+        }
+
+
 def get_player_slot_for_user(game_id: str, user_id: int) -> int:
     _, player_slot = _load_session_for_user(game_id=game_id, user_id=user_id)
     return player_slot.slot
@@ -1185,7 +1429,7 @@ def list_games_for_user(
     page_size: int = 8,
 ) -> dict[str, Any]:
     queryset = (
-        GameSession.objects.filter(slots__user_id=user_id)
+        GameSession.objects.filter(slots__user_id=user_id, is_diagnostic=False)
         .select_related("ai_model")
         .prefetch_related("slots__user")
         .annotate(move_count=Count("moves", distinct=True))
@@ -1310,7 +1554,9 @@ def _consume_ws_ticket(ticket: str) -> None:
 
 
 def build_ws_ticket(*, game_id: str, user_id: int) -> dict[str, Any]:
-    _load_session_for_user(game_id=game_id, user_id=user_id)
+    session, _player_slot = _load_session_for_user(game_id=game_id, user_id=user_id)
+    if session.is_diagnostic:
+        raise GameNotFoundError("Game not found")
     cleanup_consumed_ws_tickets()
     ticket = signing.dumps(
         {"game_id": game_id, "user_id": user_id, "nonce": uuid.uuid4().hex},
@@ -1572,13 +1818,16 @@ def submit_pass_for_ai(
 
 
 def get_ai_context(game_id: str, user_id: int) -> dict[str, Any]:
-    session, human_slot, ai_slot = _load_vs_ai_session(game_id=game_id, user_id=user_id)
+    session, _membership, acting = _load_vs_ai_session(game_id=game_id, user_id=user_id)
+    opponent = session.slots.filter(slot=1 - acting.slot).first()
+    if opponent is None:
+        raise GameNotFoundError("Game not found")
     board = _board_from_session(session)
     ai_state = build_ai_state_dict(
         board=board,
-        ai_rack=list(ai_slot.rack) if isinstance(ai_slot.rack, list) else [],
-        human_score=human_slot.score,
-        ai_score=ai_slot.score,
+        ai_rack=list(acting.rack) if isinstance(acting.rack, list) else [],
+        human_score=opponent.score,
+        ai_score=acting.score,
         turn="AI",
     )
     # ⭐ `ai_state` above is the AUTHORITATIVE structured copy: a 15x15 cell grid
@@ -1592,16 +1841,18 @@ def get_ai_context(game_id: str, user_id: int) -> dict[str, Any]:
         ai_state,
         multigraph=has_multigraph_tile_token(variant.playable_letters),
     )
+    ai_model = acting.ai_model or session.ai_model
+    ai_prompt = acting.ai_prompt or session.ai_prompt
     return {
         "compact_state": compact,
         "ai_state": dict(ai_state),
         "variant": session.variant_slug,
-        "ai_model_id": session.ai_model.model_id if session.ai_model else None,
-        "ai_model_display_name": session.ai_model.display_name if session.ai_model else None,
-        "ai_prompt_id": session.ai_prompt_id,
-        "ai_prompt_name": session.ai_prompt.name if session.ai_prompt else None,
-        "ai_prompt_fitness": session.ai_prompt.fitness if session.ai_prompt else None,
-        "ai_prompt_text": session.ai_prompt.prompt if session.ai_prompt else None,
+        "ai_model_id": ai_model.model_id if ai_model else None,
+        "ai_model_display_name": ai_model.display_name if ai_model else None,
+        "ai_prompt_id": ai_prompt.id if ai_prompt else None,
+        "ai_prompt_name": ai_prompt.name if ai_prompt else None,
+        "ai_prompt_fitness": ai_prompt.fitness if ai_prompt else None,
+        "ai_prompt_text": ai_prompt.prompt if ai_prompt else None,
         "is_first_move": _is_board_empty(session),
         "ai_move_max_output_tokens": settings.AI_MOVE_MAX_OUTPUT_TOKENS,
         "ai_move_timeout_seconds": settings.AI_MOVE_TIMEOUT_SECONDS,
@@ -1618,9 +1869,11 @@ def validate_move_for_ai(
     session, player_slot = _load_session_for_user(game_id=game_id, user_id=user_id)
     board = _board_from_session(session)
     placements = _placements_from_data(placements_data)
-    ai_slot = session.slots.filter(is_ai=True).first()
-    if rack_owner == "ai" and ai_slot is not None:
-        rack_slot = ai_slot
+    if rack_owner == "ai":
+        acting = _resolve_acting_ai_slot(session)
+        if acting is None:
+            raise GameNotFoundError("Game not found")
+        rack_slot = acting
     else:
         rack_slot = player_slot
     rack = list(rack_slot.rack) if isinstance(rack_slot.rack, list) else []

@@ -77,7 +77,7 @@ def _slot_snapshot(game: GameSession) -> tuple[str, int, str, int]:
 class PlayerSlotInline(_PlayerSlotInline):
     model = PlayerSlot
     extra = 0
-    readonly_fields = ("slot", "user", "is_ai", "rack", "score", "pass_streak")
+    readonly_fields = ("slot", "user", "is_ai", "ai_model", "ai_prompt", "rack", "score", "pass_streak")
 
 
 class MoveInline(_MoveInline):
@@ -95,6 +95,7 @@ class GameSessionAdmin(_GameSessionAdmin):
         "players",
         "scoreline",
         "game_mode",
+        "is_diagnostic",
         "status",
         "ai_model",
         "move_count_display",
@@ -102,14 +103,16 @@ class GameSessionAdmin(_GameSessionAdmin):
         "created_at",
         "updated_at",
     )
-    list_filter = ("status", "game_mode", "game_over", "variant_slug", "ai_model")
+    list_filter = ("status", "game_mode", "is_diagnostic", "game_over", "variant_slug", "ai_model")
     search_fields = ("public_id", "slots__user__username", "ai_model__model_id")
     inlines = [PlayerSlotInline, MoveInline]
     readonly_fields = (
         "public_id",
+        "is_diagnostic",
         "board_state",
         "premium_used",
         "bag_tiles",
+        "bag_rng_state",
         "created_at",
         "updated_at",
         "finished_at",
@@ -162,6 +165,7 @@ class GameSessionAdmin(_GameSessionAdmin):
         ai_moves = list(
             Move.objects.select_related("game__ai_model", "player_slot__user")
             .exclude(ai_metadata__isnull=True)
+            .filter(game__is_diagnostic=False)
             .order_by("-created_at")
         )
 
@@ -236,11 +240,12 @@ class GameSessionAdmin(_GameSessionAdmin):
                 }
             )
 
+        product_sessions = GameSession.objects.filter(is_diagnostic=False)
         summary_cards = [
             {"label": "Users", "value": User.objects.count()},
-            {"label": "Games", "value": GameSession.objects.count()},
-            {"label": "Active games", "value": GameSession.objects.filter(status="active").count()},
-            {"label": "Finished games", "value": GameSession.objects.filter(game_over=True).count()},
+            {"label": "Games", "value": product_sessions.count()},
+            {"label": "Active games", "value": product_sessions.filter(status="active").count()},
+            {"label": "Finished games", "value": product_sessions.filter(game_over=True).count()},
             {"label": "AI turns", "value": len(ai_moves)},
             {"label": "Total tokens", "value": f"{token_totals['total_tokens']:,}"},
         ]

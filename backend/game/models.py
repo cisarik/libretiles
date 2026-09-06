@@ -2,6 +2,7 @@ import uuid
 
 from django.conf import settings
 from django.db import models
+from django.db.models import Q, UniqueConstraint, Value
 
 
 def default_structured_board() -> list[list[None]]:
@@ -38,6 +39,8 @@ class GameSession(models.Model):
 
     current_turn_slot = models.IntegerField(null=True, blank=True, default=None)
     consecutive_scoreless_turns = models.IntegerField(default=0)
+    is_diagnostic = models.BooleanField(default=False)
+    bag_rng_state = models.JSONField(null=True, blank=True, default=None)
 
     ai_model = models.ForeignKey(
         "catalog.AIModel",
@@ -87,6 +90,22 @@ class PlayerSlot(models.Model):
     score = models.IntegerField(default=0)
     pass_streak = models.IntegerField(default=0)
     is_ai = models.BooleanField(default=False)
+    ai_model = models.ForeignKey(
+        "catalog.AIModel",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="player_slots",
+        help_text="Per-seat AI model for diagnostic two-AI sessions",
+    )
+    ai_prompt = models.ForeignKey(
+        "catalog.AIPrompt",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="player_slots",
+        help_text="Per-seat AI prompt for diagnostic two-AI sessions",
+    )
 
     class Meta:
         unique_together = ("game", "slot")
@@ -180,3 +199,84 @@ class ConsumedWsTicket(models.Model):
 
     def __str__(self) -> str:
         return f"ConsumedWsTicket {self.ticket_hash[:8]}"
+
+
+class DiagnosticRun(models.Model):
+    """Persisted diagnostic job bound to a two-AI GameSession."""
+
+    STATUS_CHOICES = [
+        ("queued", "Queued"),
+        ("running", "Running"),
+        ("completed", "Completed"),
+        ("failed", "Failed"),
+        ("cancelled", "Cancelled"),
+        ("abandoned", "Abandoned"),
+        ("blocked_dependency", "Blocked by dependency"),
+    ]
+    ASSIST_MODE_CHOICES = [
+        ("assisted", "Assisted"),
+        ("authorship", "Authorship"),
+    ]
+    INSTRUMENT_CHOICES = [
+        ("position-set", "Position set"),
+        ("full-game", "Full game"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    status = models.CharField(max_length=32, choices=STATUS_CHOICES, default="queued")
+    assist_mode = models.CharField(max_length=16, choices=ASSIST_MODE_CHOICES)
+    instrument = models.CharField(
+        max_length=16,
+        choices=INSTRUMENT_CHOICES,
+        default="full-game",
+    )
+    variant_slug = models.CharField(max_length=50)
+    seat0_model_id = models.CharField(max_length=200)
+    seat1_model_id = models.CharField(max_length=200)
+    prompt = models.ForeignKey(
+        "catalog.AIPrompt",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="diagnostic_runs",
+    )
+    session = models.ForeignKey(
+        GameSession,
+        on_delete=models.CASCADE,
+        related_name="diagnostic_runs",
+    )
+    position_set_digest = models.CharField(max_length=64, blank=True, default="")
+    max_plies = models.IntegerField(default=0)
+    max_provider_requests = models.IntegerField(default=0)
+    max_wall_clock_seconds = models.IntegerField(default=0)
+    heartbeat_at = models.DateTimeField(null=True, blank=True)
+    pid = models.IntegerField(null=True, blank=True)
+    diagnostic_end_reason = models.CharField(max_length=64, blank=True, default="")
+    executed_runtime_mode = models.CharField(max_length=16, blank=True, default="")
+    score_authority = models.CharField(max_length=16, blank=True, default="")
+    report_path = models.CharField(max_length=512, blank=True, default="")
+    log_path = models.CharField(max_length=512, blank=True, default="")
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="diagnostic_runs",
+    )
+    parameters_json = models.JSONField(default=dict)
+    ended_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "game_diagnostic_run"
+        constraints = [
+            UniqueConstraint(
+                Value(1),
+                condition=Q(status__in=["queued", "running"]),
+                name="unique_inflight_diagnostic_run",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"DiagnosticRun {self.id.hex[:8]} ({self.status})"
