@@ -18,6 +18,7 @@ from typing import Any, Literal
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core import signing
+from django.core.exceptions import ImproperlyConfigured
 from django.core.paginator import Paginator
 from django.db import IntegrityError, connection, transaction
 from django.db.models import Count
@@ -1078,6 +1079,21 @@ def _submit_pass_locked(
     return {"ok": True, "game_over": session.game_over, **end_info}
 
 
+def _reject_service_account_user(user_id: int) -> None:
+    """Refuse ordinary player participation by the reserved diagnostic identity."""
+    user_model = get_user_model()
+    username = (
+        user_model.objects.filter(pk=user_id).values_list("username", flat=True).first()
+    )
+    if username != DIAGNOSTIC_SERVICE_USERNAME:
+        return
+    raise ImproperlyConfigured(
+        f"Reserved diagnostic service account {DIAGNOSTIC_SERVICE_USERNAME!r} "
+        "cannot create product games or join human matchmaking. Use an ordinary "
+        "player account."
+    )
+
+
 def create_game(
     *,
     user_id: int,
@@ -1087,6 +1103,11 @@ def create_game(
     ai_prompt_id: int | None = None,
     variant_slug: str = "english",
 ) -> dict[str, Any]:
+    try:
+        _reject_service_account_user(user_id)
+    except ImproperlyConfigured as exc:
+        return {"ok": False, "error": str(exc)}
+
     if game_mode != "vs_ai":
         return {"ok": False, "error": "Human multiplayer starts from the queue"}
 
@@ -1144,6 +1165,14 @@ def ensure_diagnostic_service_user() -> Any:
         user.set_unusable_password()
         dirty.append("password")
     else:
+        if user.has_usable_password():
+            raise ImproperlyConfigured(
+                f"Reserved diagnostic username {DIAGNOSTIC_SERVICE_USERNAME!r} "
+                "is held by a pre-existing account with a usable password. "
+                "Rename or remove that claimant, then re-run "
+                "ensure_diagnostic_service_user or migrate. Refusing to adopt "
+                "or disable the account."
+            )
         if user.is_staff:
             user.is_staff = False
             dirty.append("is_staff")
@@ -1587,6 +1616,11 @@ def verify_ws_ticket(*, game_id: str, ticket: str) -> int:
 
 
 def join_human_queue(*, user_id: int, variant_slug: str = "english") -> dict[str, Any]:
+    try:
+        _reject_service_account_user(user_id)
+    except ImproperlyConfigured as exc:
+        return {"ok": False, "error": str(exc)}
+
     unknown = _unknown_variant_payload(variant_slug)
     if unknown is not None:
         return unknown

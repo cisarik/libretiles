@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import importlib
 import json
 import uuid
 from pathlib import Path
 from typing import Any
 
+from django.apps import apps as django_apps
+from django.core.exceptions import ImproperlyConfigured
 from django.db import IntegrityError
 from django.test import TestCase
 from django.urls import reverse
@@ -271,6 +274,101 @@ class DiagnosticSessionTests(TestCase):
             },
         )
         assert resp.status_code == 400
+
+    def test_f_l_collision_fails_closed(self) -> None:
+        """Reserved username with a usable password must not be adopted.
+
+        Pre-fix finding proof (APMC-S4-IA-F01): ensure_diagnostic_service_user()
+        returned quietly with the claimant's password intact.
+        """
+        User.objects.filter(username=services.DIAGNOSTIC_SERVICE_USERNAME).delete()
+        claimant = User.objects.create_user(
+            username=services.DIAGNOSTIC_SERVICE_USERNAME,
+            password="claimant-pass-123",
+        )
+        with self.assertRaises(ImproperlyConfigured) as raised:
+            services.ensure_diagnostic_service_user()
+        claimant.refresh_from_db()
+        assert claimant.has_usable_password() is True
+        assert claimant.check_password("claimant-pass-123") is True
+        assert claimant.is_staff is False
+        message = str(raised.exception)
+        assert services.DIAGNOSTIC_SERVICE_USERNAME in message
+        assert "usable password" in message
+
+    def test_f_m_idempotent_managed_account(self) -> None:
+        first = services.ensure_diagnostic_service_user()
+        second = services.ensure_diagnostic_service_user()
+        assert first.id == second.id
+        assert first.has_usable_password() is False
+        assert second.has_usable_password() is False
+        assert first.is_staff is False
+        assert first.is_superuser is False
+        assert first.is_active is True
+        assert first.groups.count() == 0
+        assert first.user_permissions.count() == 0
+
+    def test_f_n_service_bearer_cannot_create_product_game(self) -> None:
+        """Pre-fix finding proof (APMC-S4-IA-F02): create returned 201/ok."""
+        service = User.objects.get(username=services.DIAGNOSTIC_SERVICE_USERNAME)
+        client = APIClient()
+        client.force_authenticate(user=service)
+        before = GameSession.objects.filter(is_diagnostic=False).count()
+        resp = client.post(
+            "/api/game/create/",
+            {"game_mode": "vs_ai", "ai_model_id": self.seat0.id},
+        )
+        assert 400 <= resp.status_code < 500
+        assert resp.status_code == 400
+        assert GameSession.objects.filter(is_diagnostic=False).count() == before
+        body = resp.json()
+        assert body.get("ok") is False
+        assert services.DIAGNOSTIC_SERVICE_USERNAME in str(body)
+
+    def test_f_o_service_bearer_cannot_join_human_matchmaking(self) -> None:
+        """Pre-fix finding proof (APMC-S4-IA-F02): queue join succeeded (joined)."""
+        service = User.objects.get(username=services.DIAGNOSTIC_SERVICE_USERNAME)
+        client = APIClient()
+        client.force_authenticate(user=service)
+        before = GameSession.objects.filter(game_mode="vs_human").count()
+        resp = client.post(
+            "/api/game/queue/join/",
+            {"variant_slug": "english"},
+            format="json",
+        )
+        assert 400 <= resp.status_code < 500
+        assert resp.status_code == 400
+        assert GameSession.objects.filter(game_mode="vs_human").count() == before
+        body = resp.json()
+        assert body.get("ok") is False
+        assert body.get("waiting") is not True
+        assert body.get("matched") is not True
+
+    def test_f_p_reverse_keeps_claimant_deletes_managed(self) -> None:
+        """Pre-fix finding proof (APMC-S4-IA-F03): reverse deleted the claimant."""
+        migration = importlib.import_module(
+            "game.migrations.0009_diagnostic_session_foundation"
+        )
+        unensure = migration.unensure_diagnostic_service_user
+
+        User.objects.filter(username=services.DIAGNOSTIC_SERVICE_USERNAME).delete()
+        claimant = User.objects.create_user(
+            username=services.DIAGNOSTIC_SERVICE_USERNAME,
+            password="claimant-pass-123",
+        )
+        claimant_id = claimant.id
+        unensure(django_apps, None)
+        assert User.objects.filter(pk=claimant_id).exists()
+        claimant.refresh_from_db()
+        assert claimant.has_usable_password() is True
+        assert claimant.check_password("claimant-pass-123") is True
+
+        User.objects.filter(username=services.DIAGNOSTIC_SERVICE_USERNAME).delete()
+        managed = services.ensure_diagnostic_service_user()
+        assert managed.has_usable_password() is False
+        managed_id = managed.id
+        unensure(django_apps, None)
+        assert not User.objects.filter(pk=managed_id).exists()
 
     def test_f_k_second_inflight_diagnostic_run_raises_integrity_error(self) -> None:
         self._create_diagnostic()
