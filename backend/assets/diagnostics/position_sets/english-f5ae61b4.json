@@ -15,9 +15,10 @@
   },
   "asset_digests": {
     "premiums.json": "65d712b9848d882600349f75179d9331a09346b6b95ebeb2a1dcb77988d9918d",
+    "variants/english.json": "3d83ab5d27ec21b2303ff1d6680e7f38bada6431b8daac3deb97aa383d84d58e",
     "dicts/collins2019.txt": "97e6d721652cbe85181121e09d7866a72242436259f904a7a3d7a0b2c916d5ba"
   },
-  "generator_source_revision": "c9396f417baf5b44e60469432be871671d030a37",
+  "generator_source_revision": "51fa78ed14a6d975ebf52330c4bbe0f15e22edd5",
   "positions": [
     {
       "position_index": 0,
@@ -1944,7 +1945,7 @@
         "ranked_search_complete": true,
         "witness_status": "found"
       },
-      "conditions_digest": "78912935b3589dd3a904119061b74a795875abe77c849f619978600d1fb90afe"
+      "conditions_digest": "8a1080fc9b14e6850c930467c25ce2b3e280378645d29765ddc46421651fa02c"
     },
     {
       "position_index": 1,
@@ -3871,7 +3872,7 @@
         "ranked_search_complete": true,
         "witness_status": "found"
       },
-      "conditions_digest": "78912935b3589dd3a904119061b74a795875abe77c849f619978600d1fb90afe"
+      "conditions_digest": "8a1080fc9b14e6850c930467c25ce2b3e280378645d29765ddc46421651fa02c"
     },
     {
       "position_index": 2,
@@ -5798,7 +5799,7 @@
         "ranked_search_complete": true,
         "witness_status": "found"
       },
-      "conditions_digest": "78912935b3589dd3a904119061b74a795875abe77c849f619978600d1fb90afe"
+      "conditions_digest": "8a1080fc9b14e6850c930467c25ce2b3e280378645d29765ddc46421651fa02c"
     },
     {
       "position_index": 3,
@@ -7719,7 +7720,7 @@
         "ranked_search_complete": false,
         "witness_status": "found"
       },
-      "conditions_digest": "78912935b3589dd3a904119061b74a795875abe77c849f619978600d1fb90afe"
+      "conditions_digest": "8a1080fc9b14e6850c930467c25ce2b3e280378645d29765ddc46421651fa02c"
     },
     {
       "position_index": 4,
@@ -9641,7 +9642,7 @@
         "ranked_search_complete": true,
         "witness_status": "found"
       },
-      "conditions_digest": "78912935b3589dd3a904119061b74a795875abe77c849f619978600d1fb90afe"
+      "conditions_digest": "8a1080fc9b14e6850c930467c25ce2b3e280378645d29765ddc46421651fa02c"
     },
     {
       "position_index": 5,
@@ -11564,7 +11565,7 @@
         "ranked_search_complete": true,
         "witness_status": "found"
       },
-      "conditions_digest": "78912935b3589dd3a904119061b74a795875abe77c849f619978600d1fb90afe"
+      "conditions_digest": "8a1080fc9b14e6850c930467c25ce2b3e280378645d29765ddc46421651fa02c"
     },
     {
       "position_index": 6,
@@ -13478,7 +13479,7 @@
         "ranked_search_complete": false,
         "witness_status": "found"
       },
-      "conditions_digest": "78912935b3589dd3a904119061b74a795875abe77c849f619978600d1fb90afe"
+      "conditions_digest": "8a1080fc9b14e6850c930467c25ce2b3e280378645d29765ddc46421651fa02c"
     },
     {
       "position_index": 7,
@@ -15396,7 +15397,7 @@
         "ranked_search_complete": true,
         "witness_status": "found"
       },
-      "conditions_digest": "78912935b3589dd3a904119061b74a795875abe77c849f619978600d1fb90afe"
+      "conditions_digest": "8a1080fc9b14e6850c930467c25ce2b3e280378645d29765ddc46421651fa02c"
     },
     {
       "position_index": 8,
@@ -17298,7 +17299,7 @@
         "ranked_search_complete": true,
         "witness_status": "found"
       },
-      "conditions_digest": "78912935b3589dd3a904119061b74a795875abe77c849f619978600d1fb90afe"
+      "conditions_digest": "8a1080fc9b14e6850c930467c25ce2b3e280378645d29765ddc46421651fa02c"
     },
     {
       "position_index": 9,
@@ -19200,7 +19201,7 @@
         "ranked_search_complete": true,
         "witness_status": "found"
       },
-      "conditions_digest": "78912935b3589dd3a904119061b74a795875abe77c849f619978600d1fb90afe"
+      "conditions_digest": "8a1080fc9b14e6850c930467c25ce2b3e280378645d29765ddc46421651fa02c"
     },
     {
       "position_index": 10,
@@ -21099,7 +21100,7 @@
         "ranked_search_complete": true,
         "witness_status": "found"
       },
-      "conditions_digest": "78912935b3589dd3a904119061b74a795875abe77c849f619978600d1fb90afe"
+      "conditions_digest": "8a1080fc9b14e6850c930467c25ce2b3e280378645d29765ddc46421651fa02c"
     },
     {
       "position_index": 11,
@@ -22995,7 +22996,7 @@
         "ranked_search_complete": true,
         "witness_status": "found"
       },
-      "conditions_digest": "78912935b3589dd3a904119061b74a795875abe77c849f619978600d1fb90afe"
+      "conditions_digest": "8a1080fc9b14e6850c930467c25ce2b3e280378645d29765ddc46421651fa02c"
     },
     {
       "position_index": 12,
@@ -24894,7 +24895,7 @@
         "ranked_search_complete": true,
         "witness_status": "found"
       },
-      "conditions_digest": "78912935b3589dd3a904119061b74a795875abe77c849f619978600d1fb90afe"
+      "conditions_digest": "8a1080fc9b14e6850c930467c25ce2b3e280378645d29765ddc46421651fa02c"
     },
     {
       "position_index": 13,
@@ -26790,7 +26791,7 @@
         "ranked_search_complete": true,
         "witness_status": "found"
       },
-      "conditions_digest": "78912935b3589dd3a904119061b74a795875abe77c849f619978600d1fb90afe"
+      "conditions_digest": "8a1080fc9b14e6850c930467c25ce2b3e280378645d29765ddc46421651fa02c"
     },
     {
       "position_index": 14,
@@ -28684,7 +28685,7 @@
         "ranked_search_complete": true,
         "witness_status": "found"
       },
-      "conditions_digest": "78912935b3589dd3a904119061b74a795875abe77c849f619978600d1fb90afe"
+      "conditions_digest": "8a1080fc9b14e6850c930467c25ce2b3e280378645d29765ddc46421651fa02c"
     },
     {
       "position_index": 15,
@@ -30578,7 +30579,7 @@
         "ranked_search_complete": true,
         "witness_status": "found"
       },
-      "conditions_digest": "78912935b3589dd3a904119061b74a795875abe77c849f619978600d1fb90afe"
+      "conditions_digest": "8a1080fc9b14e6850c930467c25ce2b3e280378645d29765ddc46421651fa02c"
     },
     {
       "position_index": 16,
@@ -32439,7 +32440,7 @@
         "ranked_search_complete": true,
         "witness_status": "found"
       },
-      "conditions_digest": "78912935b3589dd3a904119061b74a795875abe77c849f619978600d1fb90afe"
+      "conditions_digest": "8a1080fc9b14e6850c930467c25ce2b3e280378645d29765ddc46421651fa02c"
     },
     {
       "position_index": 17,
@@ -34302,7 +34303,7 @@
         "ranked_search_complete": true,
         "witness_status": "found"
       },
-      "conditions_digest": "78912935b3589dd3a904119061b74a795875abe77c849f619978600d1fb90afe"
+      "conditions_digest": "8a1080fc9b14e6850c930467c25ce2b3e280378645d29765ddc46421651fa02c"
     },
     {
       "position_index": 18,
@@ -36167,7 +36168,7 @@
         "ranked_search_complete": true,
         "witness_status": "found"
       },
-      "conditions_digest": "78912935b3589dd3a904119061b74a795875abe77c849f619978600d1fb90afe"
+      "conditions_digest": "8a1080fc9b14e6850c930467c25ce2b3e280378645d29765ddc46421651fa02c"
     },
     {
       "position_index": 19,
@@ -38024,7 +38025,7 @@
         "ranked_search_complete": true,
         "witness_status": "found"
       },
-      "conditions_digest": "78912935b3589dd3a904119061b74a795875abe77c849f619978600d1fb90afe"
+      "conditions_digest": "8a1080fc9b14e6850c930467c25ce2b3e280378645d29765ddc46421651fa02c"
     },
     {
       "position_index": 20,
@@ -39885,7 +39886,7 @@
         "ranked_search_complete": true,
         "witness_status": "found"
       },
-      "conditions_digest": "78912935b3589dd3a904119061b74a795875abe77c849f619978600d1fb90afe"
+      "conditions_digest": "8a1080fc9b14e6850c930467c25ce2b3e280378645d29765ddc46421651fa02c"
     },
     {
       "position_index": 21,
@@ -41749,7 +41750,7 @@
         "ranked_search_complete": true,
         "witness_status": "found"
       },
-      "conditions_digest": "78912935b3589dd3a904119061b74a795875abe77c849f619978600d1fb90afe"
+      "conditions_digest": "8a1080fc9b14e6850c930467c25ce2b3e280378645d29765ddc46421651fa02c"
     },
     {
       "position_index": 22,
@@ -43603,7 +43604,7 @@
         "ranked_search_complete": true,
         "witness_status": "found"
       },
-      "conditions_digest": "78912935b3589dd3a904119061b74a795875abe77c849f619978600d1fb90afe"
+      "conditions_digest": "8a1080fc9b14e6850c930467c25ce2b3e280378645d29765ddc46421651fa02c"
     },
     {
       "position_index": 23,
@@ -45460,8 +45461,8 @@
         "ranked_search_complete": true,
         "witness_status": "found"
       },
-      "conditions_digest": "78912935b3589dd3a904119061b74a795875abe77c849f619978600d1fb90afe"
+      "conditions_digest": "8a1080fc9b14e6850c930467c25ce2b3e280378645d29765ddc46421651fa02c"
     }
   ],
-  "set_digest": "1ebfacbd416af0d138d325029ece37a0c02a1221e300cc252265659518e3b964"
+  "set_digest": "f5ae61b467b4f21e6fe9ee94024e9c3c06e09e0dbae7e6cc8954ff911dc86ef4"
 }

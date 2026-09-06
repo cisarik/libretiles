@@ -45,7 +45,7 @@ from gamecore.selfplay import (
 )
 from gamecore.tiles import TileBag, get_tile_distribution, get_tile_points
 from gamecore.types import BLANK_TOKEN
-from gamecore.variant_store import VariantDefinition, load_variant
+from gamecore.variant_store import VariantDefinition, _variant_path, load_variant
 
 ARTIFACT_ID = "libretiles.position-set/v1"
 DEFAULT_SEEDS: tuple[int, ...] = (300, 301, 302)
@@ -120,7 +120,9 @@ def classify_phase(occupied: int, tile_pool: int) -> PhaseName:
 
 
 def collect_asset_digests(variant_slug: str) -> dict[str, str]:
-    """SHA-256 of every asset the snapshot's legality and scoring identity depends on."""
+    """conditions_digest binds configuration + every content asset resolved through the asset
+    helpers. Code identity is pinned by generator_source_revision, not by this digest.
+    """
     return _asset_digests_for_variant(load_variant(variant_slug))
 
 
@@ -689,12 +691,42 @@ def _conditions_digest(
     return _sha256_canonical(_conditions_payload(config, asset_digests))
 
 
+def _resolved_content_asset_paths(variant: VariantDefinition) -> tuple[Path, ...]:
+    """Every content file the generation path resolves through asset helpers.
+
+    Board loads premiums via get_premiums_path; load_variant / tile points and
+    distribution via _variant_path; WordAuthority via Path properties on the
+    VariantDefinition (lexicon and two-tile file when present). A future Path
+    property on the definition is hashed automatically.
+    """
+    ordered: list[Path] = []
+    seen: set[Path] = set()
+
+    def add(path: Path | str | None) -> None:
+        if path is None:
+            return
+        candidate = Path(path)
+        key = candidate.resolve()
+        if key in seen:
+            return
+        seen.add(key)
+        ordered.append(candidate)
+
+    add(get_premiums_path())
+    add(_variant_path(variant.slug))
+    for field in vars(type(variant)).values():
+        if isinstance(field, property):
+            value = field.__get__(variant, type(variant))
+            if isinstance(value, Path):
+                add(value)
+    return tuple(ordered)
+
+
 def _asset_digests_for_variant(variant: VariantDefinition) -> dict[str, str]:
-    paths = [Path(get_premiums_path()), variant.dictionary_path]
-    two_tile = variant.two_tile_words_path
-    if two_tile is not None:
-        paths.append(two_tile)
-    return {_asset_identity(path): _sha256_file(path) for path in paths}
+    return {
+        _asset_identity(path): _sha256_file(path)
+        for path in _resolved_content_asset_paths(variant)
+    }
 
 
 def _asset_identity(path: Path) -> str:

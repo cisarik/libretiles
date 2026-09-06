@@ -44,7 +44,7 @@ _COMMITTED_DIR = (
     Path(__file__).resolve().parents[1] / "assets" / "diagnostics" / "position_sets"
 )
 _COMMITTED_SET_DIGEST = (
-    "1ebfacbd416af0d138d325029ece37a0c02a1221e300cc252265659518e3b964"
+    "f5ae61b467b4f21e6fe9ee94024e9c3c06e09e0dbae7e6cc8954ff911dc86ef4"
 )
 
 
@@ -212,6 +212,7 @@ def test_f10_conditions_digest_includes_asset_content_hashes() -> None:
     assets = collect_asset_digests("english")
     assert "premiums.json" in assets
     assert any(name.startswith("dicts/") for name in assets)
+    assert "variants/english.json" in assets
     for digest in assets.values():
         assert isinstance(digest, str) and len(digest) == 64
     baseline = _conditions_digest(_SMALL, assets)
