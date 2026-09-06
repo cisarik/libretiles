@@ -395,6 +395,8 @@ export async function runDiagnosticTurn(opts: {
   maxSteps: number;
   queueMode: QueueMode;
   script: FakeScript;
+  /** Diagnostic acting seat; defaults to 1 so the product path stays slot 1. */
+  aiSlot?: number;
   scriptedPlacements?: Array<Record<string, unknown>>;
   backendOrigins?: string[];
   foreignOrigins?: string[];
@@ -402,6 +404,7 @@ export async function runDiagnosticTurn(opts: {
   executedRuntimeMode?: DiagnosticRuntimeMode;
   driver?: DiagnosticDriver;
 }): Promise<TerminalObservation> {
+  const aiSlot = opts.aiSlot ?? 1;
   const providerOrigins = opts.providerOrigins ?? [];
   const invocations = derivedExternalProviderInvocations(providerOrigins);
   if (opts.script === "generic_unchanged") {
@@ -435,7 +438,7 @@ export async function runDiagnosticTurn(opts: {
     aiTimeoutSeconds: opts.timeoutSeconds,
     maxStepsTotal: opts.maxSteps,
     now: () => Date.now(),
-    anchor: { gameId: opts.gameId, moveCount, aiSlot: 1 },
+    anchor: { gameId: opts.gameId, moveCount, aiSlot },
     fetchGameState: () => fetchReconciliation(opts.backendUrl, opts.gameId, opts.token),
     runStream: async (request) => {
       const body = aiMoveRequestBody({

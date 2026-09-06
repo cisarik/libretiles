@@ -72,6 +72,9 @@ coverage/
 # ---- Docker ----
 docker-compose.override.yml
 
+# ---- Diagnostic runner artifacts (logs, reports) ----
+backend/var/
+
 # ---- Vercel ----
 .vercel/
 

@@ -1,14 +1,37 @@
+import os
+import random
+import subprocess
+import sys
 from collections import defaultdict
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from django.contrib import admin
+from django.contrib import admin, messages
+from django.core.exceptions import PermissionDenied
+from django.db import IntegrityError
 from django.db.models import Count, QuerySet
 from django.http import HttpRequest, HttpResponse
+from django.shortcuts import redirect
 from django.template.response import TemplateResponse
 from django.urls import URLPattern, path, reverse
+from django.utils import timezone
 
 from accounts.models import User
-from .models import ChatMessage, GameSession, Move, PlayerSlot
+from .models import ChatMessage, DiagnosticRun, GameSession, Move, PlayerSlot
+from .services import (
+    DIAGNOSTIC_MAX_PLIES_ADMIN_MAX,
+    DIAGNOSTIC_MAX_PLIES_DEFAULT,
+    DIAGNOSTIC_MAX_PROVIDER_REQUESTS_ADMIN_MAX,
+    DIAGNOSTIC_MAX_PROVIDER_REQUESTS_DEFAULT,
+    DIAGNOSTIC_MAX_WALL_CLOCK_SECONDS_ADMIN_MAX,
+    DIAGNOSTIC_MAX_WALL_CLOCK_SECONDS_DEFAULT,
+    DiagnosticSessionError,
+    abandon_stale_diagnostic_runs,
+    abort_diagnostic_run,
+    cancel_diagnostic_run,
+    configure_diagnostic_run,
+    create_diagnostic_game,
+)
 
 if TYPE_CHECKING:
     _PlayerSlotInline = admin.TabularInline[PlayerSlot, GameSession]
@@ -16,12 +39,14 @@ if TYPE_CHECKING:
     _GameSessionAdmin = admin.ModelAdmin[GameSession]
     _MoveAdmin = admin.ModelAdmin[Move]
     _ChatMessageAdmin = admin.ModelAdmin[ChatMessage]
+    _DiagnosticRunAdmin = admin.ModelAdmin[DiagnosticRun]
 else:
     _PlayerSlotInline = admin.TabularInline
     _MoveInline = admin.TabularInline
     _GameSessionAdmin = admin.ModelAdmin
     _MoveAdmin = admin.ModelAdmin
     _ChatMessageAdmin = admin.ModelAdmin
+    _DiagnosticRunAdmin = admin.ModelAdmin
 
 def _extract_usage(ai_metadata: Any) -> dict[str, int]:
     if not isinstance(ai_metadata, dict):
@@ -301,3 +326,305 @@ class ChatMessageAdmin(_ChatMessageAdmin):
     list_display = ("game", "user", "body", "created_at")
     search_fields = ("game__public_id", "user__username", "body")
     readonly_fields = ("created_at",)
+
+
+def spawn_diagnostic_runner(run_id: Any) -> None:
+    """Spawn the detached fake-mode runner process for one run.
+
+    The child env is os.environ minus the AppImage harness names. ⛔ No JWT in
+    this env: the runner mints its own access-only token after start. ⛔ No
+    user string on argv besides the UUID of the run this function was handed.
+    Tests monkeypatch this module attribute instead of spawning processes.
+    """
+    backend_root = Path(__file__).resolve().parents[1]
+    env = dict(os.environ)
+    for name in ("APPIMAGE", "ARGV0", "APPDIR"):
+        env.pop(name, None)
+    subprocess.Popen(
+        [
+            sys.executable,
+            str(backend_root / "manage.py"),
+            "run_diagnostic_match",
+            "--run-id",
+            str(run_id),
+        ],
+        cwd=str(backend_root),
+        start_new_session=True,
+        stdin=subprocess.DEVNULL,
+        env=env,
+    )
+
+
+@admin.register(DiagnosticRun)
+class DiagnosticRunAdmin(_DiagnosticRunAdmin):
+    change_list_template = "admin/game/diagnosticrun/change_list.html"
+    list_display = (
+        "id_short",
+        "status",
+        "instrument",
+        "assist_mode",
+        "seat0_model_id",
+        "seat1_model_id",
+        "variant_slug",
+        "executed_runtime_mode",
+        "inflight",
+        "heartbeat_age",
+        "diagnostic_end_reason",
+        "created_at",
+    )
+    list_filter = ("status", "instrument", "assist_mode", "executed_runtime_mode")
+    search_fields = ("id", "seat0_model_id", "seat1_model_id", "session__public_id")
+    actions = ("cancel_selected_runs",)
+    readonly_fields = (
+        "id",
+        "status",
+        "assist_mode",
+        "instrument",
+        "variant_slug",
+        "seat0_model_id",
+        "seat1_model_id",
+        "prompt",
+        "session",
+        "position_set_digest",
+        "max_plies",
+        "max_provider_requests",
+        "max_wall_clock_seconds",
+        "heartbeat_at",
+        "pid",
+        "diagnostic_end_reason",
+        "executed_runtime_mode",
+        "score_authority",
+        "report_path",
+        "log_path",
+        "created_by",
+        "parameters_json",
+        "ended_at",
+        "created_at",
+        "updated_at",
+    )
+
+    def get_urls(self) -> list[URLPattern]:
+        custom_urls = [
+            path(
+                "launch/",
+                self.admin_site.admin_view(self.launch_view),
+                name="game_diagnosticrun_launch",
+            ),
+        ]
+        return custom_urls + super().get_urls()
+
+    @admin.display(description="Run")
+    def id_short(self, obj: DiagnosticRun) -> str:
+        return obj.id.hex[:8]
+
+    @admin.display(description="In flight", boolean=True)
+    def inflight(self, obj: DiagnosticRun) -> bool:
+        return obj.status in ("queued", "running")
+
+    @admin.display(description="Heartbeat")
+    def heartbeat_age(self, obj: DiagnosticRun) -> str:
+        if obj.status not in ("queued", "running") or obj.heartbeat_at is None:
+            return "—"
+        age = int((timezone.now() - obj.heartbeat_at).total_seconds())
+        return f"{age}s"
+
+    def _guard_change_permission(self, request: HttpRequest) -> None:
+        if not self.has_change_permission(request):
+            raise PermissionDenied
+
+    @admin.action(description="Cancel selected diagnostic runs")
+    def cancel_selected_runs(self, request: HttpRequest, queryset: QuerySet[DiagnosticRun]) -> None:
+        cancelled = 0
+        refused = 0
+        for run in queryset.filter(status__in=("queued", "running")).exclude(status="cancelled"):
+            try:
+                cancel_diagnostic_run(run_id=run.id)
+            except DiagnosticSessionError:
+                refused += 1
+            else:
+                cancelled += 1
+        if cancelled:
+            self.message_user(
+                request,
+                f"Cancelled {cancelled} diagnostic run(s). The runner observes the "
+                "cancel at its next ply boundary; no Move rows were created.",
+                level=messages.SUCCESS,
+            )
+        if refused:
+            self.message_user(
+                request,
+                f"{refused} selected run(s) could not be cancelled.",
+                level=messages.WARNING,
+            )
+
+    def launch_view(self, request: HttpRequest) -> HttpResponse:
+        self._guard_change_permission(request)
+        if request.method == "POST":
+            return self._launch_post(request)
+        return self._launch_form(request)
+
+    def _launch_form(
+        self, request: HttpRequest, error: str | None = None
+    ) -> HttpResponse:
+        context = {
+            **self.admin_site.each_context(request),
+            "opts": self.model._meta,
+            "title": "Launch fake-mode diagnostic run",
+            "subtitle": (
+                "Creates a two-AI diagnostic session and spawns the detached "
+                "run_diagnostic_match runner. This slice is FAKE ONLY: script "
+                "generic_unchanged, selected-only queue, zero provider calls."
+            ),
+            "launch_url": reverse("admin:game_diagnosticrun_launch"),
+            "changelist_url": reverse("admin:game_diagnosticrun_changelist"),
+            "defaults": {
+                "instrument": "full-game",
+                "assist_mode": "assisted",
+                "variant_slug": "english",
+                "max_plies": DIAGNOSTIC_MAX_PLIES_DEFAULT,
+                "max_provider_requests": DIAGNOSTIC_MAX_PROVIDER_REQUESTS_DEFAULT,
+                "max_wall_clock_seconds": DIAGNOSTIC_MAX_WALL_CLOCK_SECONDS_DEFAULT,
+            },
+            "maxima": {
+                "max_plies": DIAGNOSTIC_MAX_PLIES_ADMIN_MAX,
+                "max_provider_requests": DIAGNOSTIC_MAX_PROVIDER_REQUESTS_ADMIN_MAX,
+                "max_wall_clock_seconds": DIAGNOSTIC_MAX_WALL_CLOCK_SECONDS_ADMIN_MAX,
+            },
+            "error": error,
+        }
+        return TemplateResponse(request, "admin/game/diagnosticrun/launch.html", context)
+
+    def _int_field(self, raw: str, default: int, maximum: int) -> int | None:
+        text = raw.strip()
+        if not text:
+            return default
+        if not text.isdigit():
+            return None
+        value = int(text)
+        if not 1 <= value <= maximum:
+            return None
+        return value
+
+    def _launch_post(self, request: HttpRequest) -> HttpResponse:
+        instrument = request.POST.get("instrument", "")
+        assist_mode = request.POST.get("assist_mode", "")
+        seat0_model_id = request.POST.get("seat0_model_id", "").strip()
+        seat1_model_id = request.POST.get("seat1_model_id", "").strip()
+        variant_slug = request.POST.get("variant_slug", "").strip() or "english"
+        position_set_digest = request.POST.get("position_set_digest", "").strip().lower()
+        prompt_raw = request.POST.get("prompt_id", "").strip()
+        prompt_id = int(prompt_raw) if prompt_raw.isdigit() else None
+        seed_raw = request.POST.get("seed", "").strip()
+        seed = int(seed_raw) if seed_raw.isdigit() else random.randint(0, 2**31 - 1)
+        created_by_id = request.user.id
+
+        max_plies = self._int_field(
+            request.POST.get("max_plies", ""),
+            DIAGNOSTIC_MAX_PLIES_DEFAULT,
+            DIAGNOSTIC_MAX_PLIES_ADMIN_MAX,
+        )
+        max_provider_requests = self._int_field(
+            request.POST.get("max_provider_requests", ""),
+            DIAGNOSTIC_MAX_PROVIDER_REQUESTS_DEFAULT,
+            DIAGNOSTIC_MAX_PROVIDER_REQUESTS_ADMIN_MAX,
+        )
+        max_wall_clock_seconds = self._int_field(
+            request.POST.get("max_wall_clock_seconds", ""),
+            DIAGNOSTIC_MAX_WALL_CLOCK_SECONDS_DEFAULT,
+            DIAGNOSTIC_MAX_WALL_CLOCK_SECONDS_ADMIN_MAX,
+        )
+
+        errors: list[str] = []
+        if instrument not in ("full-game", "position-set"):
+            errors.append("Choose an instrument.")
+        if assist_mode not in ("assisted", "authorship"):
+            errors.append("Choose an assist mode.")
+        if not seat0_model_id or not seat1_model_id:
+            errors.append("Both seat model ids are required.")
+        if max_plies is None:
+            errors.append(f"max_plies must be 1..{DIAGNOSTIC_MAX_PLIES_ADMIN_MAX}.")
+        if max_provider_requests is None:
+            errors.append(
+                f"max_provider_requests must be 1..{DIAGNOSTIC_MAX_PROVIDER_REQUESTS_ADMIN_MAX}."
+            )
+        if max_wall_clock_seconds is None:
+            errors.append(
+                "max_wall_clock_seconds must be 1.."
+                f"{DIAGNOSTIC_MAX_WALL_CLOCK_SECONDS_ADMIN_MAX}."
+            )
+        if instrument == "position-set" and len(position_set_digest) != 64:
+            errors.append("position-set requires a 64-hex position_set_digest.")
+        if created_by_id is None:
+            errors.append("Launch requires an authenticated staff user.")
+        if errors:
+            return self._launch_form(request, error=" ".join(errors))
+
+        assert max_plies is not None
+        assert max_provider_requests is not None
+        assert max_wall_clock_seconds is not None
+        assert created_by_id is not None
+
+        stale = abandon_stale_diagnostic_runs()
+        if stale:
+            self.message_user(
+                request,
+                f"Abandoned {len(stale)} stale in-flight diagnostic run(s) "
+                "(stale heartbeat).",
+                level=messages.WARNING,
+            )
+
+        try:
+            created = create_diagnostic_game(
+                variant_slug=variant_slug,
+                seed=seed,
+                seat0_model_id=seat0_model_id,
+                seat1_model_id=seat1_model_id,
+                prompt_id=prompt_id,
+                created_by_id=created_by_id,
+                assist_mode=assist_mode,
+            )
+        except IntegrityError:
+            self.message_user(
+                request,
+                "A diagnostic run is already in flight. Cancel it or wait for it "
+                "to finish before launching another.",
+                level=messages.ERROR,
+            )
+            return redirect(reverse("admin:game_diagnosticrun_launch"))
+        except DiagnosticSessionError as exc:
+            return self._launch_form(request, error=str(exc))
+
+        run = DiagnosticRun.objects.get(pk=created["run_id"])
+        try:
+            configure_diagnostic_run(
+                run,
+                instrument=instrument,
+                position_set_digest=position_set_digest,
+                max_plies=max_plies,
+                max_provider_requests=max_provider_requests,
+                max_wall_clock_seconds=max_wall_clock_seconds,
+                extra_parameters={
+                    "django_origin": request.build_absolute_uri("/").rstrip("/"),
+                    "script": "generic_unchanged",
+                    "queue_mode": "selected-only",
+                    "launch_source": "django-admin",
+                },
+            )
+        except DiagnosticSessionError as exc:
+            abort_diagnostic_run(run_id=run.id, reason="launch_configuration_invalid")
+            return self._launch_form(request, error=str(exc))
+
+        if min(
+            run.max_plies, run.max_provider_requests, run.max_wall_clock_seconds
+        ) <= 0:
+            abort_diagnostic_run(run_id=run.id, reason="launch_configuration_invalid")
+            return self._launch_form(request, error="Refusing to spawn with a zero cap.")
+
+        spawn_diagnostic_runner(run.id)
+        self.message_user(
+            request,
+            f"Diagnostic run {run.id.hex[:8]} launched (fake mode). Heartbeat and "
+            "plies appear on the run's change page.",
+            level=messages.SUCCESS,
+        )
+        return redirect(reverse("admin:game_diagnosticrun_changelist"))

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import random
+import re
 import unicodedata
 import uuid
 from collections.abc import Mapping
@@ -1376,6 +1377,190 @@ def abort_diagnostic_run(*, run_id: uuid.UUID, reason: str) -> dict[str, Any]:
             "diagnostic_end_reason": run.diagnostic_end_reason,
             "move_count": session.moves.count(),
         }
+
+
+# Launcher cap bounds (R4). create_diagnostic_game is signature-frozen and
+# leaves the cap columns at 0; configure_diagnostic_run writes real values.
+DIAGNOSTIC_MAX_PLIES_DEFAULT = 60
+DIAGNOSTIC_MAX_PLIES_ADMIN_MAX = 200
+DIAGNOSTIC_MAX_PROVIDER_REQUESTS_DEFAULT = 200
+DIAGNOSTIC_MAX_PROVIDER_REQUESTS_ADMIN_MAX = 1000
+DIAGNOSTIC_MAX_WALL_CLOCK_SECONDS_DEFAULT = 3600
+DIAGNOSTIC_MAX_WALL_CLOCK_SECONDS_ADMIN_MAX = 21600
+
+_JWT_LIKE = re.compile(r"^eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}$")
+_POSITION_SET_DIGEST_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _reject_credential_parameters(extra: Mapping[str, Any]) -> None:
+    """parameters_json must never carry a JWT or a SECRET_KEY_FRAGMENTS key."""
+    from .diagnostics import SECRET_KEY_FRAGMENTS
+
+    for key, value in extra.items():
+        lowered = str(key).lower()
+        if any(fragment in lowered for fragment in SECRET_KEY_FRAGMENTS):
+            raise DiagnosticSessionError(
+                f"parameters_json key {str(key)[:64]!r} contains a forbidden fragment"
+            )
+        if isinstance(value, str) and _JWT_LIKE.fullmatch(value):
+            raise DiagnosticSessionError("parameters_json must never carry a JWT")
+        if isinstance(value, Mapping):
+            _reject_credential_parameters(value)
+
+
+def configure_diagnostic_run(
+    run: DiagnosticRun,
+    *,
+    instrument: str,
+    position_set_digest: str = "",
+    max_plies: int = DIAGNOSTIC_MAX_PLIES_DEFAULT,
+    max_provider_requests: int = DIAGNOSTIC_MAX_PROVIDER_REQUESTS_DEFAULT,
+    max_wall_clock_seconds: int = DIAGNOSTIC_MAX_WALL_CLOCK_SECONDS_DEFAULT,
+    extra_parameters: Mapping[str, Any] | None = None,
+) -> DiagnosticRun:
+    """Write launcher-owned instrument, caps, and parameters onto a fresh run.
+
+    create_diagnostic_game leaves the cap columns at 0; the launcher calls
+    this before spawning the runner, and the runner refuses any cap <= 0.
+    """
+    if instrument not in dict(DiagnosticRun.INSTRUMENT_CHOICES):
+        raise DiagnosticSessionError("Unknown diagnostic instrument")
+    if instrument == "position-set":
+        if not _POSITION_SET_DIGEST_PATTERN.fullmatch(position_set_digest or ""):
+            raise DiagnosticSessionError(
+                "position-set requires a 64-hex position_set_digest"
+            )
+    elif position_set_digest:
+        raise DiagnosticSessionError(
+            "position_set_digest is only valid for the position-set instrument"
+        )
+    for name, value, cap in (
+        ("max_plies", max_plies, DIAGNOSTIC_MAX_PLIES_ADMIN_MAX),
+        ("max_provider_requests", max_provider_requests, DIAGNOSTIC_MAX_PROVIDER_REQUESTS_ADMIN_MAX),
+        (
+            "max_wall_clock_seconds",
+            max_wall_clock_seconds,
+            DIAGNOSTIC_MAX_WALL_CLOCK_SECONDS_ADMIN_MAX,
+        ),
+    ):
+        if not 1 <= value <= cap:
+            raise DiagnosticSessionError(f"{name} must be 1..{cap}")
+    parameters = dict(run.parameters_json or {})
+    if extra_parameters:
+        _reject_credential_parameters(extra_parameters)
+        parameters.update(extra_parameters)
+    parameters["subcaps_provisional"] = True
+    run.instrument = instrument
+    run.position_set_digest = position_set_digest
+    run.max_plies = max_plies
+    run.max_provider_requests = max_provider_requests
+    run.max_wall_clock_seconds = max_wall_clock_seconds
+    run.parameters_json = parameters
+    run.executed_runtime_mode = "fake"
+    run.save(
+        update_fields=[
+            "instrument",
+            "position_set_digest",
+            "max_plies",
+            "max_provider_requests",
+            "max_wall_clock_seconds",
+            "parameters_json",
+            "executed_runtime_mode",
+            "updated_at",
+        ]
+    )
+    return run
+
+
+def cancel_diagnostic_run(*, run_id: uuid.UUID) -> dict[str, Any]:
+    """Admin cancel: status cancelled, never failed, never creates Move rows.
+
+    ⛔ Deliberately NOT abort_diagnostic_run, which always sets failed. The
+    runner observes the cancelled status at a ply boundary, terminates its
+    Node worker, and exits cleanly.
+    """
+    with transaction.atomic():
+        try:
+            run = DiagnosticRun.objects.select_for_update().select_related("session").get(pk=run_id)
+        except DiagnosticRun.DoesNotExist as exc:
+            raise DiagnosticSessionError("Diagnostic run not found") from exc
+        session = run.session
+        if not session.is_diagnostic:
+            raise DiagnosticSessionError("Cancel is diagnostic-only")
+        if run.status not in ("queued", "running"):
+            raise DiagnosticSessionError(
+                f"Run is {run.status}; only queued or running runs can be cancelled"
+            )
+        now = timezone.now()
+        run.status = "cancelled"
+        run.diagnostic_end_reason = "cancelled"
+        run.ended_at = now
+        run.save(update_fields=["status", "diagnostic_end_reason", "ended_at", "updated_at"])
+        session.status = "abandoned"
+        session.game_end_reason = ""
+        session.save(update_fields=["status", "game_end_reason", "updated_at"])
+        return {
+            "ok": True,
+            "run_id": str(run.id),
+            "game_id": str(session.public_id),
+            "status": run.status,
+            "diagnostic_end_reason": run.diagnostic_end_reason,
+            "move_count": session.moves.count(),
+        }
+
+
+def mint_diagnostic_access_token(service_user: Any, *, lifetime: timedelta) -> str:
+    """Mint an ACCESS-ONLY service JWT for the diagnostic runner.
+
+    AccessToken does not inherit BlacklistMixin, so minting writes no
+    OutstandingToken row. ⛔ RefreshToken.for_user DOES write one and must
+    never be minted here. The returned string is a real credential: callers
+    pass it only into the Node child's whitelisted environment and must never
+    echo it to argv, logs, reports, DiagnosticPly rows, parameters_json, or
+    IPC JSON.
+    """
+    from rest_framework_simplejwt.tokens import AccessToken
+
+    token = AccessToken.for_user(service_user)
+    token.set_exp(lifetime=lifetime)
+    return str(token)
+
+
+def diagnostic_stale_heartbeat_seconds(max_wall_clock_seconds: int) -> int:
+    return max(300, 2 * max(0, max_wall_clock_seconds))
+
+
+def abandon_stale_diagnostic_runs() -> list[str]:
+    """Stale-heartbeat escape from unique_inflight_diagnostic_run.
+
+    Queued/running rows whose heartbeat_at is older than
+    max(300, 2 * max_wall_clock_seconds) become status="abandoned" with
+    diagnostic_end_reason="stale_heartbeat". A queued row carries a
+    heartbeat only if a runner claimed it and died before finishing, so
+    never-claimed queued rows stay untouched.
+    """
+    now = timezone.now()
+    abandoned: list[str] = []
+    with transaction.atomic():
+        inflight = (
+            DiagnosticRun.objects.select_for_update()
+            .filter(status__in=("queued", "running"))
+            .exclude(heartbeat_at=None)
+        )
+        for run in inflight:
+            if run.heartbeat_at is None:
+                continue
+            threshold = diagnostic_stale_heartbeat_seconds(run.max_wall_clock_seconds)
+            if now - run.heartbeat_at <= timedelta(seconds=threshold):
+                continue
+            run.status = "abandoned"
+            run.diagnostic_end_reason = "stale_heartbeat"
+            run.ended_at = now
+            run.save(
+                update_fields=["status", "diagnostic_end_reason", "ended_at", "updated_at"]
+            )
+            abandoned.append(str(run.id))
+    return abandoned
 
 
 def get_player_slot_for_user(game_id: str, user_id: int) -> int:

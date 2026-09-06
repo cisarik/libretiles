@@ -15,6 +15,25 @@ import {
 } from "./ai-play-diagnostic";
 import type { AiMoveStreamTerminal } from "./ai-move-stream";
 
+const fallbackHarness = vi.hoisted(() => ({
+  captured: [] as Array<Record<string, unknown>>,
+}));
+
+vi.mock("./ai-fallback", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./ai-fallback")>();
+  return {
+    ...actual,
+    orchestrateFallbackTurn: async (opts: Record<string, unknown>) => {
+      fallbackHarness.captured.push(opts);
+      return {
+        posts: [],
+        providerRequestsUsed: 0,
+        lastTerminal: { kind: "generic_error", message: "diagnostic capture" },
+      };
+    },
+  };
+});
+
 const NIM = {
   provider: "nvidia-nim",
   model_id: "nvidia/nemotron-3-super-120b-a12b",
@@ -243,5 +262,73 @@ describe("ai-play-diagnostic fetch guard and live driver contract", () => {
     expect(LIVE_WORKER_SOURCE).not.toContain("vi.mock('ai'");
     expect(LIVE_WORKER_SOURCE).not.toContain('vi.mock("@/lib/ai-runtimes"');
     expect(LIVE_WORKER_SOURCE).not.toContain("vi.mock('@/lib/ai-runtimes'");
+  });
+});
+
+describe("aiSlot parameterization and credential no-echo", () => {
+  const unusedPost = async () => {
+    throw new Error("post must not run");
+  };
+  let originalFetch: typeof fetch | undefined;
+
+  afterEach(() => {
+    fallbackHarness.captured = [];
+    if (originalFetch) globalThis.fetch = originalFetch;
+  });
+
+  function stubBackendFetch(): void {
+    originalFetch ??= globalThis.fetch;
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      if (url.includes("/api/catalog/models/")) {
+        return new Response("[]", {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response("{}", { status: 404 });
+    }) as unknown as typeof fetch;
+  }
+
+  async function drive(aiSlot?: number): Promise<unknown> {
+    stubBackendFetch();
+    return runDiagnosticTurn({
+      post: unusedPost,
+      backendUrl: BACKEND,
+      gameId: "00000000-0000-0000-0000-000000000001",
+      token: "jwt-echo-probe-0123456789abcdef",
+      provider: NIM.provider,
+      modelId: NIM.model_id,
+      timeoutSeconds: 5,
+      maxSteps: 5,
+      queueMode: "selected-only",
+      script: "noop_rescue",
+      ...(aiSlot === undefined ? {} : { aiSlot }),
+    });
+  }
+
+  it("keeps the product anchor at seat 1 when aiSlot is omitted", async () => {
+    await drive();
+    expect(fallbackHarness.captured).toHaveLength(1);
+    const anchor = fallbackHarness.captured[0].anchor as { aiSlot: number };
+    expect(anchor.aiSlot).toBe(1);
+  });
+
+  it("forwards aiSlot 0 to the fallback anchor for diagnostic seat 0", async () => {
+    await drive(0);
+    expect(fallbackHarness.captured).toHaveLength(1);
+    const anchor = fallbackHarness.captured[0].anchor as { aiSlot: number };
+    expect(anchor.aiSlot).toBe(0);
+  });
+
+  it("never echoes the minted token into the terminal observation", async () => {
+    const observation = (await drive(1)) as { terminal_kind: string };
+    expect(observation.terminal_kind).toBe("generic_error");
+    expect(JSON.stringify(observation)).not.toContain("jwt-echo-probe-0123456789abcdef");
   });
 });

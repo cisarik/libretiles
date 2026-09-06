@@ -280,3 +280,59 @@ class DiagnosticRun(models.Model):
 
     def __str__(self) -> str:
         return f"DiagnosticRun {self.id.hex[:8]} ({self.status})"
+
+
+class DiagnosticPly(models.Model):
+    """One persisted ply of a DiagnosticRun.
+
+    Relational shape B of ``game.diagnostics.PlyMetricRecord``: every
+    dataclass field has a column, nullable where the dataclass is Optional
+    (None always means not measured — never an invented boolean).
+    ⛔ No column name may contain a ``SECRET_KEY_FRAGMENTS`` substring.
+    """
+
+    run = models.ForeignKey(
+        DiagnosticRun,
+        on_delete=models.CASCADE,
+        related_name="plies",
+    )
+    ply_index = models.IntegerField(help_text="0-based ply ordinal within the run")
+    position_index = models.IntegerField(
+        null=True,
+        blank=True,
+        help_text="Position-set ordinal; None for full-game plies",
+    )
+
+    seat_index = models.IntegerField()
+    model_id = models.CharField(max_length=200)
+    assist_mode = models.CharField(max_length=16)
+    score_authority = models.CharField(max_length=16)
+    model_authored = models.BooleanField(null=True, blank=True)
+    first_validate_valid = models.BooleanField(null=True, blank=True)
+    valid_candidate_count = models.IntegerField(null=True, blank=True)
+    model_legal_score = models.IntegerField(null=True, blank=True)
+    ranked_best_score = models.IntegerField(null=True, blank=True)
+    ranked_search_complete = models.BooleanField(null=True, blank=True)
+    give_up_while_legal = models.BooleanField(null=True, blank=True)
+    playability_status = models.CharField(max_length=32, null=True, blank=True)
+    completion_source = models.CharField(max_length=64, null=True, blank=True)
+    terminal_cause = models.CharField(max_length=64, null=True, blank=True)
+    provider_requests_used = models.IntegerField(null=True, blank=True)
+    steps_consumed = models.IntegerField(null=True, blank=True)
+    wall_clock_ms = models.IntegerField(null=True, blank=True)
+    malformed_or_non_tool = models.BooleanField(null=True, blank=True)
+    fallback_attempt_index = models.IntegerField(null=True, blank=True)
+    earlier_attempt_failures = models.JSONField(null=True, blank=True)
+    executed_runtime_mode = models.CharField(max_length=16, null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "game_diagnostic_ply"
+        ordering = ["ply_index"]
+        constraints = [
+            UniqueConstraint(fields=["run", "ply_index"], name="unique_diagnostic_ply_index"),
+        ]
+
+    def __str__(self) -> str:
+        return f"DiagnosticPly run={self.run_id} ply={self.ply_index} seat={self.seat_index}"
