@@ -12,6 +12,7 @@ import pytest
 from django.core.management import call_command, get_commands
 from django.core.management.base import CommandError
 
+from game.diagnostics import load_variant_context
 from game.position_sets import (
     ARTIFACT_ID,
     DEFAULT_RANKED_MAX_ELAPSED_MS,
@@ -20,10 +21,16 @@ from game.position_sets import (
     PositionSetConfig,
     classify_phase,
     dump_position_set_json,
+    game_from_snapshot,
     generate_position_set,
 )
-from gamecore.move_search import DEFAULT_RANKED_MAX_ELAPSED_MS as PRODUCTION_ELAPSED_MS
-from gamecore.tiles import get_tile_distribution
+from gamecore.move_search import (
+    DEFAULT_RANKED_MAX_ELAPSED_MS as PRODUCTION_ELAPSED_MS,
+    DEFAULT_RANKED_MAX_UNIQUE_PLACEMENTS,
+    DEFAULT_RANKED_TOP_K,
+    find_ranked_scoring_moves,
+)
+from gamecore.tiles import get_tile_distribution, get_tile_points
 
 _SMALL = PositionSetConfig(
     variant_slug="english",
@@ -36,7 +43,7 @@ _COMMITTED_DIR = (
     Path(__file__).resolve().parents[1] / "assets" / "diagnostics" / "position_sets"
 )
 _COMMITTED_SET_DIGEST = (
-    "8d40f3bc67a86d096f03700c976293aa0cd2b9865231243bdb45d14c03365e39"
+    "f4d334c82d50c5ba05deeebe96a4bb8038c3ee14290e87e0d194d57ae33e7b48"
 )
 
 
@@ -78,11 +85,13 @@ def test_f4_structured_cells_and_conservation(
             assert len(row) == 15
             for cell in row:
                 assert isinstance(cell, dict)
-                assert set(cell) == {"token", "blank_as"}
+                assert set(cell) == {"token", "blank_as", "premium_used"}
                 token = cell["token"]
                 blank_as = cell["blank_as"]
+                used = cell["premium_used"]
                 assert isinstance(token, str)
                 assert blank_as is None or isinstance(blank_as, str)
+                assert isinstance(used, bool)
                 if token == "":
                     assert blank_as is None
                     continue
@@ -146,6 +155,51 @@ def test_f8_snapshot_is_self_contained(
         assert "opponent_rack" in snapshot
         assert "bag_tiles" in snapshot
         assert snapshot["bag_remaining"] == len(snapshot["bag_tiles"])
+        assert isinstance(snapshot["board"][0][0], dict)
+        assert "premium_used" in snapshot["board"][0][0]
+        assert "seat_scores" in snapshot
+        assert "consecutive_scoreless_turns" in snapshot
+        assert "bag_rng_state" in snapshot
+
+
+def test_f9_mount_equivalence_from_json_roundtrip(
+    small_pair: tuple[dict[str, object], dict[str, object]],
+) -> None:
+    asset, _ = small_pair
+    payload = json.loads(dump_position_set_json(asset))
+    probe = load_variant_context("english")
+    positions = payload["positions"]
+    assert isinstance(positions, list)
+    for snapshot in positions:
+        assert isinstance(snapshot, dict)
+        mounted = game_from_snapshot(snapshot)
+        result = find_ranked_scoring_moves(
+            mounted.board,
+            mounted.current_player().rack,
+            authority=probe.authority,
+            bag_count=mounted.bag.remaining(),
+            top_k=DEFAULT_RANKED_TOP_K,
+            max_nodes=DEFAULT_RANKED_MAX_NODES,
+            max_elapsed_ms=DEFAULT_RANKED_MAX_ELAPSED_MS,
+            max_unique_placements=DEFAULT_RANKED_MAX_UNIQUE_PLACEMENTS,
+            tile_points=get_tile_points("english"),
+            blank_letters=tuple(probe.variant.playable_letters),
+            variant="english",
+        )
+        baseline = snapshot["engine_baseline"]
+        assert isinstance(baseline, dict)
+        assert result.status == baseline["witness_status"]
+        assert result.complete == baseline["ranked_search_complete"]
+        top = result.candidates[0] if result.candidates else None
+        mounted_score = None if top is None else top.total_score
+        assert mounted_score == baseline["ranked_best_score"]
+        assert mounted.consecutive_scoreless_turns == snapshot["consecutive_scoreless_turns"]
+        assert [player.score for player in mounted.players] == snapshot["seat_scores"]
+        rng_state = snapshot["bag_rng_state"]
+        restored = getattr(mounted.bag, "_rng").getstate()
+        assert restored[0] == rng_state[0]
+        assert list(restored[1]) == rng_state[1]
+        assert restored[2] == rng_state[2]
 
 
 def test_f6_cli_writes_asset_and_rejects_bad_input(tmp_path: Path) -> None:
@@ -241,6 +295,7 @@ def test_committed_sample_matches_generator_digest() -> None:
                 token = cell["token"]
                 if isinstance(token, str) and token:
                     on_board["?" if token == "?" else token] += 1
+                assert isinstance(cell.get("premium_used"), bool)
         rack = snapshot["rack"]
         opponent_rack = snapshot["opponent_rack"]
         bag_tiles = snapshot["bag_tiles"]
@@ -248,6 +303,9 @@ def test_committed_sample_matches_generator_digest() -> None:
         assert isinstance(opponent_rack, list)
         assert isinstance(bag_tiles, list)
         assert snapshot["bag_remaining"] == len(bag_tiles)
+        assert "seat_scores" in snapshot
+        assert "consecutive_scoreless_turns" in snapshot
+        assert "bag_rng_state" in snapshot
         inventory = (
             on_board + Counter(rack) + Counter(opponent_rack) + Counter(bag_tiles)
         )

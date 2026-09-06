@@ -27,11 +27,13 @@ from game.diagnostics import (
 )
 from gamecore.assets import get_assets_path, get_premiums_path
 from gamecore.board import BOARD_SIZE, Board
-from gamecore.game import Game
+from gamecore.game import Game, GameEndReason, PlayerState
 from gamecore.move_search import (
     DEFAULT_MAX_NODES,
     DEFAULT_RANKED_MAX_UNIQUE_PLACEMENTS,
     DEFAULT_RANKED_TOP_K,
+    RankedSearchResult,
+    find_ranked_scoring_moves,
 )
 from gamecore.selfplay import (
     POLICY_RANKED_BEST,
@@ -41,7 +43,7 @@ from gamecore.selfplay import (
     SelfPlayPly,
     simulate_engine_game,
 )
-from gamecore.tiles import get_tile_distribution
+from gamecore.tiles import TileBag, get_tile_distribution, get_tile_points
 from gamecore.types import BLANK_TOKEN
 
 ARTIFACT_ID = "libretiles.position-set/v1"
@@ -145,6 +147,70 @@ def generate_position_set(config: PositionSetConfig) -> PositionSetAsset:
 
 def dump_position_set_json(asset: Mapping[str, Any]) -> str:
     return dump_report_json(asset)
+
+
+def game_from_snapshot(snapshot: Mapping[str, Any]) -> Game:
+    """Rebuild a live Game from snapshot fields alone. No DB, no session."""
+    variant_slug = snapshot.get("variant_slug")
+    if not isinstance(variant_slug, str) or not variant_slug:
+        raise PositionSetError("snapshot variant_slug must be a string")
+    board = _board_from_snapshot(snapshot, premiums_path=get_premiums_path())
+    bag_tiles = snapshot.get("bag_tiles")
+    if not isinstance(bag_tiles, list) or not all(isinstance(tile, str) for tile in bag_tiles):
+        raise PositionSetError("snapshot bag_tiles must be a list of tokens")
+    bag = TileBag(tiles=list(bag_tiles), variant=variant_slug)
+    getattr(bag, "_rng").setstate(_rng_state_from_json(snapshot.get("bag_rng_state")))
+    to_move = snapshot.get("to_move_seat_index")
+    if to_move not in {0, 1}:
+        raise PositionSetError("snapshot to_move_seat_index must be 0 or 1")
+    names = _string_pair(snapshot.get("seat_names"), "seat_names")
+    scores = _int_pair(snapshot.get("seat_scores"), "seat_scores")
+    streaks = _int_pair(snapshot.get("seat_pass_streaks"), "seat_pass_streaks")
+    acting_rack = snapshot.get("rack")
+    opponent_rack = snapshot.get("opponent_rack")
+    if not isinstance(acting_rack, list) or not all(
+        isinstance(tile, str) for tile in acting_rack
+    ):
+        raise PositionSetError("snapshot rack must be a list of tokens")
+    if not isinstance(opponent_rack, list) or not all(
+        isinstance(tile, str) for tile in opponent_rack
+    ):
+        raise PositionSetError("snapshot opponent_rack must be a list of tokens")
+    racks: list[list[str]] = [[], []]
+    racks[to_move] = list(acting_rack)
+    racks[1 - to_move] = list(opponent_rack)
+    players = [
+        PlayerState(name=names[0], rack=racks[0], score=scores[0], pass_streak=streaks[0]),
+        PlayerState(name=names[1], rack=racks[1], score=scores[1], pass_streak=streaks[1]),
+    ]
+    game = Game(board=board, bag=bag, players=players, starting_index=to_move)
+    scoreless = snapshot.get("consecutive_scoreless_turns")
+    if isinstance(scoreless, bool) or not isinstance(scoreless, int) or scoreless < 0:
+        raise PositionSetError("snapshot consecutive_scoreless_turns must be a UINT")
+    game.consecutive_scoreless_turns = scoreless
+    ended = snapshot.get("ended")
+    if not isinstance(ended, bool):
+        raise PositionSetError("snapshot ended must be a boolean")
+    game.ended = ended
+    game.end_reason = _end_reason_from_json(snapshot.get("end_reason"))
+    leftover = snapshot.get("leftover_points")
+    if leftover is None:
+        leftover = {}
+    if not isinstance(leftover, dict) or not all(
+        isinstance(key, str) and isinstance(value, int) and not isinstance(value, bool)
+        for key, value in leftover.items()
+    ):
+        raise PositionSetError("snapshot leftover_points must be a string-to-int map")
+    game.leftover_points = dict(leftover)
+    winner = snapshot.get("winner_name")
+    if winner is not None and not isinstance(winner, str):
+        raise PositionSetError("snapshot winner_name must be a string or null")
+    game.winner_name = winner
+    no_moves = snapshot.get("no_moves_available")
+    if not isinstance(no_moves, bool):
+        raise PositionSetError("snapshot no_moves_available must be a boolean")
+    game._no_moves_available = no_moves
+    return game
 
 
 def trim_position_set(asset: Mapping[str, Any], total: int) -> PositionSetAsset:
@@ -264,7 +330,8 @@ def _candidates_for_seed(
     for event in sample.trace:
         snapshot = _snapshot_from_ply(
             event,
-            variant_slug=config.variant_slug,
+            config=config,
+            probe=probe,
             seed=seed,
             tile_pool=tile_pool,
             expected=expected,
@@ -277,13 +344,15 @@ def _candidates_for_seed(
 def _snapshot_from_ply(
     event: SelfPlayPly,
     *,
-    variant_slug: str,
+    config: PositionSetConfig,
+    probe: VariantProbeContext,
     seed: int,
     tile_pool: int,
     expected: Counter[str],
     conditions_digest: str,
 ) -> dict[str, Any]:
     game = event.before
+    variant_slug = config.variant_slug
     inventory = _tile_inventory(game)
     if inventory != expected:
         raise PositionSetError(
@@ -311,6 +380,7 @@ def _snapshot_from_ply(
         ranked_best = decision.total_score
     else:
         ranked_best = None
+    end_reason = game.end_reason.name if game.end_reason is not None else None
     snapshot = {
         "position_index": 0,
         "phase": phase,
@@ -321,8 +391,18 @@ def _snapshot_from_ply(
         "rack": list(acting.rack),
         "opponent_rack": list(opponent.rack),
         "to_move_seat_index": game.current_index,
+        "seat_names": [player.name for player in game.players],
+        "seat_scores": [player.score for player in game.players],
+        "seat_pass_streaks": [player.pass_streak for player in game.players],
         "bag_remaining": bag_remaining,
         "bag_tiles": bag_tiles,
+        "bag_rng_state": _rng_state_to_json(getattr(game.bag, "_rng")),
+        "consecutive_scoreless_turns": game.consecutive_scoreless_turns,
+        "ended": game.ended,
+        "end_reason": end_reason,
+        "leftover_points": dict(game.leftover_points),
+        "winner_name": game.winner_name,
+        "no_moves_available": game._no_moves_available,
         "engine_baseline": {
             "ranked_best_score": ranked_best,
             "ranked_search_complete": decision.complete,
@@ -336,6 +416,7 @@ def _snapshot_from_ply(
             f"{variant_slug} seed={seed} ply={event.ply}: "
             "snapshot field conservation failed"
         )
+    _assert_mount_equivalence(snapshot, event, config=config, probe=probe)
     return snapshot
 
 
@@ -373,19 +454,171 @@ def _reindex_snapshot(item: Mapping[str, Any], index: int) -> dict[str, Any]:
     return payload
 
 
-def _board_payload(board: Board) -> list[list[dict[str, str | None]]]:
-    rows: list[list[dict[str, str | None]]] = []
+def _board_payload(board: Board) -> list[list[dict[str, str | bool | None]]]:
+    rows: list[list[dict[str, str | bool | None]]] = []
     for row in board.cells:
-        payload_row: list[dict[str, str | None]] = []
+        payload_row: list[dict[str, str | bool | None]] = []
         for cell in row:
             if cell.is_malformed:
                 raise PositionSetError("malformed board cell")
             token = cell.token if cell.token is not None else ""
-            payload_row.append({"token": token, "blank_as": cell.blank_as})
+            payload_row.append(
+                {
+                    "token": token,
+                    "blank_as": cell.blank_as,
+                    "premium_used": cell.premium_used,
+                }
+            )
         rows.append(payload_row)
     if len(rows) != BOARD_SIZE or any(len(row) != BOARD_SIZE for row in rows):
         raise PositionSetError("board must be 15x15 structured cells")
     return rows
+
+
+def _board_from_snapshot(snapshot: Mapping[str, Any], *, premiums_path: str) -> Board:
+    raw = snapshot.get("board")
+    if not isinstance(raw, list) or len(raw) != BOARD_SIZE:
+        raise PositionSetError("snapshot board must be 15x15")
+    board = Board(premiums_path)
+    for row_index, row in enumerate(raw):
+        if not isinstance(row, list) or len(row) != BOARD_SIZE:
+            raise PositionSetError("snapshot board must be 15x15")
+        for col_index, cell in enumerate(row):
+            if not isinstance(cell, dict):
+                raise PositionSetError("snapshot cell must be an object")
+            token_raw = cell.get("token")
+            blank_raw = cell.get("blank_as")
+            used = cell.get("premium_used")
+            if not isinstance(token_raw, str):
+                raise PositionSetError("snapshot cell token must be a string")
+            if blank_raw is not None and not isinstance(blank_raw, str):
+                raise PositionSetError("snapshot cell blank_as must be a string or null")
+            if not isinstance(used, bool):
+                raise PositionSetError("snapshot cell premium_used must be a boolean")
+            target = board.cells[row_index][col_index]
+            target.token = token_raw if token_raw else None
+            target.blank_as = blank_raw
+            target.premium_used = used
+            if target.is_malformed:
+                raise PositionSetError("reconstructed board cell is malformed")
+    return board
+
+
+def _assert_mount_equivalence(
+    snapshot: Mapping[str, Any],
+    event: SelfPlayPly,
+    *,
+    config: PositionSetConfig,
+    probe: VariantProbeContext,
+) -> None:
+    mounted = game_from_snapshot(snapshot)
+    result = _ranked_on_game(mounted, config=config, probe=probe)
+    recorded = event.decision
+    top = result.candidates[0] if result.candidates else None
+    if result.status != recorded.status:
+        raise PositionSetError(
+            f"mount-equivalence status {result.status!r} != {recorded.status!r} "
+            f"at ply {event.ply}"
+        )
+    if result.complete != recorded.complete:
+        raise PositionSetError(
+            f"mount-equivalence complete {result.complete} != {recorded.complete} "
+            f"at ply {event.ply}"
+        )
+    if result.nodes != recorded.nodes:
+        raise PositionSetError(
+            f"mount-equivalence nodes {result.nodes} != {recorded.nodes} "
+            f"at ply {event.ply}"
+        )
+    mounted_score = None if top is None else top.total_score
+    recorded_score = recorded.total_score if recorded.status == "found" else None
+    if mounted_score != recorded_score:
+        raise PositionSetError(
+            f"mount-equivalence score {mounted_score} != {recorded_score} "
+            f"at ply {event.ply}"
+        )
+    mounted_placements = None if top is None else top.placements
+    if mounted_placements != recorded.placements:
+        raise PositionSetError(
+            f"mount-equivalence placements differ at ply {event.ply}"
+        )
+    mounted_words = () if top is None else top.words
+    if mounted_words != recorded.words:
+        raise PositionSetError(
+            f"mount-equivalence words {mounted_words} != {recorded.words} "
+            f"at ply {event.ply}"
+        )
+
+
+def _ranked_on_game(
+    game: Game,
+    *,
+    config: PositionSetConfig,
+    probe: VariantProbeContext,
+) -> RankedSearchResult:
+    return find_ranked_scoring_moves(
+        game.board,
+        game.current_player().rack,
+        authority=probe.authority,
+        bag_count=game.bag.remaining(),
+        top_k=DEFAULT_RANKED_TOP_K,
+        max_nodes=config.ranked_max_nodes,
+        max_elapsed_ms=config.ranked_max_elapsed_ms,
+        max_unique_placements=DEFAULT_RANKED_MAX_UNIQUE_PLACEMENTS,
+        tile_points=get_tile_points(config.variant_slug),
+        blank_letters=tuple(probe.variant.playable_letters),
+        variant=config.variant_slug,
+    )
+
+
+def _rng_state_to_json(rng: object) -> list[object]:
+    getstate = getattr(rng, "getstate", None)
+    if getstate is None:
+        raise PositionSetError("bag RNG has no getstate")
+    version, mt, gauss = getstate()
+    if not isinstance(mt, tuple):
+        raise PositionSetError("bag RNG state is not serializable")
+    return [version, list(mt), gauss]
+
+
+def _rng_state_from_json(payload: object) -> tuple[object, ...]:
+    if not isinstance(payload, list) or len(payload) != 3:
+        raise PositionSetError("bag_rng_state must be a 3-element list")
+    version, mt, gauss = payload
+    if not isinstance(mt, list) or not all(isinstance(item, int) for item in mt):
+        raise PositionSetError("bag_rng_state mt must be a list of ints")
+    return (version, tuple(mt), gauss)
+
+
+def _string_pair(payload: object, name: str) -> tuple[str, str]:
+    if not isinstance(payload, list) or len(payload) != 2:
+        raise PositionSetError(f"snapshot {name} must be a 2-string list")
+    left, right = payload
+    if not isinstance(left, str) or not isinstance(right, str):
+        raise PositionSetError(f"snapshot {name} must be a 2-string list")
+    return (left, right)
+
+
+def _int_pair(payload: object, name: str) -> tuple[int, int]:
+    if not isinstance(payload, list) or len(payload) != 2:
+        raise PositionSetError(f"snapshot {name} must be a 2-int list")
+    left, right = payload
+    if isinstance(left, bool) or isinstance(right, bool):
+        raise PositionSetError(f"snapshot {name} must be a 2-int list")
+    if not isinstance(left, int) or not isinstance(right, int):
+        raise PositionSetError(f"snapshot {name} must be a 2-int list")
+    return (left, right)
+
+
+def _end_reason_from_json(payload: object) -> GameEndReason | None:
+    if payload is None:
+        return None
+    if not isinstance(payload, str):
+        raise PositionSetError("snapshot end_reason must be a string or null")
+    try:
+        return GameEndReason[payload]
+    except KeyError as exc:
+        raise PositionSetError(f"unknown end_reason {payload!r}") from exc
 
 
 def _occupied_count(board: Board) -> int:
