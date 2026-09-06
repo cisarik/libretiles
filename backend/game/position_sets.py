@@ -45,6 +45,7 @@ from gamecore.selfplay import (
 )
 from gamecore.tiles import TileBag, get_tile_distribution, get_tile_points
 from gamecore.types import BLANK_TOKEN
+from gamecore.variant_store import VariantDefinition, load_variant
 
 ARTIFACT_ID = "libretiles.position-set/v1"
 DEFAULT_SEEDS: tuple[int, ...] = (300, 301, 302)
@@ -118,12 +119,18 @@ def classify_phase(occupied: int, tile_pool: int) -> PhaseName:
     return "late"
 
 
+def collect_asset_digests(variant_slug: str) -> dict[str, str]:
+    """SHA-256 of every asset the snapshot's legality and scoring identity depends on."""
+    return _asset_digests_for_variant(load_variant(variant_slug))
+
+
 def generate_position_set(config: PositionSetConfig) -> PositionSetAsset:
     """Run node-bound ranked-best games and capture structured snapshots."""
     _validate_config(config)
     context = load_variant_context(config.variant_slug)
     tile_pool = sum(get_tile_distribution(config.variant_slug).values())
-    conditions_digest = _conditions_digest(config)
+    asset_digests = _asset_digests_for_variant(context.variant)
+    conditions_digest = _conditions_digest(config, asset_digests)
     by_seed: dict[int, dict[str, list[dict[str, Any]]]] = {}
     for seed in config.seeds:
         by_seed[seed] = _candidates_for_seed(
@@ -139,6 +146,7 @@ def generate_position_set(config: PositionSetConfig) -> PositionSetAsset:
         "artifact": ARTIFACT_ID,
         "variant_slug": config.variant_slug,
         "config": config_payload,
+        "asset_digests": dict(asset_digests),
         "generator_source_revision": observe_source_revision(),
         "positions": snapshots,
         "set_digest": _set_digest(config_payload, snapshots),
@@ -228,6 +236,9 @@ def trim_position_set(asset: Mapping[str, Any], total: int) -> PositionSetAsset:
     config = asset["config"]
     if not isinstance(config, dict):
         raise PositionSetError("asset config must be an object")
+    asset_digests = asset.get("asset_digests")
+    if asset_digests is not None and not isinstance(asset_digests, dict):
+        raise PositionSetError("asset asset_digests must be an object")
     payload: PositionSetAsset = {
         "artifact": ARTIFACT_ID,
         "variant_slug": asset["variant_slug"],
@@ -236,6 +247,8 @@ def trim_position_set(asset: Mapping[str, Any], total: int) -> PositionSetAsset:
         "positions": trimmed,
         "set_digest": _set_digest(dict(config), trimmed),
     }
+    if isinstance(asset_digests, dict):
+        payload["asset_digests"] = dict(asset_digests)
     return payload
 
 
@@ -660,15 +673,50 @@ def _inventory_from_snapshot(snapshot: Mapping[str, Any]) -> Counter[str]:
     return tiles
 
 
-def _conditions_payload(config: PositionSetConfig) -> dict[str, Any]:
+def _conditions_payload(
+    config: PositionSetConfig, asset_digests: Mapping[str, str]
+) -> dict[str, Any]:
     payload = config_to_dict(config)
     payload["policy_id"] = POLICY_RANKED_BEST
     payload["phase_rule"] = dict(PHASE_RULE)
+    payload["asset_digests"] = dict(asset_digests)
     return payload
 
 
-def _conditions_digest(config: PositionSetConfig) -> str:
-    return _sha256_canonical(_conditions_payload(config))
+def _conditions_digest(
+    config: PositionSetConfig, asset_digests: Mapping[str, str]
+) -> str:
+    return _sha256_canonical(_conditions_payload(config, asset_digests))
+
+
+def _asset_digests_for_variant(variant: VariantDefinition) -> dict[str, str]:
+    paths = [Path(get_premiums_path()), variant.dictionary_path]
+    two_tile = variant.two_tile_words_path
+    if two_tile is not None:
+        paths.append(two_tile)
+    return {_asset_identity(path): _sha256_file(path) for path in paths}
+
+
+def _asset_identity(path: Path) -> str:
+    assets = get_assets_path().resolve()
+    resolved = path.resolve()
+    try:
+        return resolved.relative_to(assets).as_posix()
+    except ValueError as exc:
+        raise PositionSetError(f"hashed asset is not under assets/: {path}") from exc
+
+
+def _sha256_file(path: Path) -> str:
+    if not path.is_file():
+        raise PositionSetError(f"hashed asset missing: {path}")
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while True:
+            chunk = handle.read(1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _set_digest(config: Mapping[str, Any], positions: Sequence[Mapping[str, Any]]) -> str:

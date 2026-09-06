@@ -20,6 +20,7 @@ from game.position_sets import (
     PHASES,
     PositionSetConfig,
     classify_phase,
+    collect_asset_digests,
     dump_position_set_json,
     game_from_snapshot,
     generate_position_set,
@@ -43,7 +44,7 @@ _COMMITTED_DIR = (
     Path(__file__).resolve().parents[1] / "assets" / "diagnostics" / "position_sets"
 )
 _COMMITTED_SET_DIGEST = (
-    "f4d334c82d50c5ba05deeebe96a4bb8038c3ee14290e87e0d194d57ae33e7b48"
+    "1ebfacbd416af0d138d325029ece37a0c02a1221e300cc252265659518e3b964"
 )
 
 
@@ -148,6 +149,9 @@ def test_f8_snapshot_is_self_contained(
     small_pair: tuple[dict[str, object], dict[str, object]],
 ) -> None:
     asset, _ = small_pair
+    envelope_digests = asset["asset_digests"]
+    assert isinstance(envelope_digests, dict)
+    assert envelope_digests == collect_asset_digests("english")
     positions = asset["positions"]
     assert isinstance(positions, list)
     for snapshot in positions:
@@ -200,6 +204,24 @@ def test_f9_mount_equivalence_from_json_roundtrip(
         assert restored[0] == rng_state[0]
         assert list(restored[1]) == rng_state[1]
         assert restored[2] == rng_state[2]
+
+
+def test_f10_conditions_digest_includes_asset_content_hashes() -> None:
+    from game.position_sets import _conditions_digest
+
+    assets = collect_asset_digests("english")
+    assert "premiums.json" in assets
+    assert any(name.startswith("dicts/") for name in assets)
+    for digest in assets.values():
+        assert isinstance(digest, str) and len(digest) == 64
+    baseline = _conditions_digest(_SMALL, assets)
+    mutated = dict(assets)
+    first_key = sorted(mutated)[0]
+    mutated[first_key] = "0" * 64 if mutated[first_key] != "0" * 64 else "1" * 64
+    moved = _conditions_digest(_SMALL, mutated)
+    assert moved != baseline
+    restored = _conditions_digest(_SMALL, collect_asset_digests("english"))
+    assert restored == baseline
 
 
 def test_f6_cli_writes_asset_and_rejects_bad_input(tmp_path: Path) -> None:
@@ -277,6 +299,9 @@ def test_committed_sample_matches_generator_digest() -> None:
     assert config["variant_slug"] == "english"
     assert config["seeds"] == [300, 301, 302]
     assert config["positions_per_phase"] == 8
+    asset_digests = committed["asset_digests"]
+    assert isinstance(asset_digests, dict)
+    assert asset_digests == collect_asset_digests("english")
     positions = committed["positions"]
     assert isinstance(positions, list)
     assert len(positions) == 24
