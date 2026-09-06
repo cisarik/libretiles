@@ -11,20 +11,26 @@ from __future__ import annotations
 import os
 from collections import Counter
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from time import perf_counter
 
 import pytest
 
 from gamecore.assets import get_assets_path, get_premiums_path
-from gamecore.board import Board
 from gamecore.fastdict import load_prefix_index
-from gamecore.game import Game, GameEndReason, PlayerState
+from gamecore.game import GameEndReason
 from gamecore.legality import evaluate_scoring_move
-from gamecore.move_search import find_legal_scoring_move, find_ranked_scoring_moves
-from gamecore.tiles import TileBag, get_tile_distribution
+from gamecore.move_search import (
+    DEFAULT_MAX_NODES, DEFAULT_RANKED_MAX_ELAPSED_MS, DEFAULT_RANKED_MAX_NODES,
+    DEFAULT_RANKED_TOP_K, DEFAULT_RANKED_MAX_UNIQUE_PLACEMENTS,
+)
+from gamecore.tiles import get_tile_distribution
 from gamecore.word_authority import WordAuthority
-from gamecore.types import Placement
+from gamecore.selfplay import (
+    SelfPlayConfig, SelfPlayContext, simulate_engine_game, POLICY_WITNESS,
+    POLICY_RANKED_WITNESS_SAFE, _tile_counter, _fingerprint as fingerprint,
+)
 
 _DICTIONARY_PATH = Path(get_assets_path()) / "dicts" / "collins2019.txt"
 _INDEX = load_prefix_index(_DICTIONARY_PATH)
@@ -34,6 +40,10 @@ _ALLOWED_END_REASONS = {
     GameEndReason.SIX_CONSECUTIVE_ZERO_SCORES,
 }
 _SAFETY_SEARCH_MAX_ELAPSED_MS = 10_000
+
+# Exact tuple pins use node bounds; production's wall-clock cap is load-sensitive.
+_PARITY_RANKED_MAX_NODES = 20_000
+_PARITY_MAX_ELAPSED_MS = 10_000_000
 _MAX_PLIES = 200
 _OPT_IN_ENV = "LIBRETILES_RUN_STRENGTH_ACCEPTANCE"
 
@@ -42,31 +52,7 @@ _OPT_IN_ENV = "LIBRETILES_RUN_STRENGTH_ACCEPTANCE"
 _AUTHORITY = WordAuthority.from_index(_INDEX)
 
 
-def _tile_counter(game: Game) -> Counter[str]:
-    tiles = Counter(game.bag.tiles)
-    for player in game.players:
-        tiles.update(player.rack)
-    for row in game.board.cells:
-        for cell in row:
-            if cell.letter:
-                tiles.update(["?" if cell.is_blank else cell.letter])
-    return tiles
-
-
-def _fingerprint(game: Game) -> tuple[object, ...]:
-    board = tuple(
-        (cell.letter, cell.is_blank, cell.premium, cell.premium_used)
-        for row in game.board.cells
-        for cell in row
-    )
-    return (
-        board,
-        tuple(game.bag.tiles),
-        tuple(tuple(player.rack) for player in game.players),
-        tuple((player.score, player.pass_streak) for player in game.players),
-        game.current_index,
-        game.consecutive_scoreless_turns,
-    )
+_fingerprint = partial(fingerprint, include_pass_streak=True)
 
 
 @dataclass(frozen=True)
@@ -83,77 +69,71 @@ class StrengthGameResult:
         return self.ranked_score - self.witness_score
 
 
-def _first_witness(game: Game, rack: list[str], context: str) -> tuple[Placement, ...] | None:
-    result = find_legal_scoring_move(
-        game.board,
-        rack,
-        authority=_AUTHORITY,
-        max_elapsed_ms=_SAFETY_SEARCH_MAX_ELAPSED_MS,
+def _simulate(
+    seed: int, strategy_slot: int, *, node_bound: bool = False,
+) -> StrengthGameResult:
+    assert strategy_slot in {0, 1}
+    policies = [POLICY_WITNESS, POLICY_WITNESS]
+    policies[strategy_slot] = POLICY_RANKED_WITNESS_SAFE
+    sample = simulate_engine_game(
+        SelfPlayConfig(
+            variant_slug="english", seed=seed, policy_id=POLICY_RANKED_WITNESS_SAFE,
+            max_plies=_MAX_PLIES, witness_max_elapsed_ms=(
+                _PARITY_MAX_ELAPSED_MS if node_bound else _SAFETY_SEARCH_MAX_ELAPSED_MS
+            ),
+            witness_max_nodes=DEFAULT_MAX_NODES,
+            ranked_max_elapsed_ms=(
+                _PARITY_MAX_ELAPSED_MS if node_bound else DEFAULT_RANKED_MAX_ELAPSED_MS
+            ),
+            ranked_max_nodes=(
+                _PARITY_RANKED_MAX_NODES if node_bound else DEFAULT_RANKED_MAX_NODES
+            ),
+            ranked_top_k=DEFAULT_RANKED_TOP_K,
+            ranked_max_unique_placements=DEFAULT_RANKED_MAX_UNIQUE_PLACEMENTS,
+            include_pass_streak=True, strict_unknown_tile=None,
+            player_policy_ids=(policies[0], policies[1]), record_trace=True,
+        ),
+        context=SelfPlayContext(
+            authority=_AUTHORITY, letters=frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZ"),
+            blank_letters=tuple("ABCDEFGHIJKLMNOPQRSTUVWXYZ"),
+            premiums_path=get_premiums_path(),
+        ),
     )
-    assert result.status != "indeterminate", (
-        f"{context}: safety search capped nodes={result.nodes} "
-        f"elapsed_ms={result.elapsed_ms}"
-    )
-    if result.status == "none":
-        assert result.complete is True, context
-        return None
-    assert result.witness is not None, context
-    return result.witness
-
-
-def _strategy_move(
-    game: Game,
-    rack: list[str],
-    *,
-    use_ranked: bool,
-    context: str,
-) -> tuple[Placement, ...] | None:
-    if use_ranked:
-        ranked = find_ranked_scoring_moves(
-            game.board,
-            rack,
-            authority=_AUTHORITY,
-            bag_count=game.bag.remaining(),
-        )
-        if ranked.candidates:
-            assert ranked.status == "found", context
-            return ranked.candidates[0].placements
-
-    # Ranked search is a quality path only. Its none/indeterminate status never
-    # authorizes exchange or pass; the unchanged first-witness safety search does.
-    return _first_witness(game, rack, context)
-
-
-def _simulate(seed: int, strategy_slot: int) -> StrengthGameResult:
-    bag = TileBag(seed=seed, variant="english")
-    players = [
-        PlayerState(name="P0", rack=bag.draw(7)),
-        PlayerState(name="P1", rack=bag.draw(7)),
-    ]
-    game = Game(
-        board=Board(get_premiums_path()),
-        bag=bag,
-        players=players,
-        starting_index=seed % 2,
-    )
+    if node_bound:
+        assert all(event.decision.elapsed_ms < _PARITY_MAX_ELAPSED_MS for event in sample.trace)
+        capped = [event for event in sample.trace if not event.decision.complete]
+        assert all(event.decision.nodes == _PARITY_RANKED_MAX_NODES for event in capped)
+        assert capped, "ranked parity must exercise the node bound"
+    game = sample.initial_state
+    assert game is not None
+    players = game.players
     fingerprints = {_fingerprint(game)}
 
     assert strategy_slot in {0, 1}
     assert _tile_counter(game) == _EXPECTED_TILES
 
-    for ply in range(1, _MAX_PLIES + 1):
+    for event in sample.trace:
+        ply = event.ply
+        game = event.before
         assert not game.ended, f"seed={seed} slot={strategy_slot} ply={ply}: post-terminal loop"
         acting_slot = game.current_index
         rack = game.current_player().rack.copy()
         context = f"seed={seed} strategy_slot={strategy_slot} ply={ply} acting={acting_slot}"
 
         assert _tile_counter(game) == _EXPECTED_TILES, f"{context}: pre-turn conservation"
-        move = _strategy_move(
-            game,
-            rack,
-            use_ranked=acting_slot == strategy_slot,
-            context=context,
+        decision = event.decision
+        move = decision.placements
+        # Preserve the safety-search assertions formerly in _first_witness.
+        assert decision.status != "indeterminate", (
+            f"{context}: safety search capped nodes={decision.nodes} "
+            f"elapsed_ms={decision.elapsed_ms}"
         )
+        if decision.status == "none":
+            assert decision.complete is True, context
+        else:
+            assert move is not None, context
+        if acting_slot == strategy_slot and move is not None:
+            assert decision.status == "found", context
 
         if move is not None:
             certified = evaluate_scoring_move(
@@ -161,11 +141,10 @@ def _simulate(seed: int, strategy_slot: int) -> StrengthGameResult:
             )
             assert certified.ok, f"{context}: selected move failed Collins certification"
             assert certified.total_score > 0, context
-            assert game.play_move(move) == certified.total_score, context
-        elif game.bag.remaining() >= 7:
-            game.exchange_turn(rack)
-        else:
-            game.pass_turn()
+            assert event.awarded == certified.total_score, context
+
+        game = event.after
+        players = game.players
 
         assert _tile_counter(game) == _EXPECTED_TILES, f"{context}: post-turn conservation"
         if game.ended:
@@ -179,6 +158,14 @@ def _simulate(seed: int, strategy_slot: int) -> StrengthGameResult:
 
         if game.ended:
             assert game.end_reason in _ALLOWED_END_REASONS, context
+            assert sample.plies == ply
+            assert sample.end_reason == game.end_reason.name
+            assert sample.final_scores == game.scores()
+            print(
+                "selfplay-node-bound" if node_bound else "selfplay-production",
+                (seed, strategy_slot, players[strategy_slot].score - players[1 - strategy_slot].score,
+                 game.end_reason.name), flush=True,
+            )
             return StrengthGameResult(
                 seed=seed,
                 strategy_slot=strategy_slot,
@@ -220,6 +207,23 @@ def test_ranked_strategy_beats_first_witness_on_default_balanced_seeds() -> None
     assert all(result.spread > 0 for result in results)
 
 
+def test_node_bound_strength_regression_tuples() -> None:
+    """New candidate baselines under node bounds, separate from extraction-equivalence evidence."""
+    results = [
+        _simulate(seed, strategy_slot, node_bound=True)
+        for seed in (300, 301) for strategy_slot in (0, 1)
+    ]
+    assert [
+        (result.seed, result.strategy_slot, result.spread, result.end_reason.name)
+        for result in results
+    ] == [
+        (300, 0, 420, "BAG_EMPTY_AND_PLAYER_OUT"),
+        (300, 1, 505, "BAG_EMPTY_AND_PLAYER_OUT"),
+        (301, 0, 461, "BAG_EMPTY_AND_PLAYER_OUT"),
+        (301, 1, 501, "BAG_EMPTY_AND_PLAYER_OUT"),
+    ]
+
+
 @pytest.mark.slow
 @pytest.mark.skipif(
     os.environ.get(_OPT_IN_ENV) != "1",
@@ -233,3 +237,60 @@ def test_ranked_strategy_one_hundred_game_acceptance() -> None:
     assert len(results) == 100
     assert sum(result.spread for result in results) > 0
     assert wins > losses
+
+
+@pytest.mark.parametrize("status,complete", [("none", True), ("indeterminate", False)])
+def test_ranked_safety_fallback_preserves_policy_and_bounds(
+    monkeypatch: pytest.MonkeyPatch, status: str, complete: bool,
+) -> None:
+    from dataclasses import replace
+    from gamecore import selfplay
+    from gamecore.board import Board
+    from gamecore.game import Game, PlayerState
+    from gamecore.move_search import RankedSearchResult, SearchResult
+    from gamecore.tiles import TileBag
+
+    calls = []
+    ranked = RankedSearchResult(status, (), 12, 3, complete, 0)
+    witness = SearchResult("none", None, (), 0, 23, 4, True)
+
+    def ranked_search(*args, **kwargs):
+        calls.append(("ranked", kwargs))
+        return ranked
+
+    def witness_search(*args, **kwargs):
+        calls.append(("witness", kwargs))
+        return witness
+
+    monkeypatch.setattr(selfplay, "find_ranked_scoring_moves", ranked_search)
+    monkeypatch.setattr(selfplay, "find_legal_scoring_move", witness_search)
+    config = SelfPlayConfig(
+        variant_slug="english", seed=0, policy_id=POLICY_RANKED_WITNESS_SAFE,
+        max_plies=_MAX_PLIES, witness_max_elapsed_ms=_SAFETY_SEARCH_MAX_ELAPSED_MS,
+        witness_max_nodes=DEFAULT_MAX_NODES,
+        ranked_max_elapsed_ms=DEFAULT_RANKED_MAX_ELAPSED_MS,
+        ranked_max_nodes=DEFAULT_RANKED_MAX_NODES,
+        ranked_top_k=DEFAULT_RANKED_TOP_K,
+        ranked_max_unique_placements=DEFAULT_RANKED_MAX_UNIQUE_PLACEMENTS,
+        include_pass_streak=True, strict_unknown_tile=None,
+    )
+    context = SelfPlayContext(
+        authority=_AUTHORITY, letters=frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZ"),
+        blank_letters=tuple("ABCDEFGHIJKLMNOPQRSTUVWXYZ"), premiums_path=get_premiums_path(),
+    )
+    game = Game(board=Board(), bag=TileBag(seed=0),
+                players=[PlayerState(name="P0", rack=["Q"])])
+    decision = selfplay._choose(config.policy_id, game, ["Q"], context, config)
+    assert [kind for kind, _ in calls] == ["ranked", "witness"]
+    assert decision.status == "none" and decision.complete is True
+    assert decision.nodes == 35 and decision.elapsed_ms == 7
+    assert calls[0][1]["max_nodes"] == DEFAULT_RANKED_MAX_NODES
+    assert calls[0][1]["max_elapsed_ms"] == DEFAULT_RANKED_MAX_ELAPSED_MS
+    assert calls[0][1]["max_unique_placements"] == DEFAULT_RANKED_MAX_UNIQUE_PLACEMENTS
+    assert calls[1][1]["max_nodes"] == DEFAULT_MAX_NODES
+    assert calls[1][1]["max_elapsed_ms"] == _SAFETY_SEARCH_MAX_ELAPSED_MS
+    calls.clear()
+    pure = replace(config, policy_id=selfplay.POLICY_RANKED_BEST)
+    decision = selfplay._choose(pure.policy_id, game, ["Q"], context, pure)
+    assert [kind for kind, _ in calls] == ["ranked"]
+    assert decision.status == status and decision.complete is complete

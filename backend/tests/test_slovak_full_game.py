@@ -7,6 +7,7 @@ import unicodedata
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
+from functools import partial
 from time import perf_counter
 
 import pytest
@@ -15,15 +16,22 @@ from accounts.models import User
 from game.models import GameSession, PlayerSlot
 from game.services import _check_endgame
 from gamecore.assets import get_premiums_path
-from gamecore.board import Board
 from gamecore.fastdict import load_prefix_index
-from gamecore.game import Game, GameEndReason, PlayerState, apply_final_scoring
+from gamecore.game import GameEndReason, PlayerState, apply_final_scoring
 from gamecore.legality import evaluate_scoring_move, placements_to_dicts
-from gamecore.move_search import DEFAULT_MAX_NODES, find_legal_scoring_move
-from gamecore.tiles import TileBag, get_tile_distribution, get_tile_points
+from gamecore.move_search import (
+    DEFAULT_MAX_NODES, DEFAULT_RANKED_MAX_ELAPSED_MS, DEFAULT_RANKED_MAX_NODES,
+    DEFAULT_RANKED_TOP_K, DEFAULT_RANKED_MAX_UNIQUE_PLACEMENTS,
+)
+from gamecore.tiles import get_tile_distribution, get_tile_points
 from gamecore.types import Placement, WordFound
 from gamecore.variant_store import load_two_tile_words, load_variant
 from gamecore.word_authority import WordAuthority
+from gamecore.selfplay import (
+    SelfPlayConfig, SelfPlayContext, simulate_engine_game,
+    POLICY_WITNESS, _tile_counter, _fingerprint as fingerprint,
+    _rack_points as rack_points,
+)
 
 _VARIANT = load_variant("slovak")
 _INDEX = load_prefix_index(_VARIANT.dictionary_path)
@@ -37,6 +45,10 @@ _ALLOWED_END_REASONS = {
     GameEndReason.SIX_CONSECUTIVE_ZERO_SCORES,
 }
 _ACCEPTANCE_SEARCH_MAX_ELAPSED_MS = 10_000
+
+# Exact tuple pins use node bounds; production's wall-clock cap is load-sensitive.
+_PARITY_RANKED_MAX_NODES = 20_000
+_PARITY_MAX_ELAPSED_MS = 10_000_000
 _SLOVAK_LEFTOVER_RACK = ["Á", "Ľ", "O", "S", "N", "U", "Ô"]
 _SLOVAK_LEFTOVER_POINTS = 25
 _ENGLISH_LEFTOVER_POINTS = 4
@@ -50,35 +62,8 @@ assert _AUTHORITY.contains_main == _INDEX.contains
 assert _AUTHORITY.two_tile_words == _ALLOWLIST
 
 
-def _tile_counter(game: Game) -> Counter[str]:
-    tiles = Counter(game.bag.tiles)
-    for player in game.players:
-        tiles.update(player.rack)
-    for row in game.board.cells:
-        for cell in row:
-            if cell.letter:
-                tiles.update(["?" if cell.is_blank else cell.letter])
-    return tiles
-
-
-def _fingerprint(game: Game) -> tuple[object, ...]:
-    board = tuple(
-        (cell.letter, cell.is_blank, cell.premium, cell.premium_used)
-        for row in game.board.cells
-        for cell in row
-    )
-    return (
-        board,
-        tuple(game.bag.tiles),
-        tuple(tuple(player.rack) for player in game.players),
-        tuple(player.score for player in game.players),
-        game.current_index,
-        game.consecutive_scoreless_turns,
-    )
-
-
-def _rack_points(rack: list[str]) -> int:
-    return sum(_TILE_POINTS.get(tile, 0) for tile in rack)
+_fingerprint = partial(fingerprint, include_pass_streak=False)
+_rack_points = partial(rack_points, points=_TILE_POINTS, strict_unknown_tile=False)
 
 
 def _assert_slovak_unicode_placements(placements: Sequence[Placement]) -> None:
@@ -126,18 +111,40 @@ class SimulationResult:
     leftover_points: dict[str, int]
 
 
-def _simulate(seed: int, *, max_plies: int = 200) -> SimulationResult:
-    bag = TileBag(seed=seed, variant="slovak")
-    players = [
-        PlayerState(name="P0", rack=bag.draw(7)),
-        PlayerState(name="P1", rack=bag.draw(7)),
-    ]
-    game = Game(
-        board=Board(get_premiums_path()),
-        bag=bag,
-        players=players,
-        starting_index=seed % 2,
+def _simulate(
+    seed: int, *, max_plies: int = 200, node_bound: bool = False,
+) -> SimulationResult:
+    sample = simulate_engine_game(
+        SelfPlayConfig(
+            variant_slug="slovak", seed=seed, policy_id=POLICY_WITNESS, max_plies=max_plies,
+            witness_max_elapsed_ms=(
+                _PARITY_MAX_ELAPSED_MS if node_bound else _ACCEPTANCE_SEARCH_MAX_ELAPSED_MS
+            ),
+            witness_max_nodes=DEFAULT_MAX_NODES,
+            ranked_max_elapsed_ms=(
+                _PARITY_MAX_ELAPSED_MS if node_bound else DEFAULT_RANKED_MAX_ELAPSED_MS
+            ),
+            ranked_max_nodes=(
+                _PARITY_RANKED_MAX_NODES if node_bound else DEFAULT_RANKED_MAX_NODES
+            ),
+            ranked_top_k=DEFAULT_RANKED_TOP_K,
+            ranked_max_unique_placements=DEFAULT_RANKED_MAX_UNIQUE_PLACEMENTS,
+            include_pass_streak=False, strict_unknown_tile=False,
+            record_trace=True,
+        ),
+        context=SelfPlayContext(
+            authority=_AUTHORITY, letters=_PLAYABLE,
+            blank_letters=tuple(_VARIANT.playable_letters),
+            premiums_path=get_premiums_path(),
+        ),
     )
+    if node_bound:
+        assert all(event.decision.elapsed_ms < _PARITY_MAX_ELAPSED_MS for event in sample.trace)
+        capped = [event for event in sample.trace if not event.decision.complete]
+        assert all(event.decision.nodes == _PARITY_RANKED_MAX_NODES for event in capped)
+    game = sample.initial_state
+    assert game is not None
+    players = game.players
     placement_scores = [0, 0]
     fingerprints = {_fingerprint(game)}
     terminal_transitions = 0
@@ -145,7 +152,10 @@ def _simulate(seed: int, *, max_plies: int = 200) -> SimulationResult:
     assert sum(_EXPECTED_TILES.values()) == 100
     assert _tile_counter(game) == _EXPECTED_TILES, f"seed={seed} initial conservation"
 
-    for ply in range(1, max_plies + 1):
+    for event in sample.trace:
+        ply = event.ply
+        game = event.before
+        players = game.players
         assert not game.ended, f"seed={seed} ply={ply} entered loop after terminal"
         acting_index = game.current_index
         acting = game.current_player()
@@ -158,15 +168,7 @@ def _simulate(seed: int, *, max_plies: int = 200) -> SimulationResult:
             f"seed={seed} ply={ply} pre-action conservation"
         )
 
-        search = find_legal_scoring_move(
-            game.board,
-            rack_before,
-            authority=_AUTHORITY,
-            max_nodes=DEFAULT_MAX_NODES,
-            max_elapsed_ms=_ACCEPTANCE_SEARCH_MAX_ELAPSED_MS,
-            blank_letters=_VARIANT.playable_letters,
-            variant="slovak",
-        )
+        search = event.decision
         context = (
             f"seed={seed} ply={ply} status={search.status} nodes={search.nodes} "
             f"elapsed_ms={search.elapsed_ms}"
@@ -175,13 +177,17 @@ def _simulate(seed: int, *, max_plies: int = 200) -> SimulationResult:
         if search.status == "indeterminate":
             pytest.fail(f"{context}: bounded search must not authorize a non-scoring action")
 
+        game = event.after
+        players = game.players
+        acting = players[acting_index]
+
         if search.status == "found":
-            assert search.witness is not None, context
-            _assert_slovak_unicode_placements(search.witness)
+            assert search.placements is not None, context
+            _assert_slovak_unicode_placements(search.placements)
             legality = evaluate_scoring_move(
-                game.board,
+                event.before.board,
                 rack_before,
-                search.witness,
+                search.placements,
                 authority=_AUTHORITY,
                 letters=_PLAYABLE,
                 variant="slovak",
@@ -189,7 +195,7 @@ def _simulate(seed: int, *, max_plies: int = 200) -> SimulationResult:
             assert legality.ok, f"{context}: witness failed re-certification: {legality}"
             assert legality.total_score == search.total_score, context
             _assert_b2_complete_words(legality.words_found)
-            awarded = game.play_move(search.witness)
+            awarded = event.awarded
             assert awarded == legality.total_score, context
             placement_scores[acting_index] += awarded
             assert game.consecutive_scoreless_turns == 0, context
@@ -198,14 +204,12 @@ def _simulate(seed: int, *, max_plies: int = 200) -> SimulationResult:
                 assert acting.score - score_before[acting_index] == awarded, context
         elif bag_before >= 7:
             assert search.status == "none" and search.complete is True, context
-            game.exchange_turn(rack_before)
             assert game.consecutive_scoreless_turns == scoreless_before + 1, context
             assert acting.pass_streak == 0, context
             if not game.ended:
                 assert tuple(player.score for player in players) == score_before, context
         else:
             assert search.status == "none" and search.complete is True, context
-            game.pass_turn()
             assert game.consecutive_scoreless_turns == scoreless_before + 1, context
             assert acting.pass_streak == pass_streak_before + 1, context
             if not game.ended:
@@ -251,6 +255,14 @@ def _simulate(seed: int, *, max_plies: int = 200) -> SimulationResult:
             leaders = [index for index, score in enumerate(expected_scores) if score == top_score]
             expected_winner = players[leaders[0]].name if len(leaders) == 1 else None
             assert game.winner_name == expected_winner, context
+            assert sample.plies == ply
+            assert sample.end_reason == game.end_reason.name
+            assert sample.final_scores == game.scores()
+            print(
+                "selfplay-node-bound" if node_bound else "selfplay-production",
+                ("slovak", POLICY_WITNESS, seed, ply,
+                 game.end_reason.name, tuple(game.scores().values())), flush=True,
+            )
             return SimulationResult(
                 seed=seed,
                 plies=ply,
@@ -293,6 +305,14 @@ def test_slovak_full_game_terminates_with_variant_scoring() -> None:
     )
     assert result.end_reason in _ALLOWED_END_REASONS
     assert result.plies >= 1
+
+
+def test_node_bound_slovak_regression_tuple() -> None:
+    """New candidate baseline under node bounds, separate from extraction-equivalence evidence."""
+    result = _simulate(0, node_bound=True)
+    assert (result.plies, result.end_reason.name, tuple(result.scores.values())) == (
+        55, "SIX_CONSECUTIVE_ZERO_SCORES", (303, 243),
+    )
 
 
 @pytest.mark.django_db

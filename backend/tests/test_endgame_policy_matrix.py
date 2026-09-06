@@ -21,7 +21,7 @@ import json
 import os
 from collections import Counter
 from collections.abc import Sequence
-from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from statistics import median
 from time import perf_counter
@@ -44,35 +44,36 @@ from game.diagnostics import (
     write_report_atomically,
 )
 from gamecore.assets import get_assets_path, get_premiums_path
-from gamecore.board import Board
-from gamecore.game import Game, GameEndReason, PlayerState
+from gamecore.game import GameEndReason
 from gamecore.legality import evaluate_scoring_move
 from gamecore.move_search import (
     DEFAULT_MAX_NODES,
     DEFAULT_RANKED_MAX_ELAPSED_MS,
     DEFAULT_RANKED_MAX_NODES,
     DEFAULT_RANKED_TOP_K,
-    RankedMoveCandidate,
-    RankedSearchResult,
-    find_legal_scoring_move,
-    find_ranked_scoring_moves,
+    DEFAULT_RANKED_MAX_UNIQUE_PLACEMENTS,
 )
-from gamecore.tiles import TileBag, get_tile_distribution, get_tile_points
-from gamecore.types import Placement, WordFound
+from gamecore.tiles import get_tile_distribution, get_tile_points
+from gamecore.types import WordFound
 from gamecore.word_authority import WordAuthority
+from gamecore.selfplay import (
+    SelfPlayConfig, SelfPlayContext, simulate_engine_game,
+    POLICY_WITNESS, _tile_counter, _fingerprint as fingerprint,
+    _rack_points as rack_points,
+    POLICY_IDS, POLICY_RANKED_BEST, POLICY_RANKED_RACK, RARE_BONUS, SCORE_LOSS_THRESHOLD,
+    _choose, _unplayed_rare, _on_board_rare,
+)
 
-POLICY_WITNESS = "witness-first"
-POLICY_RANKED_BEST = "ranked-best"
-POLICY_RANKED_RACK = "ranked-rack-aware"
-POLICY_IDS = (POLICY_WITNESS, POLICY_RANKED_BEST, POLICY_RANKED_RACK)
 VARIANT_SLUGS = ("slovak", "english")
 DEFAULT_SEEDS = (0,)
 WIDE_SEEDS = (1, 2, 3)
 OPT_IN_ENV = "LIBRETILES_RUN_ENDGAME_MATRIX"
 MAX_PLIES = 200
 WITNESS_MAX_ELAPSED_MS = 10_000
-RARE_BONUS = 5
-SCORE_LOSS_THRESHOLD = 8
+
+# Exact tuple pins use node bounds; production's wall-clock cap is load-sensitive.
+_PARITY_RANKED_MAX_NODES = 20_000
+_PARITY_MAX_ELAPSED_MS = 10_000_000
 DECLARED_SLOVAK_RARE = frozenset("ÁÄÉÍÓÔÚÝČĎĹĽŇŔŠŤŽ")
 ALLOWED_END_REASONS = {
     GameEndReason.BAG_EMPTY_AND_PLAYER_OUT,
@@ -113,183 +114,48 @@ _RESULT_CACHE: dict[tuple[str, str, int], PolicyComparisonSample] = {}
 _RECORDS_CACHE: dict[tuple[str, str, int], tuple[WordFound, ...]] = {}
 
 
-@dataclass(frozen=True)
-class _Decision:
-    status: str
-    complete: bool
-    nodes: int
-    elapsed_ms: int
-    placements: tuple[Placement, ...] | None
-    words: tuple[str, ...]
-    total_score: int
+_fingerprint = partial(fingerprint, include_pass_streak=False)
 
 
-def _tile_counter(game: Game) -> Counter[str]:
-    tiles = Counter(game.bag.tiles)
-    for player in game.players:
-        tiles.update(player.rack)
-    for row in game.board.cells:
-        for cell in row:
-            if cell.letter:
-                tiles.update(["?" if cell.is_blank else cell.letter])
-    return tiles
-
-
-def _fingerprint(game: Game) -> tuple[object, ...]:
-    board = tuple(
-        (cell.letter, cell.is_blank, cell.premium, cell.premium_used)
-        for row in game.board.cells
-        for cell in row
-    )
-    return (
-        board,
-        tuple(game.bag.tiles),
-        tuple(tuple(player.rack) for player in game.players),
-        tuple(player.score for player in game.players),
-        game.current_index,
-        game.consecutive_scoreless_turns,
-    )
-
-
-def _rack_points(variant_slug: str, rack: Sequence[str]) -> int:
-    points = _TILE_POINTS[variant_slug]
-    return sum(points.get(tile, 0) for tile in rack)
-
-
-def _rare_consumed(placements: Sequence[Placement], rare: frozenset[str]) -> int:
-    return sum(1 for item in placements if item.letter in rare)
-
-
-def _ranked_search(
-    game: Game,
-    rack: Sequence[str],
-    context: VariantProbeContext,
-) -> RankedSearchResult:
-    return find_ranked_scoring_moves(
-        game.board,
-        rack,
-        authority=context.authority,
-        bag_count=game.bag.remaining(),
-        top_k=DEFAULT_RANKED_TOP_K,
-        max_nodes=DEFAULT_RANKED_MAX_NODES,
-        max_elapsed_ms=DEFAULT_RANKED_MAX_ELAPSED_MS,
-        tile_points=_TILE_POINTS[context.variant.slug],
-        blank_letters=context.variant.playable_letters,
-        variant=context.variant.slug,
-    )
-
-
-def _from_ranked(
-    result: RankedSearchResult,
-    candidate: RankedMoveCandidate | None,
-) -> _Decision:
-    return _Decision(
-        status=result.status,
-        complete=result.complete,
-        nodes=result.nodes,
-        elapsed_ms=result.elapsed_ms,
-        placements=None if candidate is None else candidate.placements,
-        words=() if candidate is None else candidate.words,
-        total_score=0 if candidate is None else candidate.total_score,
-    )
-
-
-def _select_rack_aware(
-    candidates: Sequence[RankedMoveCandidate],
-    rare: frozenset[str],
-) -> RankedMoveCandidate:
-    if not rare:
-        return candidates[0]
-    best_score = max(item.total_score for item in candidates)
-
-    def rare_count(item: RankedMoveCandidate) -> int:
-        return _rare_consumed(item.placements, rare)
-
-    eligible = [
-        item for item in candidates if best_score - item.total_score <= SCORE_LOSS_THRESHOLD
-    ]
-    if not any(rare_count(item) for item in eligible):
-        return candidates[0]
-
-    def sort_key(item: RankedMoveCandidate) -> tuple[object, ...]:
-        consumed = rare_count(item)
-        heuristic = item.total_score + RARE_BONUS * consumed
-        return (-heuristic, -consumed, -item.total_score, item.canonical_key)
-
-    return min(eligible, key=sort_key)
-
-
-def _choose(
-    policy_id: str,
-    game: Game,
-    rack: Sequence[str],
-    context: VariantProbeContext,
-) -> _Decision:
-    if policy_id == POLICY_WITNESS:
-        search = find_legal_scoring_move(
-            game.board,
-            rack,
-            authority=context.authority,
-            max_nodes=DEFAULT_MAX_NODES,
-            max_elapsed_ms=WITNESS_MAX_ELAPSED_MS,
-            blank_letters=context.variant.playable_letters,
-            variant=context.variant.slug,
-        )
-        return _Decision(
-            status=search.status,
-            complete=search.complete,
-            nodes=search.nodes,
-            elapsed_ms=search.elapsed_ms,
-            placements=search.witness,
-            words=search.words,
-            total_score=search.total_score,
-        )
-
-    ranked = _ranked_search(game, rack, context)
-    if ranked.status == "indeterminate":
-        return _from_ranked(ranked, None)
-    if not ranked.candidates:
-        return _from_ranked(ranked, None)
-    if policy_id == POLICY_RANKED_BEST:
-        chosen = ranked.candidates[0]
-    elif policy_id == POLICY_RANKED_RACK:
-        chosen = _select_rack_aware(ranked.candidates, _RARE_TILES[context.variant.slug])
-    else:
-        raise ValueError(f"unknown policy {policy_id}")
-    return _from_ranked(ranked, chosen)
-
-
-def _unplayed_rare(game: Game, rare: frozenset[str]) -> int:
-    pool = list(game.bag.tiles)
-    for player in game.players:
-        pool.extend(player.rack)
-    return sum(1 for tile in pool if tile in rare)
-
-
-def _on_board_rare(game: Game, rare: frozenset[str]) -> int:
-    count = 0
-    for row in game.board.cells:
-        for cell in row:
-            if cell.letter in rare and not cell.is_blank:
-                count += 1
-    return count
-
-
-def _simulate(variant_slug: str, policy_id: str, seed: int) -> PolicyComparisonSample:
+def _run_sample(
+    variant_slug: str, policy_id: str, seed: int, *, node_bound: bool = False,
+) -> PolicyComparisonSample:
     context = _CONTEXTS[variant_slug]
     expected = _EXPECTED_TILES[variant_slug]
     rare = _RARE_TILES[variant_slug]
-    bag = TileBag(seed=seed, variant=variant_slug)
-    players = [
-        PlayerState(name="P0", rack=bag.draw(7)),
-        PlayerState(name="P1", rack=bag.draw(7)),
-    ]
-    game = Game(
-        board=Board(get_premiums_path()),
-        bag=bag,
-        players=players,
-        starting_index=seed % 2,
+    sample = simulate_engine_game(
+        SelfPlayConfig(
+            variant_slug=variant_slug, seed=seed, policy_id=policy_id, max_plies=MAX_PLIES,
+            witness_max_elapsed_ms=(
+                _PARITY_MAX_ELAPSED_MS if node_bound else WITNESS_MAX_ELAPSED_MS
+            ),
+            witness_max_nodes=DEFAULT_MAX_NODES,
+            ranked_max_elapsed_ms=(
+                _PARITY_MAX_ELAPSED_MS if node_bound else DEFAULT_RANKED_MAX_ELAPSED_MS
+            ),
+            ranked_max_nodes=(
+                _PARITY_RANKED_MAX_NODES if node_bound else DEFAULT_RANKED_MAX_NODES
+            ),
+            ranked_top_k=DEFAULT_RANKED_TOP_K,
+            ranked_max_unique_placements=DEFAULT_RANKED_MAX_UNIQUE_PLACEMENTS,
+            include_pass_streak=False, strict_unknown_tile=False,
+            record_trace=True,
+        ),
+        context=SelfPlayContext(
+            authority=context.authority, letters=context.letters,
+            blank_letters=tuple(context.variant.playable_letters),
+            premiums_path=get_premiums_path(), rare_tiles=rare,
+        ),
     )
+    if node_bound:
+        assert all(event.decision.elapsed_ms < _PARITY_MAX_ELAPSED_MS for event in sample.trace)
+        capped = [event for event in sample.trace if not event.decision.complete]
+        assert all(event.decision.nodes == _PARITY_RANKED_MAX_NODES for event in capped)
+        if policy_id != POLICY_WITNESS:
+            assert capped, "ranked parity must exercise the node bound"
+    game = sample.initial_state
+    assert game is not None
+    players = game.players
     placement_scores = {"P0": 0, "P1": 0}
     fingerprints = {_fingerprint(game)}
     terminal_transitions = 0
@@ -303,7 +169,10 @@ def _simulate(variant_slug: str, policy_id: str, seed: int) -> PolicyComparisonS
 
     assert _tile_counter(game) == expected, f"{variant_slug} seed={seed} initial conservation"
 
-    for ply in range(1, MAX_PLIES + 1):
+    for event in sample.trace:
+        ply = event.ply
+        game = event.before
+        players = game.players
         assert not game.ended, f"{variant_slug} seed={seed} ply={ply} post-terminal"
         acting_index = game.current_index
         acting = game.current_player()
@@ -316,7 +185,7 @@ def _simulate(variant_slug: str, policy_id: str, seed: int) -> PolicyComparisonS
             f"{variant_slug} seed={seed} ply={ply} pre-action conservation"
         )
 
-        decision = _choose(policy_id, game, rack_before, context)
+        decision = event.decision
         decisions += 1
         nodes_sum += decision.nodes
         elapsed_sum += decision.elapsed_ms
@@ -327,10 +196,14 @@ def _simulate(variant_slug: str, policy_id: str, seed: int) -> PolicyComparisonS
         if decision.status == "indeterminate":
             pytest.fail(f"{context_label}: bounded search must not authorize a non-scoring action")
 
+        game = event.after
+        players = game.players
+        acting = players[acting_index]
+
         if decision.placements is not None:
             assert decision.status == "found", context_label
             legality = evaluate_scoring_move(
-                game.board,
+                event.before.board,
                 rack_before,
                 decision.placements,
                 authority=context.authority,
@@ -346,7 +219,7 @@ def _simulate(variant_slug: str, policy_id: str, seed: int) -> PolicyComparisonS
             assert rejected == (), f"{context_label}: two-letter policy rejected {rejected}"
             formed_words.extend(legality.words)
             formed_records.extend(legality.words_found)
-            awarded = game.play_move(decision.placements)
+            awarded = event.awarded
             assert awarded == legality.total_score, context_label
             placement_scores[acting.name] += awarded
             assert game.consecutive_scoreless_turns == 0, context_label
@@ -355,7 +228,6 @@ def _simulate(variant_slug: str, policy_id: str, seed: int) -> PolicyComparisonS
                 assert acting.score - score_before[acting_index] == awarded, context_label
         elif bag_before >= 7:
             assert decision.status == "none" and decision.complete is True, context_label
-            game.exchange_turn(rack_before)
             exchanges += 1
             assert game.consecutive_scoreless_turns == scoreless_before + 1, context_label
             assert acting.pass_streak == 0, context_label
@@ -363,7 +235,6 @@ def _simulate(variant_slug: str, policy_id: str, seed: int) -> PolicyComparisonS
                 assert tuple(player.score for player in players) == score_before, context_label
         else:
             assert decision.status == "none" and decision.complete is True, context_label
-            game.pass_turn()
             passes += 1
             assert game.consecutive_scoreless_turns == scoreless_before + 1, context_label
             assert acting.pass_streak == pass_streak_before + 1, context_label
@@ -389,7 +260,7 @@ def _simulate(variant_slug: str, policy_id: str, seed: int) -> PolicyComparisonS
             assert game.end_reason in ALLOWED_END_REASONS, context_label
             assert game.end_reason is not None, context_label
             expected_scores = [placement_scores[player.name] for player in players]
-            leftovers = [_rack_points(variant_slug, player.rack) for player in players]
+            leftovers = [rack_points(player.rack, _TILE_POINTS[variant_slug], strict_unknown_tile=False) for player in players]
             for index, leftover in enumerate(leftovers):
                 expected_scores[index] -= leftover
             if game.end_reason is GameEndReason.BAG_EMPTY_AND_PLAYER_OUT:
@@ -410,7 +281,31 @@ def _simulate(variant_slug: str, policy_id: str, seed: int) -> PolicyComparisonS
                 authority=context.authority,
             )
             assert rejected == ()
-            _RECORDS_CACHE[(variant_slug, policy_id, seed)] = tuple(formed_records)
+            assert sample.plies == ply
+            assert sample.end_reason == game.end_reason.name
+            assert sample.final_scores == game.scores()
+            assert sample.placement_scores == placement_scores
+            assert sample.leftover_points == game.leftover_points
+            assert sample.bag_remaining == bag_remaining
+            assert sample.rack_remaining == rack_remaining
+            assert sample.stranded_total == stranded
+            assert sample.rare_unplayed == _unplayed_rare(game, rare)
+            assert sample.rare_total == len(rare)
+            assert sample.exchanges == exchanges
+            assert sample.passes == passes
+            assert sample.formed_words == tuple(formed_words)
+            assert sample.formed_records == tuple(formed_records)
+            assert sample.rejected_two_letter_words == rejected
+            assert sample.search_cost.nodes_sum == nodes_sum
+            assert sample.search_cost.elapsed_ms_sum == elapsed_sum
+            assert sample.search_cost.decision_count == decisions
+            if not node_bound:
+                _RECORDS_CACHE[(variant_slug, policy_id, seed)] = tuple(formed_records)
+            print(
+                "selfplay-node-bound" if node_bound else "selfplay-production",
+                (variant_slug, policy_id, seed, ply,
+                 game.end_reason.name, tuple(game.scores().values())), flush=True,
+            )
             return PolicyComparisonSample(
                 variant_slug=variant_slug,
                 policy_id=policy_id,
@@ -445,7 +340,7 @@ def _cached(variant_slug: str, policy_id: str, seed: int) -> PolicyComparisonSam
     key = (variant_slug, policy_id, seed)
     sample = _RESULT_CACHE.get(key)
     if sample is None:
-        sample = _simulate(variant_slug, policy_id, seed)
+        sample = _run_sample(variant_slug, policy_id, seed)
         _RESULT_CACHE[key] = sample
     return sample
 
@@ -530,9 +425,29 @@ def test_policy_matrix_default_run_reports_all_three_policies() -> None:
     assert len(samples) == len(VARIANT_SLUGS) * len(POLICY_IDS) * len(DEFAULT_SEEDS)
 
 
+def test_node_bound_matrix_regression_tuples() -> None:
+    """New candidate baselines under node bounds, separate from extraction-equivalence evidence."""
+    samples = [
+        _run_sample(variant, policy, seed, node_bound=True)
+        for variant in VARIANT_SLUGS for policy in POLICY_IDS for seed in DEFAULT_SEEDS
+    ]
+    assert [
+        (sample.policy_id, sample.variant_slug, sample.plies,
+         sample.end_reason, tuple(sample.final_scores.values()))
+        for sample in samples
+    ] == [
+        (POLICY_WITNESS, "slovak", 55, "SIX_CONSECUTIVE_ZERO_SCORES", (303, 243)),
+        (POLICY_RANKED_BEST, "slovak", 26, "BAG_EMPTY_AND_PLAYER_OUT", (586, 533)),
+        (POLICY_RANKED_RACK, "slovak", 31, "BAG_EMPTY_AND_PLAYER_OUT", (494, 365)),
+        (POLICY_WITNESS, "english", 69, "SIX_CONSECUTIVE_ZERO_SCORES", (375, 138)),
+        (POLICY_RANKED_BEST, "english", 22, "BAG_EMPTY_AND_PLAYER_OUT", (511, 418)),
+        (POLICY_RANKED_RACK, "english", 22, "BAG_EMPTY_AND_PLAYER_OUT", (511, 418)),
+    ]
+
+
 def test_slovak_endgame_metrics_are_deterministic_for_a_fixed_seed() -> None:
-    first = _simulate("slovak", POLICY_WITNESS, 0)
-    second = _simulate("slovak", POLICY_WITNESS, 0)
+    first = _run_sample("slovak", POLICY_WITNESS, 0)
+    second = _run_sample("slovak", POLICY_WITNESS, 0)
     assert first.plies == second.plies
     assert first.end_reason == second.end_reason
     assert first.bag_remaining == second.bag_remaining
@@ -555,7 +470,7 @@ def test_english_control_matrix_has_no_ascii_only_predicate() -> None:
     english = _CONTEXTS["english"]
     word_source = inspect.getsource(type(english).is_word)
     choose_source = inspect.getsource(_choose)
-    simulate_source = inspect.getsource(_simulate)
+    simulate_source = inspect.getsource(simulate_engine_game)
     # Migrated target, same invariant: the word verdict now lives on the one
     # authority, so the ASCII-only lock is asserted over that whole module.
     authority_source = inspect.getsource(WordAuthority)
@@ -679,3 +594,41 @@ def test_policy_matrix_wide_run() -> None:
     for sample in samples:
         assert sample.end_reason in {reason.name for reason in ALLOWED_END_REASONS}
         assert sample.rejected_two_letter_words == ()
+
+
+def test_shared_rack_aware_selector_keeps_threshold_bonus_and_physical_tiles() -> None:
+    from gamecore.move_search import RankedMoveCandidate
+    from gamecore.selfplay import _rare_consumed, _select_rack_aware
+    from gamecore.types import Placement
+
+    def candidate(score, placements):
+        return RankedMoveCandidate(
+            placements=tuple(placements), words=(), total_score=score,
+            tiles_used=len(placements), leave_value=0, rack_out=False,
+            canonical_key=tuple((p.row, p.col, p.letter, p.blank_as or "") for p in placements),
+        )
+
+    rare = frozenset({"Á", "Ľ"})
+    best = candidate(100, [Placement(7, 7, "A")])
+    bonus = candidate(97, [Placement(7, 7, "Á")])
+    outside_threshold = candidate(91, [Placement(7, 7, "Á"), Placement(7, 8, "Ľ")])
+    blank = candidate(99, [Placement(7, 7, "?", "Á")])
+    assert RARE_BONUS == 5 and SCORE_LOSS_THRESHOLD == 8
+    assert _select_rack_aware([best, bonus, outside_threshold], rare) == bonus
+    assert _select_rack_aware([best, outside_threshold], rare) == best
+    assert _select_rack_aware([best, blank], rare) == best
+    assert _rare_consumed(blank.placements, rare) == 0
+    assert _select_rack_aware([best, bonus], frozenset()) == best
+
+
+def test_shared_two_tile_check_uses_complete_physical_sequences() -> None:
+    from gamecore.selfplay import _rejected_two_tile_words
+
+    authority = WordAuthority.from_words(["OSAMENIU"], two_tile_words=frozenset({"ács"}))
+    words = (
+        WordFound("ÁCS", [(0, 0), (0, 1)], ["Á", "CS"]),
+        WordFound("AM", [(1, 0), (1, 1)], ["A", "M"]),
+        WordFound("OSAMENIU", [(2, col) for col in range(8)], list("OSAMENIU")),
+    )
+    assert _rejected_two_tile_words(words, authority=authority) == ("AM",)
+    assert classify_complete_formed_words(words, authority=authority) == ("AM",)
