@@ -1,0 +1,205 @@
+"""Deterministic engine position-set generator."""
+
+from __future__ import annotations
+
+import ast
+import json
+from collections import Counter
+from io import StringIO
+from pathlib import Path
+
+import pytest
+from django.core.management import call_command, get_commands
+from django.core.management.base import CommandError
+
+from game.position_sets import (
+    ARTIFACT_ID,
+    DEFAULT_RANKED_MAX_ELAPSED_MS,
+    DEFAULT_RANKED_MAX_NODES,
+    PHASES,
+    PositionSetConfig,
+    classify_phase,
+    dump_position_set_json,
+    generate_position_set,
+)
+from gamecore.move_search import DEFAULT_RANKED_MAX_ELAPSED_MS as PRODUCTION_ELAPSED_MS
+from gamecore.tiles import get_tile_distribution
+
+_SMALL = PositionSetConfig(
+    variant_slug="english",
+    seeds=(300,),
+    positions_per_phase=1,
+)
+_GAME_ROOT = Path(__file__).resolve().parents[1] / "game"
+_FORBIDDEN = frozenset({"pytest", "pytest_django", "_pytest", "ruff", "mypy"})
+_COMMITTED_DIR = (
+    Path(__file__).resolve().parents[1] / "assets" / "diagnostics" / "position_sets"
+)
+
+
+@pytest.fixture(scope="module")
+def small_pair() -> tuple[dict[str, object], dict[str, object]]:
+    first = generate_position_set(_SMALL)
+    second = generate_position_set(_SMALL)
+    return first, second
+
+
+def test_f3_same_config_is_byte_identical(
+    small_pair: tuple[dict[str, object], dict[str, object]],
+) -> None:
+    first, second = small_pair
+    assert dump_position_set_json(first) == dump_position_set_json(second)
+    assert first["set_digest"] == second["set_digest"]
+    assert isinstance(first["set_digest"], str)
+    assert len(first["set_digest"]) == 64
+
+
+def test_f4_structured_cells_and_conservation(
+    small_pair: tuple[dict[str, object], dict[str, object]],
+) -> None:
+    asset, _ = small_pair
+    positions = asset["positions"]
+    assert isinstance(positions, list)
+    assert [item["phase"] for item in positions] == list(PHASES)
+    pool = Counter(get_tile_distribution("english"))
+    pool_size = sum(pool.values())
+    for snapshot in positions:
+        assert isinstance(snapshot, dict)
+        board = snapshot["board"]
+        assert isinstance(board, list)
+        assert len(board) == 15
+        occupied = 0
+        on_board: Counter[str] = Counter()
+        for row in board:
+            assert isinstance(row, list)
+            assert len(row) == 15
+            for cell in row:
+                assert isinstance(cell, dict)
+                assert set(cell) == {"token", "blank_as"}
+                token = cell["token"]
+                blank_as = cell["blank_as"]
+                assert isinstance(token, str)
+                assert blank_as is None or isinstance(blank_as, str)
+                if token == "":
+                    assert blank_as is None
+                    continue
+                occupied += 1
+                if token == "?":
+                    assert isinstance(blank_as, str) and blank_as
+                    on_board["?"] += 1
+                else:
+                    assert blank_as is None
+                    on_board[token] += 1
+        rack = snapshot["rack"]
+        assert isinstance(rack, list)
+        assert all(isinstance(tile, str) and tile for tile in rack)
+        bag_remaining = snapshot["bag_remaining"]
+        assert isinstance(bag_remaining, int)
+        known = sum(on_board.values()) + len(rack) + bag_remaining
+        assert pool_size - 7 <= known <= pool_size
+        assert on_board + Counter(tile if tile != "?" else "?" for tile in rack) <= pool
+        assert snapshot["phase"] == classify_phase(occupied, pool_size)
+
+
+def test_f5_node_bound_capture_is_stable(
+    small_pair: tuple[dict[str, object], dict[str, object]],
+) -> None:
+    first, second = small_pair
+    config = first["config"]
+    assert isinstance(config, dict)
+    assert config["ranked_max_nodes"] == DEFAULT_RANKED_MAX_NODES
+    assert config["ranked_max_elapsed_ms"] == DEFAULT_RANKED_MAX_ELAPSED_MS
+    assert PRODUCTION_ELAPSED_MS == 750
+    assert config["ranked_max_elapsed_ms"] != PRODUCTION_ELAPSED_MS
+    for left, right in zip(first["positions"], second["positions"], strict=True):
+        assert isinstance(left, dict)
+        assert isinstance(right, dict)
+        assert left["engine_baseline"] == right["engine_baseline"]
+        baseline = left["engine_baseline"]
+        assert isinstance(baseline, dict)
+        assert set(baseline) == {
+            "ranked_best_score",
+            "ranked_search_complete",
+            "witness_status",
+        }
+        assert baseline["witness_status"] in {"found", "none", "indeterminate"}
+        assert isinstance(baseline["ranked_search_complete"], bool)
+
+
+def test_f6_cli_writes_asset_and_rejects_bad_input(tmp_path: Path) -> None:
+    stdout = StringIO()
+    target = tmp_path / "english-sample.json"
+    call_command(
+        "generate_position_set",
+        variant_slug="english",
+        seeds="300",
+        total=3,
+        output=str(target),
+        stdout=stdout,
+        stderr=StringIO(),
+    )
+    payload = json.loads(target.read_text(encoding="utf-8"))
+    assert payload["artifact"] == ARTIFACT_ID
+    digest = payload["set_digest"]
+    assert isinstance(digest, str)
+    assert stdout.getvalue().strip().endswith(digest)
+    assert "generate_position_set" in get_commands()
+
+    with pytest.raises(CommandError) as unknown:
+        call_command(
+            "generate_position_set",
+            variant_slug="klingon",
+            seeds="300",
+            total=3,
+            output=str(tmp_path / "nope.json"),
+            stdout=StringIO(),
+            stderr=StringIO(),
+        )
+    assert unknown.value.returncode == 2
+
+    with pytest.raises(CommandError) as bad_total:
+        call_command(
+            "generate_position_set",
+            variant_slug="english",
+            seeds="300",
+            total=0,
+            output=str(tmp_path / "zero.json"),
+            stdout=StringIO(),
+            stderr=StringIO(),
+        )
+    assert bad_total.value.returncode == 2
+
+
+def test_f7_new_game_modules_do_not_import_dev_group_packages() -> None:
+    offenders: list[str] = []
+    paths = [
+        _GAME_ROOT / "position_sets.py",
+        _GAME_ROOT / "management" / "commands" / "generate_position_set.py",
+    ]
+    for path in paths:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        imported: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    imported.add(alias.name.split(".", 1)[0])
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                imported.add(node.module.split(".", 1)[0])
+        bad = imported & _FORBIDDEN
+        if bad:
+            offenders.append(f"{path.name}: {sorted(bad)}")
+    assert offenders == []
+
+
+def test_committed_sample_matches_generator_digest(
+    small_pair: tuple[dict[str, object], dict[str, object]],
+) -> None:
+    files = sorted(_COMMITTED_DIR.glob("*.json"))
+    assert len(files) == 1
+    committed = json.loads(files[0].read_text(encoding="utf-8"))
+    generated, _ = small_pair
+    assert committed["artifact"] == ARTIFACT_ID
+    assert committed["set_digest"] == generated["set_digest"]
+    assert committed["positions"] == generated["positions"]
+    assert committed["config"] == generated["config"]
+    assert files[0].name == f"english-{committed['set_digest'][:8]}.json"
