@@ -291,7 +291,17 @@ def _snapshot_from_ply(
         )
     occupied = _occupied_count(game.board)
     phase = classify_phase(occupied, tile_pool)
+    if len(game.players) != 2:
+        raise PositionSetError("position snapshots require exactly two seats")
     acting = game.current_player()
+    opponent = game.players[1 - game.current_index]
+    bag_tiles = list(game.bag.tiles)
+    bag_remaining = game.bag.remaining()
+    if len(bag_tiles) != bag_remaining:
+        raise PositionSetError(
+            f"{variant_slug} seed={seed} ply={event.ply}: "
+            f"bag sequence length {len(bag_tiles)} != bag_remaining {bag_remaining}"
+        )
     decision = event.decision
     status = decision.status
     if status not in {"found", "none", "indeterminate"}:
@@ -301,7 +311,7 @@ def _snapshot_from_ply(
         ranked_best = decision.total_score
     else:
         ranked_best = None
-    return {
+    snapshot = {
         "position_index": 0,
         "phase": phase,
         "variant_slug": variant_slug,
@@ -309,8 +319,10 @@ def _snapshot_from_ply(
         "ply": event.ply,
         "board": _board_payload(game.board),
         "rack": list(acting.rack),
+        "opponent_rack": list(opponent.rack),
         "to_move_seat_index": game.current_index,
-        "bag_remaining": game.bag.remaining(),
+        "bag_remaining": bag_remaining,
+        "bag_tiles": bag_tiles,
         "engine_baseline": {
             "ranked_best_score": ranked_best,
             "ranked_search_complete": decision.complete,
@@ -318,6 +330,13 @@ def _snapshot_from_ply(
         },
         "conditions_digest": conditions_digest,
     }
+    reconstructed = _inventory_from_snapshot(snapshot)
+    if reconstructed != expected:
+        raise PositionSetError(
+            f"{variant_slug} seed={seed} ply={event.ply}: "
+            "snapshot field conservation failed"
+        )
+    return snapshot
 
 
 def _allocate_across_seeds(
@@ -381,6 +400,30 @@ def _tile_inventory(game: Game) -> Counter[str]:
         for cell in row:
             if cell.token:
                 tiles.update([BLANK_TOKEN if cell.token == BLANK_TOKEN else cell.token])
+    return tiles
+
+
+def _inventory_from_snapshot(snapshot: Mapping[str, Any]) -> Counter[str]:
+    board = snapshot["board"]
+    rack = snapshot["rack"]
+    opponent_rack = snapshot["opponent_rack"]
+    bag_tiles = snapshot["bag_tiles"]
+    if not isinstance(board, list) or not isinstance(rack, list):
+        raise PositionSetError("snapshot racks and board must be lists")
+    if not isinstance(opponent_rack, list) or not isinstance(bag_tiles, list):
+        raise PositionSetError("snapshot opponent_rack and bag_tiles must be lists")
+    tiles: Counter[str] = Counter(token for token in bag_tiles if isinstance(token, str))
+    tiles.update(token for token in rack if isinstance(token, str))
+    tiles.update(token for token in opponent_rack if isinstance(token, str))
+    for row in board:
+        if not isinstance(row, list):
+            raise PositionSetError("snapshot board row must be a list")
+        for cell in row:
+            if not isinstance(cell, dict):
+                raise PositionSetError("snapshot cell must be an object")
+            token = cell.get("token")
+            if isinstance(token, str) and token:
+                tiles.update([BLANK_TOKEN if token == BLANK_TOKEN else token])
     return tiles
 
 

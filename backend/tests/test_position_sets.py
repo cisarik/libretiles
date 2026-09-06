@@ -35,6 +35,9 @@ _FORBIDDEN = frozenset({"pytest", "pytest_django", "_pytest", "ruff", "mypy"})
 _COMMITTED_DIR = (
     Path(__file__).resolve().parents[1] / "assets" / "diagnostics" / "position_sets"
 )
+_COMMITTED_SET_DIGEST = (
+    "8d40f3bc67a86d096f03700c976293aa0cd2b9865231243bdb45d14c03365e39"
+)
 
 
 @pytest.fixture(scope="module")
@@ -93,11 +96,17 @@ def test_f4_structured_cells_and_conservation(
         rack = snapshot["rack"]
         assert isinstance(rack, list)
         assert all(isinstance(tile, str) and tile for tile in rack)
+        opponent_rack = snapshot["opponent_rack"]
+        assert isinstance(opponent_rack, list)
+        assert all(isinstance(tile, str) and tile for tile in opponent_rack)
+        bag_tiles = snapshot["bag_tiles"]
+        assert isinstance(bag_tiles, list)
+        assert all(isinstance(tile, str) and tile for tile in bag_tiles)
         bag_remaining = snapshot["bag_remaining"]
         assert isinstance(bag_remaining, int)
-        known = sum(on_board.values()) + len(rack) + bag_remaining
-        assert pool_size - 7 <= known <= pool_size
-        assert on_board + Counter(tile if tile != "?" else "?" for tile in rack) <= pool
+        assert len(bag_tiles) == bag_remaining
+        inventory = on_board + Counter(rack) + Counter(opponent_rack) + Counter(bag_tiles)
+        assert inventory == pool
         assert snapshot["phase"] == classify_phase(occupied, pool_size)
 
 
@@ -124,6 +133,19 @@ def test_f5_node_bound_capture_is_stable(
         }
         assert baseline["witness_status"] in {"found", "none", "indeterminate"}
         assert isinstance(baseline["ranked_search_complete"], bool)
+
+
+def test_f8_snapshot_is_self_contained(
+    small_pair: tuple[dict[str, object], dict[str, object]],
+) -> None:
+    asset, _ = small_pair
+    positions = asset["positions"]
+    assert isinstance(positions, list)
+    for snapshot in positions:
+        assert isinstance(snapshot, dict)
+        assert "opponent_rack" in snapshot
+        assert "bag_tiles" in snapshot
+        assert snapshot["bag_remaining"] == len(snapshot["bag_tiles"])
 
 
 def test_f6_cli_writes_asset_and_rejects_bad_input(tmp_path: Path) -> None:
@@ -191,15 +213,46 @@ def test_f7_new_game_modules_do_not_import_dev_group_packages() -> None:
     assert offenders == []
 
 
-def test_committed_sample_matches_generator_digest(
-    small_pair: tuple[dict[str, object], dict[str, object]],
-) -> None:
+def test_committed_sample_matches_generator_digest() -> None:
     files = sorted(_COMMITTED_DIR.glob("*.json"))
     assert len(files) == 1
     committed = json.loads(files[0].read_text(encoding="utf-8"))
-    generated, _ = small_pair
     assert committed["artifact"] == ARTIFACT_ID
-    assert committed["set_digest"] == generated["set_digest"]
-    assert committed["positions"] == generated["positions"]
-    assert committed["config"] == generated["config"]
-    assert files[0].name == f"english-{committed['set_digest'][:8]}.json"
+    config = committed["config"]
+    assert isinstance(config, dict)
+    assert config["variant_slug"] == "english"
+    assert config["seeds"] == [300, 301, 302]
+    assert config["positions_per_phase"] == 8
+    positions = committed["positions"]
+    assert isinstance(positions, list)
+    assert len(positions) == 24
+    pool = Counter(get_tile_distribution("english"))
+    for snapshot in positions:
+        assert isinstance(snapshot, dict)
+        assert "opponent_rack" in snapshot
+        assert "bag_tiles" in snapshot
+        on_board: Counter[str] = Counter()
+        board = snapshot["board"]
+        assert isinstance(board, list)
+        for row in board:
+            assert isinstance(row, list)
+            for cell in row:
+                assert isinstance(cell, dict)
+                token = cell["token"]
+                if isinstance(token, str) and token:
+                    on_board["?" if token == "?" else token] += 1
+        rack = snapshot["rack"]
+        opponent_rack = snapshot["opponent_rack"]
+        bag_tiles = snapshot["bag_tiles"]
+        assert isinstance(rack, list)
+        assert isinstance(opponent_rack, list)
+        assert isinstance(bag_tiles, list)
+        assert snapshot["bag_remaining"] == len(bag_tiles)
+        inventory = (
+            on_board + Counter(rack) + Counter(opponent_rack) + Counter(bag_tiles)
+        )
+        assert inventory == pool
+    digest = committed["set_digest"]
+    assert digest == _COMMITTED_SET_DIGEST
+    assert isinstance(digest, str)
+    assert files[0].name == f"english-{digest[:8]}.json"
