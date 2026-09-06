@@ -3,7 +3,15 @@
 from __future__ import annotations
 
 import importlib
+import io
 import json
+import os
+import secrets
+import shutil
+import sqlite3
+import subprocess
+import sys
+import tarfile
 import uuid
 from pathlib import Path
 from typing import Any
@@ -348,7 +356,7 @@ class DiagnosticSessionTests(TestCase):
     def test_f_p_reverse_keeps_claimant_deletes_managed(self) -> None:
         """Pre-fix finding proof (APMC-S4-IA-F03): reverse deleted the claimant."""
         migration = importlib.import_module(
-            "game.migrations.0009_diagnostic_session_foundation"
+            "game.migrations.0010_diagnostic_service_account"
         )
         unensure = migration.unensure_diagnostic_service_user
 
@@ -485,11 +493,11 @@ class DiagnosticSessionTests(TestCase):
         from django.db.migrations.loader import MigrationLoader
 
         accounts_0005 = ("accounts", "0005_service_account_flag")
-        game_0009 = ("game", "0009_diagnostic_session_foundation")
+        game_0010 = ("game", "0010_diagnostic_service_account")
         loader = MigrationLoader(connection)
-        assert accounts_0005 in loader.disk_migrations[game_0009].dependencies
-        plan = loader.graph.forwards_plan(game_0009)
-        assert plan.index(accounts_0005) < plan.index(game_0009)
+        assert accounts_0005 in loader.disk_migrations[game_0010].dependencies
+        plan = loader.graph.forwards_plan(game_0010)
+        assert plan.index(accounts_0005) < plan.index(game_0010)
         seeded = User.objects.get(username=services.DIAGNOSTIC_SERVICE_USERNAME)
         assert seeded.is_service_account is True
 
@@ -570,3 +578,190 @@ class DiagnosticSessionTests(TestCase):
         assert first.id == second.id
         assert User.objects.filter(username="libretiles-diagnostic").count() == 1
         assert first.has_usable_password() is False
+
+
+_BACKEND = Path(__file__).resolve().parents[1]
+_PRE_FLAG_COMMIT = "f6c9db913450d56ade4399ec5d2e6a3cd807e347"
+_STRANDED_COMMIT = "6049f2895321da33c7594aedd922aef63544e18d"
+
+
+def _export_migration_tree(tmp_path: Path, commit: str) -> Path:
+    """Export tracked Python only: no secrets, dev DB, network, or Git writes."""
+    paths = subprocess.check_output(
+        ["git", "ls-tree", "-r", "--name-only", commit, "--", "backend"],
+        cwd=_BACKEND.parent,
+        text=True,
+    ).splitlines()
+    archive = subprocess.check_output(
+        ["git", "archive", commit, "--", *[p for p in paths if p.endswith(".py")]],
+        cwd=_BACKEND.parent,
+    )
+    destination = tmp_path / commit
+    destination.mkdir()
+    with tarfile.open(fileobj=io.BytesIO(archive)) as tree:
+        tree.extractall(destination, filter="data")
+    return destination / "backend"
+
+
+def _migration_process(backend: Path, database: Path, code: str) -> subprocess.CompletedProcess[str]:
+    """Run real migrate against an isolated SQLite DB before Django opens it."""
+    env = os.environ.copy()
+    for name in ("APPIMAGE", "ARGV0", "APPDIR"):
+        env.pop(name, None)
+    env.update(
+        PYTHON_DOTENV_DISABLED="1",
+        DJANGO_SECRET_KEY=secrets.token_urlsafe(64),
+        DJANGO_SETTINGS_MODULE="config.settings",
+        DJANGO_DEBUG="true",
+        DB_ENGINE="sqlite3",
+    )
+    bootstrap = (
+        "import sys\n"
+        "from django.conf import settings\n"
+        "settings.DATABASES['default']['NAME'] = sys.argv[1]\n"
+        "import django\n"
+        "django.setup()\n"
+        "from django.core.management import call_command\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", bootstrap + code, str(database)],
+        cwd=backend,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    print(result.stdout, end="")
+    print(result.stderr, end="")
+    return result
+
+
+def _assert_managed_flag(database: Path) -> None:
+    with sqlite3.connect(database) as db:
+        rows = db.execute(
+            "SELECT is_service_account, password FROM accounts_user WHERE username = ?",
+            (services.DIAGNOSTIC_SERVICE_USERNAME,),
+        ).fetchall()
+    assert len(rows) == 1
+    assert rows[0][0] == 1
+    assert rows[0][1].startswith("!")
+    print("Reserved managed account: is_service_account=True, unusable_password=True")
+
+
+def test_f_v_existing_applied_0009_one_normal_migrate_rescues(tmp_path: Path) -> None:
+    """Reproduce F07 from real historical trees, then upgrade the same database."""
+    database = tmp_path / "existing.sqlite3"
+    original = _export_migration_tree(tmp_path, _PRE_FLAG_COMMIT)
+    before = _migration_process(original, database, "call_command('migrate', no_color=True)\n")
+    assert before.returncode == 0, before.stderr
+    with sqlite3.connect(database) as db:
+        assert db.execute(
+            "SELECT 1 FROM django_migrations WHERE app='game' AND name=?",
+            ("0009_diagnostic_session_foundation",),
+        ).fetchone()
+        assert not db.execute(
+            "SELECT 1 FROM django_migrations WHERE app='accounts' AND name=?",
+            ("0005_service_account_flag",),
+        ).fetchone()
+        assert "is_service_account" not in {
+            row[1] for row in db.execute("PRAGMA table_info(accounts_user)")
+        }
+        original_id, password = db.execute(
+            "SELECT id, password FROM accounts_user WHERE username=?",
+            (services.DIAGNOSTIC_SERVICE_USERNAME,),
+        ).fetchone()
+        assert password.startswith("!")
+
+    stranded = _export_migration_tree(tmp_path, _STRANDED_COMMIT)
+    broken = _migration_process(stranded, database, "call_command('migrate', no_color=True)\n")
+    assert broken.returncode != 0
+    assert (
+        "django.db.migrations.exceptions.InconsistentMigrationHistory: "
+        "Migration game.0009_diagnostic_session_foundation is applied before its dependency "
+        "accounts.0005_service_account_flag on database 'default'."
+    ) in broken.stderr
+
+    interrupted_database = tmp_path / "between_0005_and_0010.sqlite3"
+    shutil.copyfile(database, interrupted_database)
+    rescued = _migration_process(_BACKEND, database, "call_command('migrate', no_color=True)\n")
+    assert rescued.returncode == 0, rescued.stderr
+    flag_line = "Applying accounts.0005_service_account_flag... OK"
+    seed_line = "Applying game.0010_diagnostic_service_account... OK"
+    assert flag_line in rescued.stdout
+    assert seed_line in rescued.stdout
+    assert rescued.stdout.index(flag_line) < rescued.stdout.index(seed_line)
+    _assert_managed_flag(database)
+    with sqlite3.connect(database) as db:
+        assert db.execute(
+            "SELECT id FROM accounts_user WHERE username=?",
+            (services.DIAGNOSTIC_SERVICE_USERNAME,),
+        ).fetchone() == (original_id,)
+
+    # A completed 0005 followed by interruption before 0010 is also resumable.
+    column_only = _migration_process(
+        _BACKEND, interrupted_database,
+        "call_command('migrate', 'accounts', '0005', no_color=True)\n",
+    )
+    assert column_only.returncode == 0, column_only.stderr
+    with sqlite3.connect(interrupted_database) as db:
+        assert db.execute(
+            "SELECT is_service_account FROM accounts_user WHERE id=?", (original_id,),
+        ).fetchone() == (0,)
+    resumed = _migration_process(
+        _BACKEND, interrupted_database, "call_command('migrate', no_color=True)\n",
+    )
+    assert resumed.returncode == 0, resumed.stderr
+    assert flag_line not in resumed.stdout
+    assert seed_line in resumed.stdout
+    _assert_managed_flag(interrupted_database)
+
+
+def test_f_w_fresh_schema_seed_and_schema_only_reverse(tmp_path: Path) -> None:
+    zero_database = tmp_path / "from_zero.sqlite3"
+    zero = _migration_process(
+        _BACKEND, zero_database, "call_command('migrate', no_color=True)\n",
+    )
+    assert zero.returncode == 0, zero.stderr
+    for migration in (
+        "accounts.0005_service_account_flag",
+        "game.0009_diagnostic_session_foundation",
+        "game.0010_diagnostic_service_account",
+    ):
+        assert f"Applying {migration}... OK" in zero.stdout
+    _assert_managed_flag(zero_database)
+
+    database = tmp_path / "fresh.sqlite3"
+    schema = _migration_process(
+        _BACKEND, database,
+        "call_command('migrate', 'game', '0009', no_color=True)\n",
+    )
+    assert schema.returncode == 0, schema.stderr
+    assert "Applying game.0009_diagnostic_session_foundation... OK" in schema.stdout
+    with sqlite3.connect(database) as db:
+        assert not db.execute(
+            "SELECT 1 FROM accounts_user WHERE username=?",
+            (services.DIAGNOSTIC_SERVICE_USERNAME,),
+        ).fetchone()
+    print("After 0009 alone: reserved account absent")
+
+    full = _migration_process(_BACKEND, database, "call_command('migrate', no_color=True)\n")
+    assert full.returncode == 0, full.stderr
+    assert "Applying accounts.0005_service_account_flag... OK" in full.stdout
+    assert "Applying game.0010_diagnostic_service_account... OK" in full.stdout
+    _assert_managed_flag(database)
+
+    # Reverse 0010 first (it owns the seed), then insert a managed sentinel.
+    # Reversing 0009 itself must preserve that user.
+    reverse = _migration_process(
+        _BACKEND, database,
+        "call_command('migrate', 'game', '0009', no_color=True)\n"
+        "from game.services import ensure_diagnostic_service_user\n"
+        "from accounts.models import User\n"
+        "assert not User.objects.filter(username='libretiles-diagnostic').exists()\n"
+        "user = ensure_diagnostic_service_user()\n"
+        "call_command('migrate', 'game', '0008', no_color=True)\n"
+        "assert User.objects.filter(pk=user.pk, is_service_account=True).exists()\n"
+        "print('Reversing 0009 preserves the managed sentinel user')\n",
+    )
+    assert reverse.returncode == 0, reverse.stderr
+    _assert_managed_flag(database)
