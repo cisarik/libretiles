@@ -21,9 +21,13 @@ from game.diagnostics import (
     REASON_GENERIC_UNCHANGED,
     REASON_PERSIST_LOST_TERMINAL,
     REASON_RUNTIME_MODE_NOT_HONORED,
+    REPORT_KIND_AI_MATCH,
+    REPORT_KIND_MODEL_POSITION,
+    REPORT_KIND_TURN,
     classify_turn_sample,
     observe_source_revision,
 )
+from gamecore.assets import get_assets_path
 
 _NIM = "nvidia/nemotron-3-super-120b-a12b"
 _GEMMA = "google/gemma-4-31b-it:free"
@@ -529,3 +533,29 @@ def test_classify_persist_then_lost_terminal() -> None:
     )
     assert verdict == "pass_with_telemetry"
     assert reason == REASON_PERSIST_LOST_TERMINAL
+
+
+def test_new_report_kinds_do_not_replace_turn_contract() -> None:
+    assert REPORT_KIND_TURN == "turn"
+    assert REPORT_KIND_AI_MATCH == "ai-match"
+    assert REPORT_KIND_MODEL_POSITION == "model-position"
+    assert COMPLETION_SOURCE_VOCABULARY == (
+        "provider_candidate",
+        "backend_ranked_candidate",
+        "repair_candidate",
+        "backend_witness_rescue",
+        "genuine_no_move_exchange",
+        "genuine_no_move_pass",
+    )
+    schema_path = get_assets_path() / "diagnostics" / "ai_play_report_v1.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    enum = schema["properties"]["report_kind"]["enum"]
+    assert "turn" in enum
+    assert "ai-match" in enum
+    assert "model-position" in enum
+    required = schema["$defs"]["turnSample"]["required"]
+    assert "playability" in required
+    assert "completion_source" in required
+    assert "attempts" in required
+    completion_enum = schema["$defs"]["turnSample"]["properties"]["completion_source"]["enum"]
+    assert set(completion_enum) == {None, *COMPLETION_SOURCE_VOCABULARY}

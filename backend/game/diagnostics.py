@@ -38,6 +38,8 @@ ARTIFACT_ID = "libretiles.ai-play-diagnostic/v1"
 REPORT_KIND_ENGINE = "engine"
 REPORT_KIND_TURN = "turn"
 REPORT_KIND_POLICY_COMPARISON = "policy-comparison"
+REPORT_KIND_AI_MATCH = "ai-match"
+REPORT_KIND_MODEL_POSITION = "model-position"
 SCENARIO_ASSET_NAME = "ai_play_scenarios_v1.json"
 UINT32_MAX = 4_294_967_295
 PROBE_COUNT_MIN = 1
@@ -112,6 +114,9 @@ def reserved_completion_sources() -> tuple[str, ...]:
 Verdict = Literal["pass", "fail"]
 TurnVerdict = Literal["pass", "pass_with_telemetry", "fail", "external_incomplete"]
 PlayabilityStatus = Literal["found", "none", "indeterminate"]
+AssistMode = Literal["assisted", "authorship"]
+ScoreAuthority = Literal["engine", "model"]
+ExecutedRuntimeMode = Literal["fake", "live"]
 
 
 class DiagnosticInputError(Exception):
@@ -745,6 +750,111 @@ def build_policy_comparison_report(
     }
 
 
+@dataclass(frozen=True)
+class PlyMetricRecord:
+    """Per-ply diagnostic metrics. None always means not measured."""
+
+    seat_index: int
+    model_id: str
+    assist_mode: AssistMode
+    score_authority: ScoreAuthority
+    model_authored: bool | None
+    first_validate_valid: bool | None
+    valid_candidate_count: int | None
+    model_legal_score: int | None
+    ranked_best_score: int | None
+    ranked_search_complete: bool | None
+    give_up_while_legal: bool | None
+    playability_status: str | None
+    completion_source: str | None
+    terminal_cause: str | None
+    provider_requests_used: int | None
+    steps_consumed: int | None
+    wall_clock_ms: int | None
+    malformed_or_non_tool: bool | None
+    fallback_attempt_index: int | None
+    earlier_attempt_failures: tuple[str, ...] | None
+    executed_runtime_mode: ExecutedRuntimeMode | None
+
+
+@dataclass(frozen=True)
+class ModelPositionSample:
+    set_digest: str
+    position_index: int
+    ply: PlyMetricRecord
+    score: int
+    verdict: Verdict
+    reason_code: str
+
+
+@dataclass(frozen=True)
+class AiMatchSample:
+    ply_records: tuple[PlyMetricRecord, ...]
+    end_reason: str
+    plies: int
+    bag_remaining: int
+    rack_remaining: dict[str, tuple[str, ...]]
+    final_scores: dict[str, int]
+    score_authority: ScoreAuthority
+    verdict: Verdict
+    reason_code: str
+
+
+def ply_metric_to_dict(record: PlyMetricRecord) -> dict[str, Any]:
+    failures = record.earlier_attempt_failures
+    return {
+        "seat_index": record.seat_index,
+        "model_id": record.model_id,
+        "assist_mode": record.assist_mode,
+        "score_authority": record.score_authority,
+        "model_authored": record.model_authored,
+        "first_validate_valid": record.first_validate_valid,
+        "valid_candidate_count": record.valid_candidate_count,
+        "model_legal_score": record.model_legal_score,
+        "ranked_best_score": record.ranked_best_score,
+        "ranked_search_complete": record.ranked_search_complete,
+        "give_up_while_legal": record.give_up_while_legal,
+        "playability_status": record.playability_status,
+        "completion_source": record.completion_source,
+        "terminal_cause": record.terminal_cause,
+        "provider_requests_used": record.provider_requests_used,
+        "steps_consumed": record.steps_consumed,
+        "wall_clock_ms": record.wall_clock_ms,
+        "malformed_or_non_tool": record.malformed_or_non_tool,
+        "fallback_attempt_index": record.fallback_attempt_index,
+        "earlier_attempt_failures": None if failures is None else list(failures),
+        "executed_runtime_mode": record.executed_runtime_mode,
+    }
+
+
+def model_position_sample_to_dict(sample: ModelPositionSample) -> dict[str, Any]:
+    payload = ply_metric_to_dict(sample.ply)
+    payload["position"] = {
+        "set_digest": sample.set_digest,
+        "position_index": sample.position_index,
+    }
+    payload["score"] = sample.score
+    payload["verdict"] = sample.verdict
+    payload["reason_code"] = sample.reason_code
+    return payload
+
+
+def ai_match_sample_to_dict(sample: AiMatchSample) -> dict[str, Any]:
+    return {
+        "ply_records": [ply_metric_to_dict(record) for record in sample.ply_records],
+        "end_reason": sample.end_reason,
+        "plies": sample.plies,
+        "bag_remaining": sample.bag_remaining,
+        "rack_remaining": {
+            name: list(tiles) for name, tiles in sample.rack_remaining.items()
+        },
+        "final_scores": dict(sample.final_scores),
+        "score_authority": sample.score_authority,
+        "verdict": sample.verdict,
+        "reason_code": sample.reason_code,
+    }
+
+
 def write_report_atomically(path: Path, payload: str) -> None:
     if path.exists():
         raise DiagnosticInputError("output path already exists")
@@ -1220,6 +1330,80 @@ def build_turn_report(
     redacted = redacted_copy(payload)
     assert isinstance(redacted, dict)
     return redacted
+
+
+def _vocabulary_report_envelope(
+    *,
+    report_kind: str,
+    requested: Mapping[str, str | int],
+    context: VariantProbeContext,
+    samples: Sequence[Mapping[str, Any]],
+    generated_at: datetime | None,
+    source_revision: str | None,
+) -> dict[str, Any]:
+    stamp = generated_at or datetime.now(timezone.utc)
+    generated = stamp.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    pass_count = sum(1 for sample in samples if sample.get("verdict") == "pass")
+    fail_count = sum(1 for sample in samples if sample.get("verdict") == "fail")
+    allowlist_size = len(context.allowlist) if context.allowlist is not None else None
+    summary: dict[str, int] = {
+        "sample_count": len(samples),
+        "pass_count": pass_count,
+        "fail_count": fail_count,
+    }
+    payload = {
+        "artifact": ARTIFACT_ID,
+        "report_kind": report_kind,
+        "generated_at": generated,
+        "source_revision": source_revision or observe_source_revision(),
+        "requested": dict(requested),
+        "variant": {
+            "slug": context.variant.slug,
+            "lexicon_id": _lexicon_id(context.variant),
+            "two_letter_lexicon_size": allowlist_size,
+        },
+        "samples": list(samples),
+        "summary": summary,
+    }
+    redacted = redacted_copy(payload)
+    assert isinstance(redacted, dict)
+    return redacted
+
+
+def build_model_position_report(
+    *,
+    requested: Mapping[str, str | int],
+    context: VariantProbeContext,
+    samples: Sequence[ModelPositionSample],
+    generated_at: datetime | None = None,
+    source_revision: str | None = None,
+) -> dict[str, Any]:
+    return _vocabulary_report_envelope(
+        report_kind=REPORT_KIND_MODEL_POSITION,
+        requested=requested,
+        context=context,
+        samples=[model_position_sample_to_dict(sample) for sample in samples],
+        generated_at=generated_at,
+        source_revision=source_revision,
+    )
+
+
+def build_ai_match_report(
+    *,
+    requested: Mapping[str, str | int],
+    context: VariantProbeContext,
+    samples: Sequence[AiMatchSample],
+    generated_at: datetime | None = None,
+    source_revision: str | None = None,
+) -> dict[str, Any]:
+    return _vocabulary_report_envelope(
+        report_kind=REPORT_KIND_AI_MATCH,
+        requested=requested,
+        context=context,
+        samples=[ai_match_sample_to_dict(sample) for sample in samples],
+        generated_at=generated_at,
+        source_revision=source_revision,
+    )
 
 
 def turn_exit_code(samples: Sequence[TurnSample], *, runtime_mode: str) -> int:

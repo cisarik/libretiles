@@ -20,7 +20,7 @@
       "const": "libretiles.ai-play-diagnostic/v1"
     },
     "report_kind": {
-      "enum": ["engine", "turn", "policy-comparison"]
+      "enum": ["engine", "turn", "policy-comparison", "ai-match", "model-position"]
     },
     "generated_at": {
       "type": "string",
@@ -71,7 +71,9 @@
         "oneOf": [
           { "$ref": "#/$defs/engineSample" },
           { "$ref": "#/$defs/turnSample" },
-          { "$ref": "#/$defs/policyComparisonSample" }
+          { "$ref": "#/$defs/policyComparisonSample" },
+          { "$ref": "#/$defs/modelPositionSample" },
+          { "$ref": "#/$defs/aiMatchSample" }
         ]
       }
     },
@@ -339,6 +341,144 @@
             "rejected": { "type": "array", "items": { "type": "string" } }
           }
         },
+        "verdict": { "enum": ["pass", "fail"] },
+        "reason_code": { "type": "string", "minLength": 1, "maxLength": 64 }
+      }
+    },
+    "plyMetricRecord": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "seat_index",
+        "model_id",
+        "assist_mode",
+        "score_authority"
+      ],
+      "properties": {
+        "seat_index": { "type": "integer", "minimum": 0, "maximum": 1 },
+        "model_id": { "type": "string", "minLength": 1 },
+        "assist_mode": { "enum": ["assisted", "authorship"] },
+        "score_authority": { "enum": ["engine", "model"] },
+        "model_authored": { "type": ["boolean", "null"] },
+        "first_validate_valid": { "type": ["boolean", "null"] },
+        "valid_candidate_count": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "model_legal_score": { "type": ["integer", "null"] },
+        "ranked_best_score": { "type": ["integer", "null"] },
+        "ranked_search_complete": { "type": ["boolean", "null"] },
+        "give_up_while_legal": { "type": ["boolean", "null"] },
+        "playability_status": {
+          "type": ["string", "null"],
+          "enum": [null, "found", "none", "indeterminate"]
+        },
+        "completion_source": {
+          "type": ["string", "null"],
+          "enum": [
+            null,
+            "provider_candidate",
+            "backend_ranked_candidate",
+            "repair_candidate",
+            "backend_witness_rescue",
+            "genuine_no_move_exchange",
+            "genuine_no_move_pass"
+          ]
+        },
+        "terminal_cause": { "type": ["string", "null"] },
+        "provider_requests_used": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "steps_consumed": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "wall_clock_ms": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "malformed_or_non_tool": { "type": ["boolean", "null"] },
+        "fallback_attempt_index": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "maximum": 3
+        },
+        "earlier_attempt_failures": {
+          "type": ["array", "null"],
+          "items": { "type": "string" }
+        },
+        "executed_runtime_mode": {
+          "type": ["string", "null"],
+          "enum": [null, "fake", "live"]
+        }
+      }
+    },
+    "modelPositionSample": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "position",
+        "seat_index",
+        "model_id",
+        "assist_mode",
+        "score_authority",
+        "score",
+        "verdict",
+        "reason_code"
+      ],
+      "allOf": [
+        { "$ref": "#/$defs/plyMetricRecord" }
+      ],
+      "properties": {
+        "position": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["set_digest", "position_index"],
+          "properties": {
+            "set_digest": { "type": "string", "minLength": 1 },
+            "position_index": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "score": { "type": "integer" },
+        "verdict": { "enum": ["pass", "fail"] },
+        "reason_code": { "type": "string", "minLength": 1, "maxLength": 64 }
+      }
+    },
+    "aiMatchSample": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "ply_records",
+        "end_reason",
+        "plies",
+        "bag_remaining",
+        "rack_remaining",
+        "final_scores",
+        "score_authority",
+        "verdict",
+        "reason_code"
+      ],
+      "properties": {
+        "ply_records": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/plyMetricRecord" }
+        },
+        "end_reason": { "type": "string", "minLength": 1 },
+        "plies": { "type": "integer", "minimum": 0 },
+        "bag_remaining": { "type": "integer", "minimum": 0 },
+        "rack_remaining": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        },
+        "final_scores": {
+          "type": "object",
+          "additionalProperties": { "type": "integer" }
+        },
+        "score_authority": { "enum": ["engine", "model"] },
         "verdict": { "enum": ["pass", "fail"] },
         "reason_code": { "type": "string", "minLength": 1, "maxLength": 64 }
       }
