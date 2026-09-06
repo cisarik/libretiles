@@ -782,7 +782,10 @@ class ModelPositionSample:
     set_digest: str
     position_index: int
     ply: PlyMetricRecord
-    score: int
+    # D2 exception to the int-only sample-score rule: None means the position's
+    # score was NOT measured (e.g. the fake generic_unchanged path measures no
+    # placement score). An unmeasured score must never be written as 0.
+    score: int | None
     verdict: Verdict
     reason_code: str
 

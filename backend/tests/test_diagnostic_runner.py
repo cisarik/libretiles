@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 import threading
 import uuid as uuid_module
+from dataclasses import fields
+from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
 from typing import Any
@@ -25,8 +27,17 @@ from catalog.models import AIModel
 from catalog.selection import DEFAULT_FREE_MODEL_ID, FREE_RIVAL_IDS, FREE_RIVAL_PAIRS
 from game import services
 from game.admin import spawn_diagnostic_runner
-from game.diagnostics import LIVE_SENTINEL
+from game.diagnostics import (
+    COMPLETION_SOURCE_VOCABULARY,
+    LIVE_SENTINEL,
+    ModelPositionSample,
+    PlyMetricRecord,
+    build_model_position_report,
+    load_variant_context,
+)
+from game.management.commands import run_diagnostic_match as runner_module
 from game.models import DiagnosticPly, DiagnosticRun, Move
+from game.position_sets import default_position_set_dir
 from game.services import (
     cancel_diagnostic_run,
     configure_diagnostic_run,
@@ -125,6 +136,15 @@ def _ply_blob(run: DiagnosticRun) -> str:
             {field.name: str(getattr(ply, field.name)) for field in DiagnosticPly._meta.fields}
         )
     return json.dumps(rows)
+
+
+def _load_committed_position_set(digest: str) -> dict[str, Any]:
+    directory = default_position_set_dir()
+    for path in sorted(directory.glob("*.json")):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(data, dict) and data.get("set_digest") == digest:
+            return data
+    raise AssertionError(f"committed position set not found for {digest[:12]}")
 
 
 class DiagnosticRunnerHelperTests(TestCase):
@@ -478,8 +498,13 @@ class DiagnosticRunnerLoopTests(TransactionTestCase):
         assert "PATH" in stub_env
 
     def test_position_set_run_persists_position_index_and_exhausts(self) -> None:
+        rival = _make_rival()
         run = self._completed_run(
-            instrument="position-set", max_plies=200, max_wall_clock_seconds=3600
+            instrument="position-set",
+            max_plies=200,
+            max_wall_clock_seconds=3600,
+            seat0=rival,
+            seat1=rival,
         )
         errors = _run_runner(run.id, timeout=300)
         assert errors == []
@@ -491,10 +516,116 @@ class DiagnosticRunnerLoopTests(TransactionTestCase):
         assert [ply.position_index for ply in plies] == list(range(24))
         assert run.report_path
         report = json.loads(Path(run.report_path).read_text(encoding="utf-8"))
-        assert report["report_kind"] == "ai-match"
-        sample = report["samples"][0]
-        assert sample["plies"] == 24
-        assert len(sample["ply_records"]) == 24
+        assert report["report_kind"] == "model-position"
+        assert report["executed_runtime_mode"] == "fake"
+        assert report["requested"]["position_set_digest"] == _POSITION_SET_DIGEST
+        assert report["requested"]["model_id"] == rival.model_id
+        assert report["requested"]["script"] == "generic_unchanged"
+        assert report["requested"]["queue_mode"] == "selected-only"
+        assert "parameters_json" not in json.dumps(report)
+        samples = report["samples"]
+        assert [sample["position"]["position_index"] for sample in samples] == list(range(24))
+        assert all(
+            sample["position"]["set_digest"] == _POSITION_SET_DIGEST for sample in samples
+        )
+        summary = report["summary"]
+        assert summary["sample_count"] == 24
+        assert summary["pass_count"] == 0
+        assert summary["fail_count"] == 24
+        assert summary["position_count"] == 24
+        assert summary["unattempted_count"] == 0
+        assert summary["end_reason"] == "position_set_exhausted"
+        assert summary["truncated"] is False
+        assert summary["move_quality_sample_count"] == 0
+        assert summary["did_not_measure"] == 24
+        assert "move_quality_ratio" not in summary
+        assert summary["completion_source_counts"] == {
+            source: 0 for source in COMPLETION_SOURCE_VOCABULARY
+        }
+        assert summary["completion_source_did_not_measure_count"] == 24
+        assert summary["total_provider_requests"] == 0
+        asset = _load_committed_position_set(_POSITION_SET_DIGEST)
+        for index, sample in enumerate(samples):
+            assert sample["score"] is None
+            assert sample["verdict"] == "fail"
+            assert sample["reason_code"] == "generic_unchanged_turn"
+            assert sample["model_legal_score"] is None
+            baseline = asset["positions"][index]["engine_baseline"]
+            assert sample["ranked_best_score"] == baseline["ranked_best_score"]
+            assert sample["ranked_search_complete"] == baseline["ranked_search_complete"]
+            assert sample["seat_index"] == asset["positions"][index]["to_move_seat_index"]
+            assert sample["executed_runtime_mode"] == "fake"
+
+    def test_position_set_truncated_reports_actual_plies_and_unattempted(self) -> None:
+        rival = _make_rival()
+        run = self._completed_run(
+            instrument="position-set", max_plies=2, seat0=rival, seat1=rival
+        )
+        errors = _run_runner(run.id, timeout=300)
+        assert errors == []
+        run.refresh_from_db()
+        assert run.status == "completed"
+        assert run.diagnostic_end_reason == "truncated"
+        assert DiagnosticPly.objects.filter(run=run).count() == 2
+        assert run.report_path
+        report = json.loads(Path(run.report_path).read_text(encoding="utf-8"))
+        assert report["report_kind"] == "model-position"
+        samples = report["samples"]
+        assert [sample["position"]["position_index"] for sample in samples] == [0, 1]
+        summary = report["summary"]
+        assert summary["sample_count"] == 2
+        assert summary["position_count"] == 24
+        assert summary["unattempted_count"] == 22
+        assert summary["end_reason"] == "truncated"
+        assert summary["truncated"] is True
+        assert summary["move_quality_sample_count"] == 0
+        assert summary["did_not_measure"] == 2
+        assert "move_quality_ratio" not in summary
+
+    def test_position_set_authorship_abort_serializes_only_actual_plies(self) -> None:
+        rival = _make_rival()
+        run = self._completed_run(
+            instrument="position-set",
+            assist_mode="authorship",
+            max_plies=5,
+            seat0=rival,
+            seat1=rival,
+        )
+        result: list[BaseException] = []
+        thread = threading.Thread(
+            target=_call_runner_with_env,
+            args=(run.id, {"STUB_COMPLETION_SOURCE": "backend_ranked_candidate"}, result),
+        )
+        thread.start()
+        thread.join(timeout=120)
+        assert not thread.is_alive()
+        assert len(result) == 1
+        run.refresh_from_db()
+        assert run.status == "failed"
+        assert run.diagnostic_end_reason == "model_authorship_failure"
+        assert DiagnosticPly.objects.filter(run=run).count() == 1
+        assert run.report_path
+        report = json.loads(Path(run.report_path).read_text(encoding="utf-8"))
+        assert report["report_kind"] == "model-position"
+        assert len(report["samples"]) == 1
+        summary = report["summary"]
+        assert summary["sample_count"] == 1
+        assert summary["unattempted_count"] == 23
+        assert summary["end_reason"] == "model_authorship_failure"
+        assert summary["truncated"] is False
+
+    def test_mixed_pair_position_set_drives_but_refuses_publication(self) -> None:
+        run = self._completed_run(
+            instrument="position-set", max_plies=200, max_wall_clock_seconds=3600
+        )
+        errors = _run_runner(run.id, timeout=300)
+        assert errors == []
+        run.refresh_from_db()
+        assert run.status == "completed"
+        assert run.diagnostic_end_reason == "position_set_exhausted"
+        assert DiagnosticPly.objects.filter(run=run).count() == 24
+        assert run.report_path == ""
+        assert not (_var_dir() / f"{run.id}-report.json").exists()
 
     def test_report_and_log_live_under_backend_var(self) -> None:
         run = self._completed_run(max_plies=1)
@@ -504,6 +635,8 @@ class DiagnosticRunnerLoopTests(TransactionTestCase):
         assert str(Path(run.log_path)).startswith(str(_var_dir()))
         assert Path(run.log_path).is_file()
         assert Path(run.report_path).is_file()
+        report = json.loads(Path(run.report_path).read_text(encoding="utf-8"))
+        assert report["report_kind"] == "ai-match"
 
 
 def _var_dir() -> Path:
@@ -644,3 +777,406 @@ class DiagnosticAdminLauncherTests(TransactionTestCase):
         content = response.content.decode()
         assert run.id.hex[:8] in content
         assert "0s" in content
+
+
+def _position_ply_defaults(run: DiagnosticRun) -> dict[str, Any]:
+    return {
+        "run": run,
+        "seat_index": 0,
+        "model_id": run.seat0_model_id,
+        "assist_mode": "assisted",
+        "score_authority": "engine",
+        "model_authored": None,
+        "first_validate_valid": None,
+        "valid_candidate_count": None,
+        "model_legal_score": None,
+        "ranked_best_score": None,
+        "ranked_search_complete": None,
+        "give_up_while_legal": None,
+        "playability_status": None,
+        "completion_source": None,
+        "terminal_cause": "AI move failed",
+        "provider_requests_used": 0,
+        "steps_consumed": None,
+        "wall_clock_ms": 1200,
+        "malformed_or_non_tool": None,
+        "fallback_attempt_index": None,
+        "earlier_attempt_failures": None,
+        "executed_runtime_mode": "fake",
+    }
+
+
+class DiagnosticPositionReportTests(TransactionTestCase):
+    """In-process model-position reporting: mapping, refusals, no re-drive."""
+
+    def _same_pair_run(self, **kwargs: Any) -> DiagnosticRun:
+        rival = _make_rival()
+        run = _create_run(instrument="position-set", seat0=rival, seat1=rival, **kwargs)
+        # Reporting does not care about status; terminalize so a test can hold
+        # several runs without tripping unique_inflight_diagnostic_run.
+        run.status = "completed"
+        run.save(update_fields=["status", "updated_at"])
+        return run
+
+    def _add_ply(
+        self,
+        run: DiagnosticRun,
+        *,
+        ply_index: int,
+        position_index: int | None,
+        **overrides: Any,
+    ) -> DiagnosticPly:
+        fields_payload = _position_ply_defaults(run)
+        fields_payload["ply_index"] = ply_index
+        fields_payload["position_index"] = position_index
+        fields_payload.update(overrides)
+        return DiagnosticPly.objects.create(**fields_payload)
+
+    def _asset_seats(self) -> tuple[int, int]:
+        asset = _load_committed_position_set(_POSITION_SET_DIGEST)
+        return (
+            asset["positions"][0]["to_move_seat_index"],
+            asset["positions"][3]["to_move_seat_index"],
+        )
+
+    def test_persisted_plies_join_snapshots_and_supply_all_ply_metrics(self) -> None:
+        run = self._same_pair_run()
+        asset = _load_committed_position_set(_POSITION_SET_DIGEST)
+        seat0_move, seat3_move = self._asset_seats()
+        self._add_ply(
+            run,
+            ply_index=0,
+            position_index=0,
+            seat_index=seat0_move,
+            earlier_attempt_failures=["timeout", "rate_limited"],
+            valid_candidate_count=3,
+            give_up_while_legal=False,
+            playability_status="indeterminate",
+            wall_clock_ms=1500,
+        )
+        self._add_ply(
+            run,
+            ply_index=1,
+            position_index=3,
+            seat_index=seat3_move,
+            provider_requests_used=None,
+        )
+        fresh_runner = runner_module._DiagnosticMatchRunner(
+            run.id, stdout=StringIO(), stderr=StringIO()
+        )
+        assert fresh_runner.state.records == []
+        payload = runner_module._position_set_report_payload(run)
+        samples = payload["samples"]
+        assert [sample["position"]["position_index"] for sample in samples] == [0, 3]
+        ply_field_names = {item.name for item in fields(PlyMetricRecord)}
+        for sample in samples:
+            assert set(sample) - {
+                "position",
+                "score",
+                "verdict",
+                "reason_code",
+                "move_quality_ratio",
+            } == ply_field_names
+        first, third = samples
+        assert first["earlier_attempt_failures"] == ["timeout", "rate_limited"]
+        assert first["valid_candidate_count"] == 3
+        assert first["give_up_while_legal"] is False
+        assert first["playability_status"] == "indeterminate"
+        assert first["wall_clock_ms"] == 1500
+        baseline0 = asset["positions"][0]["engine_baseline"]
+        assert first["ranked_best_score"] == baseline0["ranked_best_score"]
+        assert first["ranked_search_complete"] == baseline0["ranked_search_complete"]
+        baseline3 = asset["positions"][3]["engine_baseline"]
+        assert third["ranked_best_score"] == baseline3["ranked_best_score"]
+        assert third["ranked_search_complete"] is False
+        assert third["provider_requests_used"] is None
+        assert third["earlier_attempt_failures"] is None
+        assert first["score"] is None
+        assert first["verdict"] == "fail"
+        assert first["reason_code"] == "generic_unchanged_turn"
+        assert first["position"]["set_digest"] == _POSITION_SET_DIGEST
+        assert payload["summary"]["sample_count"] == 2
+        assert payload["summary"]["unattempted_count"] == 22
+
+    def test_missing_digest_asset_refuses_report_and_writes_no_file(self) -> None:
+        run = self._same_pair_run()
+        configure_diagnostic_run(
+            run,
+            instrument="position-set",
+            position_set_digest="e" * 64,
+            max_plies=10,
+            max_provider_requests=100,
+            max_wall_clock_seconds=600,
+            extra_parameters={"django_origin": _CLOSED_ORIGIN},
+        )
+        self._add_ply(run, ply_index=0, position_index=0)
+        runner = runner_module._DiagnosticMatchRunner(
+            run.id, stdout=StringIO(), stderr=StringIO()
+        )
+        runner._write_report(run)
+        run.refresh_from_db()
+        assert run.report_path == ""
+        assert not (_var_dir() / f"{run.id}-report.json").exists()
+        assert DiagnosticPly.objects.filter(run=run).count() == 1
+
+    def test_digest_and_variant_mismatch_refuse_publication(self) -> None:
+        run = self._same_pair_run()
+        seat0_move, _ = self._asset_seats()
+        self._add_ply(run, ply_index=0, position_index=0, seat_index=seat0_move)
+        asset = _load_committed_position_set(_POSITION_SET_DIGEST)
+        wrong_digest = dict(asset)
+        wrong_digest["set_digest"] = "b" * 64
+        with self.assertRaises(runner_module._ReportRefusal) as raised:
+            runner_module._position_set_report_payload_from_asset(run, wrong_digest)
+        assert "digest" in str(raised.exception)
+        wrong_variant = dict(asset)
+        wrong_variant["variant_slug"] = "slovak"
+        with self.assertRaises(runner_module._ReportRefusal) as raised:
+            runner_module._position_set_report_payload_from_asset(run, wrong_variant)
+        assert "variant" in str(raised.exception)
+
+    def test_invalid_and_duplicate_position_index_refuse_publication(self) -> None:
+        run = self._same_pair_run()
+        self._add_ply(run, ply_index=0, position_index=None)
+        with self.assertRaises(runner_module._ReportRefusal) as raised:
+            runner_module._position_set_report_payload(run)
+        assert "position_index" in str(raised.exception)
+        duplicate = self._same_pair_run()
+        seat0_move, _ = self._asset_seats()
+        self._add_ply(duplicate, ply_index=0, position_index=0, seat_index=seat0_move)
+        self._add_ply(duplicate, ply_index=1, position_index=0, seat_index=seat0_move)
+        with self.assertRaises(runner_module._ReportRefusal) as raised:
+            runner_module._position_set_report_payload(duplicate)
+        assert "same position_index" in str(raised.exception)
+        unknown = self._same_pair_run()
+        self._add_ply(unknown, ply_index=0, position_index=99)
+        with self.assertRaises(runner_module._ReportRefusal) as raised:
+            runner_module._position_set_report_payload(unknown)
+        assert "unknown" in str(raised.exception)
+
+    def test_seat_and_model_identity_refusals(self) -> None:
+        run = self._same_pair_run()
+        seat0_move, _ = self._asset_seats()
+        wrong_seat = (seat0_move + 1) % 2
+        self._add_ply(run, ply_index=0, position_index=0, seat_index=wrong_seat)
+        with self.assertRaises(runner_module._ReportRefusal) as raised:
+            runner_module._position_set_report_payload(run)
+        assert "seat" in str(raised.exception)
+        mixed_model = self._same_pair_run()
+        self._add_ply(
+            mixed_model,
+            ply_index=0,
+            position_index=0,
+            model_id=FREE_RIVAL_IDS[1],
+        )
+        with self.assertRaises(runner_module._ReportRefusal) as raised:
+            runner_module._position_set_report_payload(mixed_model)
+        assert "model" in str(raised.exception)
+
+    def test_malformed_baseline_and_failures_refuse_publication(self) -> None:
+        run = self._same_pair_run()
+        seat0_move, _ = self._asset_seats()
+        self._add_ply(run, ply_index=0, position_index=0, seat_index=seat0_move)
+        asset = _load_committed_position_set(_POSITION_SET_DIGEST)
+        tampered = json.loads(json.dumps(asset))
+        tampered["positions"][3]["engine_baseline"]["ranked_best_score"] = True
+        with self.assertRaises(runner_module._ReportRefusal) as raised:
+            runner_module._position_set_report_payload_from_asset(run, tampered)
+        assert "ranked_best_score" in str(raised.exception)
+        tampered_type = json.loads(json.dumps(asset))
+        tampered_type["positions"][0]["engine_baseline"]["ranked_search_complete"] = "yes"
+        with self.assertRaises(runner_module._ReportRefusal) as raised:
+            runner_module._position_set_report_payload_from_asset(run, tampered_type)
+        assert "ranked_search_complete" in str(raised.exception)
+        malformed_failures = self._same_pair_run()
+        self._add_ply(
+            malformed_failures,
+            ply_index=0,
+            position_index=0,
+            seat_index=seat0_move,
+            earlier_attempt_failures={"boom": 1},
+        )
+        with self.assertRaises(runner_module._ReportRefusal) as raised:
+            runner_module._position_set_report_payload(malformed_failures)
+        assert "earlier_attempt_failures" in str(raised.exception)
+        outside_vocabulary = self._same_pair_run()
+        self._add_ply(
+            outside_vocabulary,
+            ply_index=0,
+            position_index=0,
+            seat_index=seat0_move,
+            completion_source="made_up_source",
+        )
+        with self.assertRaises(runner_module._ReportRefusal) as raised:
+            runner_module._position_set_report_payload(outside_vocabulary)
+        assert "completion_source" in str(raised.exception)
+
+    def test_reporting_never_drives_remounts_or_overwrites(self) -> None:
+        run = self._same_pair_run()
+        seat0_move, seat3_move = self._asset_seats()
+        self._add_ply(run, ply_index=0, position_index=0, seat_index=seat0_move)
+        runner = runner_module._DiagnosticMatchRunner(
+            run.id, stdout=StringIO(), stderr=StringIO()
+        )
+
+        def _fail_apply(*args: Any, **kwargs: Any) -> None:
+            raise AssertionError("reporting remounted a position snapshot")
+
+        def _fail_resolve(*args: Any, **kwargs: Any) -> None:
+            raise AssertionError("reporting resolved an acting slot")
+
+        def _fail_turn(**kwargs: Any) -> Any:
+            raise AssertionError("reporting sent a worker turn")
+
+        original_apply = runner_module._apply_position_snapshot
+        original_resolve = runner_module._resolve_acting_slot
+        runner_module._apply_position_snapshot = _fail_apply
+        runner_module._resolve_acting_slot = _fail_resolve
+        runner._send_turn = _fail_turn
+        try:
+            runner._write_report(run)
+        finally:
+            runner_module._apply_position_snapshot = original_apply
+            runner_module._resolve_acting_slot = original_resolve
+        run.refresh_from_db()
+        assert run.report_path
+        first_bytes = Path(run.report_path).read_text(encoding="utf-8")
+        assert len(json.loads(first_bytes)["samples"]) == 1
+        self._add_ply(run, ply_index=1, position_index=3, seat_index=seat3_move)
+        runner._write_report(run)
+        run.refresh_from_db()
+        assert Path(run.report_path).read_text(encoding="utf-8") == first_bytes
+
+
+class DiagnosticPositionAggregationTests(TestCase):
+    """Pure D3 aggregation arithmetic over synthetic position samples."""
+
+    _DIGEST = "c" * 64
+
+    def _sample(self, position_index: int = 0, **ply_overrides: Any) -> ModelPositionSample:
+        ply_fields: dict[str, Any] = {
+            "seat_index": 0,
+            "model_id": "nvidia/nemotron-3-super-120b-a12b",
+            "assist_mode": "assisted",
+            "score_authority": "engine",
+            "model_authored": True,
+            "first_validate_valid": True,
+            "valid_candidate_count": 2,
+            "model_legal_score": 82,
+            "ranked_best_score": 90,
+            "ranked_search_complete": True,
+            "give_up_while_legal": False,
+            "playability_status": "found",
+            "completion_source": "provider_candidate",
+            "terminal_cause": "done",
+            "provider_requests_used": 1,
+            "steps_consumed": 4,
+            "wall_clock_ms": 900,
+            "malformed_or_non_tool": False,
+            "fallback_attempt_index": None,
+            "earlier_attempt_failures": None,
+            "executed_runtime_mode": "fake",
+        }
+        ply_fields.update(ply_overrides)
+        return ModelPositionSample(
+            set_digest=self._DIGEST,
+            position_index=position_index,
+            ply=PlyMetricRecord(**ply_fields),
+            score=None,
+            verdict="fail",
+            reason_code="generic_unchanged_turn",
+        )
+
+    def _augmented(
+        self,
+        samples: list[ModelPositionSample],
+        *,
+        position_count: int,
+        attempted_count: int,
+        end_reason: str = "position_set_exhausted",
+    ) -> dict[str, Any]:
+        base = build_model_position_report(
+            requested={"variant_slug": "english"},
+            context=load_variant_context("english"),
+            samples=samples,
+            generated_at=datetime(2026, 9, 6, tzinfo=timezone.utc),
+            source_revision="test-revision",
+        )
+        return runner_module._augment_model_position_report(
+            base,
+            samples=samples,
+            position_count=position_count,
+            attempted_indices=frozenset(range(attempted_count)),
+            end_reason=end_reason,
+        )
+
+    def test_ratio_eligibility_values_and_missingness(self) -> None:
+        samples = [
+            self._sample(0),  # 82/90 eligible
+            self._sample(1, model_legal_score=0, ranked_best_score=50),  # measured zero
+            self._sample(2, model_legal_score=91, ranked_best_score=76),  # above one
+            self._sample(3, ranked_search_complete=False),  # incomplete still eligible
+            self._sample(4, model_legal_score=None),  # absent numerator
+            self._sample(5, ranked_best_score=None),  # absent denominator
+            self._sample(6, ranked_best_score=0),  # zero denominator
+            self._sample(7, model_legal_score=True),  # bool masquerade excluded
+            self._sample(8, completion_source="backend_ranked_candidate"),  # rescue
+            self._sample(9, completion_source="backend_witness_rescue"),
+            self._sample(10, model_authored=False),
+            self._sample(11, model_authored=None),
+        ]
+        payload = self._augmented(samples, position_count=12, attempted_count=12)
+        sample_payloads = payload["samples"]
+        assert sample_payloads[0]["move_quality_ratio"] == 82 / 90
+        assert sample_payloads[1]["move_quality_ratio"] == 0.0
+        assert sample_payloads[2]["move_quality_ratio"] == 91 / 76 > 1
+        assert sample_payloads[3]["move_quality_ratio"] == 82 / 90
+        for index in (4, 5, 6, 7, 8, 9, 10, 11):
+            assert "move_quality_ratio" not in sample_payloads[index]
+        summary = payload["summary"]
+        assert summary["move_quality_sample_count"] == 4
+        assert summary["did_not_measure"] == 8
+        assert summary["move_quality_ratio"] == (82 / 90 + 0.0 + 91 / 76 + 82 / 90) / 4
+
+    def test_d3_summary_keys_histograms_and_totals(self) -> None:
+        samples = [
+            self._sample(0, completion_source="provider_candidate", provider_requests_used=2),
+            self._sample(1, completion_source="provider_candidate", provider_requests_used=1),
+            self._sample(
+                2,
+                completion_source="genuine_no_move_pass",
+                model_authored=False,
+                model_legal_score=None,
+                provider_requests_used=0,
+            ),
+            self._sample(3, completion_source=None, provider_requests_used=None),
+        ]
+        payload = self._augmented(samples, position_count=6, attempted_count=4)
+        summary = payload["summary"]
+        assert summary["position_count"] == 6
+        assert summary["unattempted_count"] == 2
+        assert summary["end_reason"] == "position_set_exhausted"
+        assert summary["truncated"] is False
+        assert summary["completion_source_counts"] == {
+            "provider_candidate": 2,
+            "backend_ranked_candidate": 0,
+            "repair_candidate": 0,
+            "backend_witness_rescue": 0,
+            "genuine_no_move_exchange": 0,
+            "genuine_no_move_pass": 1,
+        }
+        assert summary["completion_source_did_not_measure_count"] == 1
+        assert "total_provider_requests" not in summary
+        assert payload["executed_runtime_mode"] == "fake"
+        measured = self._augmented(samples[:3], position_count=6, attempted_count=4)
+        assert measured["summary"]["total_provider_requests"] == 3
+        truncated = self._augmented(
+            samples[:1], position_count=24, attempted_count=1, end_reason="truncated"
+        )
+        assert truncated["summary"]["truncated"] is True
+        assert truncated["summary"]["end_reason"] == "truncated"
+        empty = self._augmented([], position_count=24, attempted_count=0)
+        assert empty["summary"]["sample_count"] == 0
+        assert empty["summary"]["did_not_measure"] == 0
+        assert "move_quality_ratio" not in empty["summary"]
+        assert "total_provider_requests" not in empty["summary"]

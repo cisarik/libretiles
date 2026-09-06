@@ -89,7 +89,27 @@
         "external_incomplete_count": { "type": "integer", "minimum": 0 },
         "total_provider_requests": { "type": "integer", "minimum": 0 },
         "unresolved_in_flight_count": { "type": "integer", "minimum": 0 },
-        "external_provider_invocations": { "type": "integer", "minimum": 0 }
+        "external_provider_invocations": { "type": "integer", "minimum": 0 },
+        "position_count": { "type": "integer", "minimum": 0 },
+        "unattempted_count": { "type": "integer", "minimum": 0 },
+        "end_reason": { "type": "string", "minLength": 1 },
+        "truncated": { "type": "boolean" },
+        "move_quality_sample_count": { "type": "integer", "minimum": 0 },
+        "did_not_measure": { "type": "integer", "minimum": 0 },
+        "move_quality_ratio": { "type": "number" },
+        "completion_source_counts": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "provider_candidate": { "type": "integer", "minimum": 0 },
+            "backend_ranked_candidate": { "type": "integer", "minimum": 0 },
+            "repair_candidate": { "type": "integer", "minimum": 0 },
+            "backend_witness_rescue": { "type": "integer", "minimum": 0 },
+            "genuine_no_move_exchange": { "type": "integer", "minimum": 0 },
+            "genuine_no_move_pass": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "completion_source_did_not_measure_count": { "type": "integer", "minimum": 0 }
       }
     }
   },
@@ -440,7 +460,8 @@
             "position_index": { "type": "integer", "minimum": 0 }
           }
         },
-        "score": { "type": "integer" },
+        "score": { "type": ["integer", "null"] },
+        "move_quality_ratio": { "type": "number" },
         "verdict": { "enum": ["pass", "fail"] },
         "reason_code": { "type": "string", "minLength": 1, "maxLength": 64 }
       }

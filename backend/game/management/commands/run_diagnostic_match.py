@@ -25,21 +25,30 @@ import subprocess
 import threading
 import time
 import uuid
-from dataclasses import dataclass, field
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from django.core.management.base import BaseCommand, CommandError, CommandParser
 from django.db import transaction
 from django.utils import timezone
 
 from game.diagnostics import (
+    AssistMode,
+    COMPLETION_SOURCE_VOCABULARY,
+    ExecutedRuntimeMode,
     LIVE_SENTINEL,
+    ModelPositionSample,
     PlyMetricRecord,
-    redacted_copy,
+    REASON_GENERIC_UNCHANGED,
+    ScoreAuthority,
+    build_model_position_report,
+    dump_report_json,
     live_opt_in_enabled,
     ply_metric_to_dict,
+    redacted_copy,
     write_report_atomically,
 )
 from game.models import DiagnosticPly, DiagnosticRun, GameSession, PlayerSlot
@@ -71,6 +80,13 @@ class _RunnerFailure(Exception):
 
 class _WallClockExceeded(Exception):
     """SIGALRM backstop past max_wall_clock_seconds + grace."""
+
+
+class _ReportRefusal(Exception):
+    """Model-position publication precondition failed.
+
+    The run and its ply rows are retained; only the report is refused.
+    """
 
 
 def _worker_path() -> Path:
@@ -565,6 +581,16 @@ class _DiagnosticMatchRunner:
             run.refresh_from_db()
             if run.report_path:
                 return
+            if run.instrument == "position-set":
+                report_payload = _position_set_report_payload(run)
+                report_path = _VAR_DIR / f"{run.id}-report.json"
+                if not report_path.exists():
+                    write_report_atomically(
+                        report_path, dump_report_json(report_payload)
+                    )
+                    run.report_path = str(report_path)
+                    run.save(update_fields=["report_path", "updated_at"])
+                return
             context = _load_variant_context(run.variant_slug)
             session = run.session
             slots = {slot.slot: slot for slot in session.slots.all()}
@@ -671,22 +697,10 @@ class _DiagnosticMatchRunner:
                 abort_diagnostic_run(run_id=run.id, reason="model_authorship_failure")
                 return self._finish(1, run)
 
-    def _load_position_set(self, digest: str) -> dict[str, Any]:
-        directory = default_position_set_dir()
-        if digest:
-            for path in sorted(directory.glob("*.json")):
-                try:
-                    data = json.loads(path.read_text(encoding="utf-8"))
-                except (OSError, json.JSONDecodeError):
-                    continue
-                if isinstance(data, dict) and data.get("set_digest") == digest:
-                    return data
-        raise _RunnerFailure(f"no committed position set matches digest {digest[:12]}")
-
     def _drive_position_set(self, run: DiagnosticRun) -> int:
         session = run.session
         session.refresh_from_db()
-        asset = self._load_position_set(run.position_set_digest)
+        asset = _load_position_set_asset(run.position_set_digest)
         positions = asset.get("positions")
         if not isinstance(positions, list) or not positions:
             raise _RunnerFailure("position set asset carries no positions")
@@ -757,6 +771,329 @@ def _resolve_acting_slot(session: GameSession) -> PlayerSlot | None:
     from game.services import _resolve_acting_ai_slot
 
     return _resolve_acting_ai_slot(session)
+
+
+def _load_position_set_asset(digest: str) -> dict[str, Any]:
+    directory = default_position_set_dir()
+    if digest:
+        for path in sorted(directory.glob("*.json")):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if isinstance(data, dict) and data.get("set_digest") == digest:
+                return data
+    raise _RunnerFailure(f"no committed position set matches digest {digest[:12]}")
+
+
+# ---- model-position terminal reporting (position-set instrument) -----------
+#
+# Reporting joins the PERSISTED run.plies to the committed snapshot list by
+# position_index. It never re-drives, never remounts a snapshot, never calls
+# the worker, and never reads _RunnerState.records: a truncated or aborted run
+# serializes exactly its actual persisted plies and counts the rest of the
+# fixture as unattempted. Every refusal below retains the run and ply rows —
+# publication alone is refused.
+
+def _position_pair_identity(run: DiagnosticRun) -> tuple[str, str]:
+    """Resolve the ONE catalog pair a model-position report may describe."""
+    if run.seat0_model_id != run.seat1_model_id:
+        raise _ReportRefusal(
+            "position-set publishes one model; run seats differ"
+        )
+    identities: set[tuple[str, str]] = set()
+    for slot in run.session.slots.all():
+        model = slot.ai_model
+        if model is not None:
+            identities.add((str(model.provider), str(model.model_id)))
+    if len(identities) != 1:
+        raise _ReportRefusal(
+            "position-set session does not resolve to one model identity"
+        )
+    provider, model_id = next(iter(identities))
+    if model_id != run.seat0_model_id:
+        raise _ReportRefusal(
+            "session model identity disagrees with the run seats"
+        )
+    return provider, model_id
+
+
+def _engine_baseline_values(
+    snapshot: Mapping[str, Any],
+) -> tuple[int | None, bool | None]:
+    """Baseline values for one snapshot. JSON null / missing mean unmeasured
+    (None); malformed types — including a bool masquerading as an int — are
+    publication refusals, never repaired to 0. witness_status is ignored."""
+    baseline = snapshot.get("engine_baseline")
+    if baseline is None:
+        return None, None
+    if not isinstance(baseline, dict):
+        raise _ReportRefusal("engine_baseline is not an object")
+    best = baseline.get("ranked_best_score")
+    if best is not None and (isinstance(best, bool) or not isinstance(best, int)):
+        raise _ReportRefusal("engine_baseline.ranked_best_score is malformed")
+    complete = baseline.get("ranked_search_complete")
+    if complete is not None and not isinstance(complete, bool):
+        raise _ReportRefusal("engine_baseline.ranked_search_complete is malformed")
+    return best, complete
+
+
+def _position_snapshots_by_index(
+    asset: Mapping[str, Any],
+) -> dict[int, dict[str, Any]]:
+    positions = asset.get("positions")
+    if not isinstance(positions, list) or not positions:
+        raise _ReportRefusal("position set asset carries no positions")
+    by_index: dict[int, dict[str, Any]] = {}
+    for snapshot in positions:
+        if not isinstance(snapshot, dict):
+            raise _ReportRefusal("position snapshot is not an object")
+        index = snapshot.get("position_index")
+        if isinstance(index, bool) or not isinstance(index, int):
+            raise _ReportRefusal("position snapshot has an invalid position_index")
+        if index in by_index:
+            raise _ReportRefusal("position set carries a duplicate position_index")
+        _engine_baseline_values(snapshot)
+        by_index[index] = snapshot
+    return by_index
+
+
+def _ply_record_from_ply(ply: DiagnosticPly) -> PlyMetricRecord:
+    """Reconstruct PlyMetricRecord from the persisted columns. Preserve None."""
+    failures_raw = ply.earlier_attempt_failures
+    failures: tuple[str, ...] | None
+    if failures_raw is None:
+        failures = None
+    elif isinstance(failures_raw, list):
+        if not all(isinstance(item, str) for item in failures_raw):
+            raise _ReportRefusal("earlier_attempt_failures carries a non-string entry")
+        failures = tuple(failures_raw)
+    else:
+        raise _ReportRefusal(
+            "earlier_attempt_failures is neither a JSON list nor null"
+        )
+    source = ply.completion_source
+    if source is not None and source not in COMPLETION_SOURCE_VOCABULARY:
+        raise _ReportRefusal("completion_source is outside the six-word vocabulary")
+    return PlyMetricRecord(
+        seat_index=int(ply.seat_index),
+        model_id=str(ply.model_id),
+        assist_mode=cast(AssistMode, ply.assist_mode),
+        score_authority=cast(ScoreAuthority, ply.score_authority),
+        model_authored=ply.model_authored,
+        first_validate_valid=ply.first_validate_valid,
+        valid_candidate_count=ply.valid_candidate_count,
+        model_legal_score=ply.model_legal_score,
+        ranked_best_score=ply.ranked_best_score,
+        ranked_search_complete=ply.ranked_search_complete,
+        give_up_while_legal=ply.give_up_while_legal,
+        playability_status=ply.playability_status,
+        completion_source=source,
+        terminal_cause=ply.terminal_cause,
+        provider_requests_used=ply.provider_requests_used,
+        steps_consumed=ply.steps_consumed,
+        wall_clock_ms=ply.wall_clock_ms,
+        malformed_or_non_tool=ply.malformed_or_non_tool,
+        fallback_attempt_index=ply.fallback_attempt_index,
+        earlier_attempt_failures=failures,
+        executed_runtime_mode=cast("ExecutedRuntimeMode | None", ply.executed_runtime_mode),
+    )
+
+
+def _overlay_engine_baseline(
+    record: PlyMetricRecord,
+    snapshot: Mapping[str, Any],
+) -> PlyMetricRecord:
+    """Report-time baseline overlay; the DiagnosticPly row is never UPDATEd."""
+    best, complete = _engine_baseline_values(snapshot)
+    return replace(record, ranked_best_score=best, ranked_search_complete=complete)
+
+
+def _model_position_samples(
+    run: DiagnosticRun,
+    snapshots: Mapping[int, Mapping[str, Any]],
+    *,
+    set_digest: str,
+    identity_model_id: str,
+) -> tuple[list[ModelPositionSample], frozenset[int]]:
+    samples: list[ModelPositionSample] = []
+    attempted: set[int] = set()
+    for ply in run.plies.order_by("position_index", "ply_index"):
+        index = ply.position_index
+        if isinstance(index, bool) or not isinstance(index, int):
+            raise _ReportRefusal("persisted ply carries an invalid position_index")
+        if index in attempted:
+            raise _ReportRefusal("two plies claim the same position_index")
+        snapshot = snapshots.get(index)
+        if snapshot is None:
+            raise _ReportRefusal(
+                "ply position_index is unknown to the committed position set"
+            )
+        record = _overlay_engine_baseline(_ply_record_from_ply(ply), snapshot)
+        to_move = snapshot.get("to_move_seat_index")
+        if (
+            isinstance(to_move, bool)
+            or not isinstance(to_move, int)
+            or record.seat_index != to_move
+        ):
+            raise _ReportRefusal(
+                "ply seat disagrees with the snapshot's to-move seat"
+            )
+        if record.model_id != identity_model_id:
+            raise _ReportRefusal(
+                "ply model_id disagrees with the published model identity"
+            )
+        # Authorized fill for this slice's generic_unchanged execution: no
+        # placement score is measured on the fake path, so the sample carries
+        # score=None (never 0), verdict="fail", and the unchanged-turn reason.
+        # A slice that measures placements must derive verdicts then.
+        samples.append(
+            ModelPositionSample(
+                set_digest=set_digest,
+                position_index=index,
+                ply=record,
+                score=None,
+                verdict="fail",
+                reason_code=REASON_GENERIC_UNCHANGED,
+            )
+        )
+        attempted.add(index)
+    return samples, frozenset(attempted)
+
+
+def _ratio_for_sample(sample: ModelPositionSample) -> float | None:
+    """Per-position move-quality ratio, or None when the position is ineligible.
+
+    Eligible only when the ply is model-authored (boolean True) through
+    provider_candidate / repair_candidate, the numerator is a measured int
+    (never a bool), and the snapshot baseline denominator is a POSITIVE int.
+    ranked_search_complete is NOT required; ratios are not clamped. A measured
+    zero numerator stays a 0 ratio; missingness is detected by type, never by
+    truthiness.
+    """
+    if sample.ply.model_authored is not True:
+        return None
+    if sample.ply.completion_source not in _MODEL_AUTHORED_SOURCES:
+        return None
+    numerator = sample.ply.model_legal_score
+    if isinstance(numerator, bool) or not isinstance(numerator, int):
+        return None
+    denominator = sample.ply.ranked_best_score
+    if (
+        isinstance(denominator, bool)
+        or not isinstance(denominator, int)
+        or denominator <= 0
+    ):
+        return None
+    return numerator / denominator
+
+
+def _augment_model_position_report(
+    payload: dict[str, Any],
+    *,
+    samples: Sequence[ModelPositionSample],
+    position_count: int,
+    attempted_indices: frozenset[int],
+    end_reason: str,
+) -> dict[str, Any]:
+    """D3 additive aggregates. Mixed-type keys live HERE, after the builder
+    whose envelope types summary as dict[str, int]. Nothing new is required."""
+    summary = payload["summary"]
+    assert isinstance(summary, dict)
+    ratios: list[float] = []
+    for sample, sample_payload in zip(samples, payload["samples"], strict=True):
+        ratio = _ratio_for_sample(sample)
+        if ratio is not None:
+            sample_payload["move_quality_ratio"] = ratio
+            ratios.append(ratio)
+    source_counts = {source: 0 for source in COMPLETION_SOURCE_VOCABULARY}
+    did_not_measure_sources = 0
+    for sample in samples:
+        source = sample.ply.completion_source
+        if source is None:
+            did_not_measure_sources += 1
+        else:
+            source_counts[source] += 1
+    summary["position_count"] = position_count
+    summary["unattempted_count"] = position_count - len(attempted_indices)
+    summary["end_reason"] = end_reason
+    summary["truncated"] = end_reason == _TRUNCATED_REASON
+    summary["move_quality_sample_count"] = len(ratios)
+    summary["did_not_measure"] = len(samples) - len(ratios)
+    if ratios:
+        summary["move_quality_ratio"] = sum(ratios) / len(ratios)
+    summary["completion_source_counts"] = source_counts
+    summary["completion_source_did_not_measure_count"] = did_not_measure_sources
+    used = [sample.ply.provider_requests_used for sample in samples]
+    if used and all(
+        isinstance(value, int) and not isinstance(value, bool) for value in used
+    ):
+        summary["total_provider_requests"] = sum(used)
+    modes = {
+        sample.ply.executed_runtime_mode
+        for sample in samples
+        if sample.ply.executed_runtime_mode is not None
+    }
+    payload["executed_runtime_mode"] = next(iter(modes)) if len(modes) == 1 else "fake"
+    return payload
+
+
+def _position_set_report_payload_from_asset(
+    run: DiagnosticRun,
+    asset: Mapping[str, Any],
+) -> dict[str, Any]:
+    digest = asset.get("set_digest")
+    if not isinstance(digest, str) or digest != run.position_set_digest:
+        raise _ReportRefusal("position set digest disagrees with the run")
+    if asset.get("variant_slug") != run.variant_slug:
+        raise _ReportRefusal("position set variant disagrees with the run")
+    provider, model_id = _position_pair_identity(run)
+    snapshots = _position_snapshots_by_index(asset)
+    samples, attempted = _model_position_samples(
+        run,
+        snapshots,
+        set_digest=digest,
+        identity_model_id=model_id,
+    )
+    parameters = run.parameters_json if isinstance(run.parameters_json, dict) else {}
+    script = str(parameters.get("script", "generic_unchanged")) or "generic_unchanged"
+    queue_mode = str(parameters.get("queue_mode", "selected-only")) or "selected-only"
+    requested: dict[str, str | int] = {
+        "run_id": str(run.id),
+        "instrument": run.instrument,
+        "variant_slug": run.variant_slug,
+        "assist_mode": run.assist_mode,
+        "executed_runtime_mode": run.executed_runtime_mode or "fake",
+        "driver": "django-runner",
+        "position_set_digest": run.position_set_digest,
+        "provider": provider,
+        "model_id": model_id,
+        "script": script,
+        "queue_mode": queue_mode,
+        "max_plies": run.max_plies,
+        "max_provider_requests": run.max_provider_requests,
+        "max_wall_clock_seconds": run.max_wall_clock_seconds,
+    }
+    end_reason = run.diagnostic_end_reason or run.status
+    context = _load_variant_context(run.variant_slug)
+    report = build_model_position_report(
+        requested=requested, context=context, samples=samples
+    )
+    payload = _augment_model_position_report(
+        report,
+        samples=samples,
+        position_count=len(snapshots),
+        attempted_indices=attempted,
+        end_reason=end_reason,
+    )
+    redacted = redacted_copy(payload)
+    assert isinstance(redacted, dict)
+    return redacted
+
+
+def _position_set_report_payload(run: DiagnosticRun) -> dict[str, Any]:
+    asset = _load_position_set_asset(run.position_set_digest)
+    return _position_set_report_payload_from_asset(run, asset)
 
 
 def _ensure_service_user() -> Any:

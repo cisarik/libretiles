@@ -6,7 +6,7 @@ import ast
 import inspect
 import json
 from collections.abc import Mapping, Sequence
-from dataclasses import fields
+from dataclasses import fields, replace
 from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
@@ -495,9 +495,31 @@ def _assert_schema_v1_structure(schema: Mapping[str, Any]) -> None:
     completion_enum = set(defs["plyMetricRecord"]["properties"]["completion_source"]["enum"])
     assert completion_enum == {None, *COMPLETION_SOURCE_VOCABULARY}
     assert len(COMPLETION_SOURCE_VOCABULARY) == 6
+    summary_schema = schema["properties"]["summary"]
+    assert summary_schema["additionalProperties"] is True
+    assert set(summary_schema["required"]) == {"sample_count", "pass_count", "fail_count"}
+    summary_props = summary_schema["properties"]
+    for key in (
+        "position_count",
+        "unattempted_count",
+        "move_quality_sample_count",
+        "did_not_measure",
+        "completion_source_did_not_measure_count",
+    ):
+        assert summary_props[key]["type"] == "integer"
+    assert summary_props["end_reason"]["type"] == "string"
+    assert summary_props["truncated"]["type"] == "boolean"
+    assert summary_props["move_quality_ratio"]["type"] == "number"
+    assert summary_props["total_provider_requests"]["type"] == "integer"
+    counts_schema = summary_props["completion_source_counts"]
+    assert counts_schema["additionalProperties"] is False
+    assert set(counts_schema["properties"]) == set(COMPLETION_SOURCE_VOCABULARY)
     position = defs["modelPositionSample"]["properties"]["position"]
     assert position["additionalProperties"] is False
     assert set(position["properties"]) == {"set_digest", "position_index"}
+    position_props = defs["modelPositionSample"]["properties"]
+    assert set(position_props["score"]["type"]) == {"integer", "null"}
+    assert position_props["move_quality_ratio"]["type"] == "number"
     merged = set(_merged_properties(schema, defs["modelPositionSample"]))
     assert ply_props <= merged
     assert {"position", "score", "verdict", "reason_code"} <= merged
@@ -818,6 +840,27 @@ def test_new_report_kinds_build_redact_and_dump() -> None:
     dumped = json.dumps(position_dumped) + json.dumps(match_dumped)
     assert "Bearer" not in dumped
     assert "drop-me" not in dumped
+
+
+def test_model_position_score_supports_null_end_to_end() -> None:
+    assert ModelPositionSample.__dataclass_fields__["score"].type == "int | None"
+    schema = _load_report_schema()
+    score_schema = schema["$defs"]["modelPositionSample"]["properties"]["score"]
+    assert set(score_schema["type"]) == {"integer", "null"}
+    measured = _synthetic_model_position_sample()
+    unmeasured = replace(measured, score=None)
+    payload = model_position_sample_to_dict(unmeasured)
+    assert payload["score"] is None
+    report = build_model_position_report(
+        requested={"variant_slug": "english"},
+        context=load_variant_context("english"),
+        samples=[measured, unmeasured],
+        generated_at=datetime(2026, 9, 6, tzinfo=timezone.utc),
+        source_revision="test-revision",
+    )
+    dumped = json.loads(dump_report_json(report))
+    assert dumped["samples"][0]["score"] == 82
+    assert dumped["samples"][1]["score"] is None
 
 
 def test_diagnostics_module_ast_forbids_dev_imports() -> None:
