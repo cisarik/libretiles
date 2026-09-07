@@ -6,19 +6,25 @@ from io import StringIO
 from unittest.mock import patch
 
 from django.contrib.admin.models import LogEntry
+from django.contrib.admin.sites import site
 from django.contrib.auth.models import Permission
 from django.core.management import call_command
-from django.test import Client, TestCase, TransactionTestCase, override_settings
+from django.db import connection
+from django.test import Client, RequestFactory, TestCase, TransactionTestCase, override_settings
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 
 from accounts.models import User
+from catalog.admin import AIModelAdmin
 from catalog.admin_controls import (
     EMPTY_FLAG_OFF_MESSAGE,
     EMPTY_FLAG_ON_MESSAGE,
     LAST_TOOLS_MESSAGE,
     STALE_REVIEW_MESSAGE,
     CatalogChange,
+    CatalogControlError,
     apply_reviewed_changes,
+    apply_reviewed_token,
     catalog_fingerprint,
     sign_review_token,
 )
@@ -74,6 +80,16 @@ def _token(html: str) -> str:
 
 def _all_rows() -> list[AIModel]:
     return list(AIModel.objects.order_by("sort_order", "id")[:100])
+
+
+def _active_tools_count() -> int:
+    return len(
+        [
+            model
+            for model in AIModel.objects.filter(is_active=True, model_type="language")
+            if isinstance(model.tags, list) and "tools" in model.tags
+        ]
+    )
 
 
 class CatalogAdminControlTests(TestCase):
@@ -205,7 +221,7 @@ class CatalogAdminControlTests(TestCase):
         )
         import time as time_module
 
-        from catalog.admin_controls import CatalogControlError, load_review_token
+        from catalog.admin_controls import load_review_token
 
         with patch(
             "django.core.signing.time.time",
@@ -213,6 +229,108 @@ class CatalogAdminControlTests(TestCase):
         ):
             with self.assertRaises(CatalogControlError):
                 load_review_token(fresh)
+
+    def test_f02_apply_rejects_token_when_dynamic_flag_changes(self) -> None:
+        target = AIModel.objects.get(model_id=FREE_RIVAL_PAIRS[0][1])
+        before_order = target.sort_order
+        before_active = target.is_active
+        overrides = {model.pk: (model.is_active, model.sort_order) for model in _all_rows()}
+        overrides[target.pk] = (target.is_active, target.sort_order + 3)
+
+        false_token = self._review(overrides)
+        with override_settings(DYNAMIC_FREE_MODEL_CATALOG_ENABLED=True):
+            with self.assertRaises(CatalogControlError) as flipped_on:
+                apply_reviewed_token(
+                    token=false_token,
+                    actor_id=self.user.pk,
+                    has_row_change_permission=True,
+                )
+            assert flipped_on.exception.message == STALE_REVIEW_MESSAGE
+            assert flipped_on.exception.status == 409
+            refused_on = self.client.post(self.apply_url, {"review_token": false_token})
+        assert refused_on.status_code == 409
+        assert STALE_REVIEW_MESSAGE.encode() in refused_on.content
+        target.refresh_from_db()
+        assert target.sort_order == before_order
+        assert target.is_active is before_active
+
+        with override_settings(DYNAMIC_FREE_MODEL_CATALOG_ENABLED=True):
+            true_token = self._review(overrides)
+        with self.assertRaises(CatalogControlError) as flipped_off:
+            apply_reviewed_token(
+                token=true_token,
+                actor_id=self.user.pk,
+                has_row_change_permission=True,
+            )
+        assert flipped_off.exception.message == STALE_REVIEW_MESSAGE
+        assert flipped_off.exception.status == 409
+        refused_off = self.client.post(self.apply_url, {"review_token": true_token})
+        assert refused_off.status_code == 409
+        assert STALE_REVIEW_MESSAGE.encode() in refused_off.content
+        target.refresh_from_db()
+        assert target.sort_order == before_order
+        assert target.is_active is before_active
+
+    def test_f03_changeform_save_cannot_overwrite_reviewed_activation(self) -> None:
+        model = AIModel.objects.get(model_id=FREE_RIVAL_PAIRS[0][1])
+        tools_before = _active_tools_count()
+        selectable_before = len(get_selectable_models())
+        original_active = model.is_active
+        original_order = model.sort_order
+        concurrent_order = original_order + 17
+
+        change_url = reverse("admin:catalog_aimodel_change", args=[model.pk])
+        AIModel.objects.filter(pk=model.pk).update(sort_order=concurrent_order)
+        posted = self.client.post(
+            change_url,
+            {
+                "display_name": "Changeform metadata",
+                "description": "updated via ordinary save",
+                "quality_tier": model.quality_tier,
+                "context_window": "" if model.context_window is None else str(model.context_window),
+                "max_tokens": "" if model.max_tokens is None else str(model.max_tokens),
+                "is_active": "off",
+                "sort_order": str(original_order),
+                "_save": "Save",
+            },
+        )
+        assert posted.status_code in {200, 302}
+        model.refresh_from_db()
+        assert model.display_name == "Changeform metadata"
+        assert model.description == "updated via ordinary save"
+        assert model.is_active is original_active
+        assert model.sort_order == concurrent_order
+        assert _active_tools_count() == tools_before
+        assert len(get_selectable_models()) == selectable_before
+
+        stale = AIModel.objects.get(pk=model.pk)
+        stale.display_name = "Stale changeform name"
+        stale.description = "Stale changeform description"
+        stale.is_active = False
+        stale.sort_order = 0
+        AIModel.objects.filter(pk=model.pk).update(sort_order=concurrent_order + 5)
+
+        request = RequestFactory().post("/admin/")
+        request.user = self.user
+        admin = AIModelAdmin(AIModel, site)
+        with patch.object(AIModel.objects, "get", return_value=stale):
+            with CaptureQueriesContext(connection) as captured:
+                admin.save_model(request, stale, form=None, change=True)
+
+        model.refresh_from_db()
+        assert model.display_name == "Stale changeform name"
+        assert model.description == "Stale changeform description"
+        assert model.is_active is original_active
+        assert model.sort_order == concurrent_order + 5
+        assert _active_tools_count() == tools_before
+        assert len(get_selectable_models()) >= selectable_before
+        update_sql = " ".join(
+            query["sql"].lower()
+            for query in captured.captured_queries
+            if query["sql"].lstrip().lower().startswith("update")
+        )
+        assert "is_active" not in update_sql
+        assert "sort_order" not in update_sql
 
     def test_f12_ordinary_admin_saves_cannot_bypass_review(self) -> None:
         model = AIModel.objects.get(model_id=FREE_RIVAL_PAIRS[0][1])

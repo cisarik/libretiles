@@ -2,7 +2,6 @@ import os
 from io import StringIO
 from typing import TYPE_CHECKING, Any
 
-from django.conf import settings
 from django.contrib import admin, messages
 from django.core.exceptions import PermissionDenied
 from django.core.management import call_command
@@ -17,6 +16,7 @@ from .admin_controls import (
     CatalogControlError,
     apply_reviewed_token,
     catalog_fingerprint,
+    current_dynamic_catalog_enabled,
     ordering_reviewed,
     parse_review_changes,
     preview_review,
@@ -49,6 +49,14 @@ IDENTITY_READONLY = (
     "last_synced_at",
     "released_at",
 )
+CHANGEFORM_METADATA_FIELDS = [
+    "display_name",
+    "description",
+    "quality_tier",
+    "context_window",
+    "max_tokens",
+    "updated_at",
+]
 
 
 @admin.register(AIModel)
@@ -129,17 +137,9 @@ class AIModelAdmin(_AIModelAdmin):
     ) -> None:
         if not change:
             obj.is_active = False
-        else:
-            previous = AIModel.objects.get(pk=obj.pk)
-            obj.is_active = previous.is_active
-            obj.sort_order = previous.sort_order
-            obj.provider = previous.provider
-            obj.model_id = previous.model_id
-            obj.openrouter_managed = previous.openrouter_managed
-            obj.openrouter_available = previous.openrouter_available
-            obj.model_type = previous.model_type
-            obj.tags = previous.tags
-        super().save_model(request, obj, form, change)
+            super().save_model(request, obj, form, change)
+            return
+        obj.save(update_fields=list(CHANGEFORM_METADATA_FIELDS))
 
     def changelist_view(
         self,
@@ -271,9 +271,7 @@ class AIModelAdmin(_AIModelAdmin):
         token = sign_review_token(
             actor_id=actor_id,
             revision=control.revision,
-            dynamic_enabled=bool(
-                getattr(settings, "DYNAMIC_FREE_MODEL_CATALOG_ENABLED", False)
-            ),
+            dynamic_enabled=current_dynamic_catalog_enabled(),
             changes=changes,
         )
         return self._controls_page(

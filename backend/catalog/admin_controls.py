@@ -219,6 +219,10 @@ def load_review_token(token: str) -> dict[str, Any]:
     return payload
 
 
+def current_dynamic_catalog_enabled() -> bool:
+    return bool(getattr(settings, "DYNAMIC_FREE_MODEL_CATALOG_ENABLED", False))
+
+
 def apply_reviewed_token(
     *,
     token: str,
@@ -227,6 +231,8 @@ def apply_reviewed_token(
 ) -> list[AIModel]:
     payload = load_review_token(token)
     if payload.get("actor_id") != actor_id:
+        raise CatalogControlError(STALE_REVIEW_MESSAGE)
+    if payload.get("dynamic_enabled") != current_dynamic_catalog_enabled():
         raise CatalogControlError(STALE_REVIEW_MESSAGE)
     raw_changes = payload.get("changes")
     if not isinstance(raw_changes, list):
