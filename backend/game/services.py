@@ -65,6 +65,7 @@ from .models import (
     ChatMessage,
     ConsumedWsTicket,
     DiagnosticRun,
+    DiagnosticTarget,
     GameSession,
     Move,
     PlayerSlot,
@@ -1216,7 +1217,16 @@ def create_diagnostic_game(
     prompt_id: int | None,
     created_by_id: int,
     assist_mode: str,
+    seat0_target_id: str | None = None,
+    seat1_target_id: str | None = None,
 ) -> dict[str, Any]:
+    """Create a two-AI diagnostic session from catalog pairs or one target.
+
+    Optional per-seat target ids register a diagnostic-only OpenAI-compatible
+    target on that seat: the slot's ``ai_model`` is then null and the seat
+    travels by target identity. Existing catalog-only callers stay valid —
+    the caps remain configured later via ``configure_diagnostic_run``.
+    """
     if assist_mode not in ("assisted", "authorship"):
         raise DiagnosticSessionError("Unknown assist_mode")
     unknown = _unknown_variant_payload(variant_slug)
@@ -1225,10 +1235,25 @@ def create_diagnostic_game(
 
     with transaction.atomic():
         service_user = ensure_diagnostic_service_user()
-        seat0_model = _resolve_ai_model(ai_model_id=None, ai_model_model_id=seat0_model_id)
-        seat1_model = _resolve_ai_model(ai_model_id=None, ai_model_model_id=seat1_model_id)
-        if seat0_model is None or seat1_model is None:
-            raise DiagnosticSessionError("Unknown or unavailable AI model")
+        seat_targets = [
+            _resolve_diagnostic_seat_target(target_id)
+            for target_id in (seat0_target_id, seat1_target_id)
+        ]
+        seat0_target, seat1_target = seat_targets
+        seat0_model = None
+        if seat0_target is None:
+            seat0_model = _resolve_ai_model(ai_model_id=None, ai_model_model_id=seat0_model_id)
+        seat1_model = None
+        if seat1_target is None:
+            seat1_model = _resolve_ai_model(ai_model_id=None, ai_model_model_id=seat1_model_id)
+        for target, seat_number, provided_model_id in (
+            (seat0_target, 0, seat0_model_id),
+            (seat1_target, 1, seat1_model_id),
+        ):
+            if target is not None and provided_model_id != target.model_id:
+                raise DiagnosticSessionError(
+                    f"Seat {seat_number} model id must be the target's model id"
+                )
         selected_prompt = None
         if prompt_id is not None:
             selected_prompt = next(
@@ -1241,6 +1266,22 @@ def create_diagnostic_game(
         if not user_model.objects.filter(pk=created_by_id).exists():
             raise DiagnosticSessionError("Unknown created_by")
 
+        if seat1_target is not None:
+            seat1_run_model_id = seat1_target.model_id
+        else:
+            if seat1_model is None:
+                raise DiagnosticSessionError("Unknown or unavailable AI model")
+            seat1_run_model_id = seat1_model.model_id
+        if seat0_target is not None:
+            seat0_run_model_id = seat0_target.model_id
+        else:
+            if seat0_model is None:
+                raise DiagnosticSessionError("Unknown or unavailable AI model")
+            seat0_run_model_id = seat0_model.model_id
+        session_model = seat1_model
+        if seat1_model is None and seat0_model is not None:
+            session_model = seat0_model
+
         session = GameSession.objects.create(
             game_mode="vs_ai",
             is_diagnostic=True,
@@ -1250,7 +1291,7 @@ def create_diagnostic_game(
             premium_used=[],
             current_turn_slot=None,
             bag_seed=seed,
-            ai_model=seat1_model,
+            ai_model=session_model,
             ai_prompt=selected_prompt,
         )
         slot0 = PlayerSlot.objects.create(
@@ -1261,6 +1302,7 @@ def create_diagnostic_game(
             rack=[],
             ai_model=seat0_model,
             ai_prompt=selected_prompt,
+            diagnostic_target=seat0_target,
         )
         slot1 = PlayerSlot.objects.create(
             game=session,
@@ -1270,6 +1312,7 @@ def create_diagnostic_game(
             rack=[],
             ai_model=seat1_model,
             ai_prompt=selected_prompt,
+            diagnostic_target=seat1_target,
         )
         _initialize_session(session, slot0=slot0, slot1=slot1, seed=seed)
         run = DiagnosticRun.objects.create(
@@ -1277,18 +1320,28 @@ def create_diagnostic_game(
             assist_mode=assist_mode,
             instrument="full-game",
             variant_slug=variant_slug,
-            seat0_model_id=seat0_model.model_id,
-            seat1_model_id=seat1_model.model_id,
+            seat0_model_id=seat0_run_model_id,
+            seat1_model_id=seat1_run_model_id,
             prompt=selected_prompt,
             session=session,
             created_by_id=created_by_id,
             parameters_json={
                 "variant_slug": variant_slug,
                 "seed": seed,
-                "seat0_model_id": seat0_model.model_id,
-                "seat1_model_id": seat1_model.model_id,
+                "seat0_model_id": seat0_run_model_id,
+                "seat1_model_id": seat1_run_model_id,
                 "prompt_id": prompt_id,
                 "assist_mode": assist_mode,
+                **(
+                    {"seat0_target_id": str(seat0_target.id)}
+                    if seat0_target is not None
+                    else {}
+                ),
+                **(
+                    {"seat1_target_id": str(seat1_target.id)}
+                    if seat1_target is not None
+                    else {}
+                ),
             },
             executed_runtime_mode="",
             score_authority="",
@@ -1299,6 +1352,21 @@ def create_diagnostic_game(
             "current_turn_slot": session.current_turn_slot,
             "service_user_id": service_user.id,
         }
+
+
+def _resolve_diagnostic_seat_target(target_id: str | None) -> DiagnosticTarget | None:
+    if target_id is None or target_id == "":
+        return None
+    try:
+        target_uuid = uuid.UUID(str(target_id))
+    except ValueError as exc:
+        raise DiagnosticSessionError("Unknown diagnostic target") from exc
+    target = DiagnosticTarget.objects.select_related("allowed_host").filter(
+        pk=target_uuid, is_active=True, allowed_host__is_active=True
+    ).first()
+    if target is None:
+        raise DiagnosticSessionError("Unknown diagnostic target")
+    return target
 
 
 def apply_position_snapshot(session: GameSession, snapshot: Mapping[str, Any]) -> None:
@@ -1391,13 +1459,22 @@ DIAGNOSTIC_MAX_WALL_CLOCK_SECONDS_ADMIN_MAX = 21600
 _JWT_LIKE = re.compile(r"^eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}$")
 _POSITION_SET_DIGEST_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
+# S7: connection settings stay out of parameters_json even where they carry no
+# SECRET_KEY_FRAGMENTS substring. Target UUIDs are the only new launch input.
+_FORBIDDEN_PARAMETER_KEYS = ("base_url",)
+
 
 def _reject_credential_parameters(extra: Mapping[str, Any]) -> None:
-    """parameters_json must never carry a JWT or a SECRET_KEY_FRAGMENTS key."""
+    """parameters_json must never carry a JWT, a SECRET_KEY_FRAGMENTS key, or
+    a forbidden connection-settings key."""
     from .diagnostics import SECRET_KEY_FRAGMENTS
 
     for key, value in extra.items():
         lowered = str(key).lower()
+        if lowered in _FORBIDDEN_PARAMETER_KEYS:
+            raise DiagnosticSessionError(
+                f"parameters_json key {str(key)[:64]!r} is a forbidden connection setting"
+            )
         if any(fragment in lowered for fragment in SECRET_KEY_FRAGMENTS):
             raise DiagnosticSessionError(
                 f"parameters_json key {str(key)[:64]!r} contains a forbidden fragment"
@@ -1713,7 +1790,15 @@ def set_game_ai_model(
     user_id: int,
     ai_model_model_id: str,
 ) -> dict[str, Any]:
-    session, _player_slot, _ai_slot = _load_vs_ai_session(game_id=game_id, user_id=user_id)
+    session, _player_slot, ai_slot = _load_vs_ai_session(game_id=game_id, user_id=user_id)
+    if session.is_diagnostic and ai_slot.diagnostic_target_id is not None:
+        return {
+            "ok": False,
+            "error": (
+                "This diagnostic seat uses a registered diagnostic target; "
+                "its AI model cannot be changed."
+            ),
+        }
     selected_ai_model = _resolve_ai_model(ai_model_id=None, ai_model_model_id=ai_model_model_id)
     if selected_ai_model is None:
         return {"ok": False, "error": "Unknown or unavailable AI model"}
@@ -2049,6 +2134,28 @@ def submit_pass_for_ai(
         )
 
 
+def _diagnostic_runtime_for(acting: PlayerSlot) -> dict[str, Any] | None:
+    """Plan fields for the ONE SSE route's sibling runtime seam.
+
+    Returned only for the diagnostic service user on a diagnostic session
+    whose acting seat carries an active target on an active allowed host.
+    Never placed into SSE frames by the route.
+    """
+    target = acting.diagnostic_target
+    if target is None or not target.is_active:
+        return None
+    allowed_host = target.allowed_host
+    if allowed_host is None or not allowed_host.is_active:
+        return None
+    return {
+        "target_id": str(target.id),
+        "provider": f"diagnostic-target/{target.id}",
+        "model_id": target.model_id,
+        "base_url": target.base_url,
+        "credential_env_name": target.credential_env_name,
+    }
+
+
 def get_ai_context(game_id: str, user_id: int) -> dict[str, Any]:
     session, _membership, acting = _load_vs_ai_session(game_id=game_id, user_id=user_id)
     opponent = session.slots.filter(slot=1 - acting.slot).first()
@@ -2073,7 +2180,14 @@ def get_ai_context(game_id: str, user_id: int) -> dict[str, Any]:
         ai_state,
         multigraph=has_multigraph_tile_token(variant.playable_letters),
     )
-    ai_model = acting.ai_model or session.ai_model
+    diagnostic_runtime = None
+    if session.is_diagnostic and acting.diagnostic_target_id is not None:
+        # A target seat must NOT inherit the other seat's catalog model:
+        # the target identity is checked before any session fallback.
+        ai_model = acting.ai_model
+        diagnostic_runtime = _diagnostic_runtime_for(acting)
+    else:
+        ai_model = acting.ai_model or session.ai_model
     ai_prompt = acting.ai_prompt or session.ai_prompt
     return {
         "compact_state": compact,
@@ -2088,6 +2202,7 @@ def get_ai_context(game_id: str, user_id: int) -> dict[str, Any]:
         "is_first_move": _is_board_empty(session),
         "ai_move_max_output_tokens": settings.AI_MOVE_MAX_OUTPUT_TOKENS,
         "ai_move_timeout_seconds": settings.AI_MOVE_TIMEOUT_SECONDS,
+        "diagnostic_runtime": diagnostic_runtime,
         **_variant_snapshot_fields(session),
     }
 

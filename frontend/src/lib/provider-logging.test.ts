@@ -208,3 +208,28 @@ describe("provider-logging client import guard", () => {
     expect(offenders).toEqual([]);
   });
 });
+
+describe("S7 diagnostic credential env names", () => {
+  it("exports the closed CREDENTIAL_ENV_NAMES set for the Django parity test", async () => {
+    const { CREDENTIAL_ENV_NAMES } = await import("./provider-logging");
+    expect(CREDENTIAL_ENV_NAMES).toEqual([
+      "GROQ_API_KEY",
+      "GEMINI_API_KEY",
+      "MISTRAL_API_KEY",
+      "AION_API_KEY",
+      "HF_TOKEN",
+      "CLOUDFLARE_ACCOUNT_ID",
+      "CLOUDFLARE_API_TOKEN",
+      "OPENROUTER_API_KEY",
+      "NVIDIA_API_KEY",
+      "IBM_CLOUD_API_KEY",
+      "IBM_WATSONX_PROJECT_ID",
+      "IBM_WATSONX_REGION",
+    ]);
+  });
+
+  it("never lists DJANGO_SECRET_KEY in the closed set", async () => {
+    const { CREDENTIAL_ENV_NAMES } = await import("./provider-logging");
+    expect(CREDENTIAL_ENV_NAMES).not.toContain("DJANGO_SECRET_KEY");
+  });
+});

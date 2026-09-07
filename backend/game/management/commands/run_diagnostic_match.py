@@ -492,9 +492,15 @@ class _DiagnosticMatchRunner:
         fallback_index: int | None = None
         if move is not None and attempts:
             fallback_index = len(attempts) - 1
+        target = acting.diagnostic_target
+        model_id = (
+            str(target.model_id)
+            if target is not None
+            else str(acting.ai_model.model_id if acting.ai_model else "")
+        )
         return PlyMetricRecord(
             seat_index=int(acting.slot),
-            model_id=str(acting.ai_model.model_id if acting.ai_model else ""),
+            model_id=model_id,
             assist_mode=run.assist_mode,  # type: ignore[arg-type]
             score_authority="engine",
             model_authored=model_authored,
@@ -655,20 +661,25 @@ class _DiagnosticMatchRunner:
             if self._cap_or_truncate(run, ply_index):
                 self._complete(run, _TRUNCATED_REASON)
                 return self._finish(0, run)
-            acting = _resolve_acting_slot(session)
-            if acting is None or acting.ai_model is None:
-                raise _RunnerFailure("no acting AI slot with a model")
+            acting, provider, model_id, diagnostic_target_id = _acting_identity(
+                _resolve_acting_slot(session)
+            )
             move_count_before = session.moves.count()
             started = time.monotonic()
             observation, alive = self._send_turn(
                 game_id=str(session.public_id),
-                provider=str(acting.ai_model.provider),
-                model_id=str(acting.ai_model.model_id),
+                provider=provider,
+                model_id=model_id,
                 timeout_seconds=_TURN_TIMEOUT_SECONDS,
                 max_steps=_TURN_MAX_STEPS,
                 script=self.state.script,
                 queue_mode=self.state.queue_mode,
                 ai_slot=int(session.current_turn_slot or 0),
+                **(
+                    {"diagnostic_target_id": diagnostic_target_id}
+                    if diagnostic_target_id is not None
+                    else {}
+                ),
             )
             wall_ms = int((time.monotonic() - started) * 1000)
             session.refresh_from_db()
@@ -719,20 +730,25 @@ class _DiagnosticMatchRunner:
             session.refresh_from_db()
             if session.game_over:
                 continue
-            acting = _resolve_acting_slot(session)
-            if acting is None or acting.ai_model is None:
-                raise _RunnerFailure(f"position {index} has no acting AI slot with a model")
+            acting, provider, model_id, diagnostic_target_id = _acting_identity(
+                _resolve_acting_slot(session)
+            )
             move_count_before = session.moves.count()
             started = time.monotonic()
             observation, alive = self._send_turn(
                 game_id=str(session.public_id),
-                provider=str(acting.ai_model.provider),
-                model_id=str(acting.ai_model.model_id),
+                provider=provider,
+                model_id=model_id,
                 timeout_seconds=_TURN_TIMEOUT_SECONDS,
                 max_steps=_TURN_MAX_STEPS,
                 script=self.state.script,
                 queue_mode=self.state.queue_mode,
                 ai_slot=int(session.current_turn_slot or 0),
+                **(
+                    {"diagnostic_target_id": diagnostic_target_id}
+                    if diagnostic_target_id is not None
+                    else {}
+                ),
             )
             wall_ms = int((time.monotonic() - started) * 1000)
             session.refresh_from_db()
@@ -773,6 +789,26 @@ def _resolve_acting_slot(session: GameSession) -> PlayerSlot | None:
     return _resolve_acting_ai_slot(session)
 
 
+def _acting_identity(
+    acting: PlayerSlot | None,
+) -> tuple[PlayerSlot, str, str, str | None]:
+    """Catalog-or-target identity for one acting seat.
+
+    Returns (narrowed acting slot, provider, model_id, diagnostic_target_id).
+    A target seat carries the target id for the worker JSONL selection
+    assertion; nothing else about the target (no URL, no credential
+    environment name, no secret) crosses the IPC boundary.
+    """
+    if acting is None:
+        raise _RunnerFailure("no acting AI slot with a model")
+    target = acting.diagnostic_target
+    if target is not None:
+        return acting, "diagnostic-target", str(target.model_id), str(target.id)
+    if acting.ai_model is None:
+        raise _RunnerFailure("no acting AI slot with a model")
+    return acting, str(acting.ai_model.provider), str(acting.ai_model.model_id), None
+
+
 def _load_position_set_asset(digest: str) -> dict[str, Any]:
     directory = default_position_set_dir()
     if digest:
@@ -796,13 +832,17 @@ def _load_position_set_asset(digest: str) -> dict[str, Any]:
 # publication alone is refused.
 
 def _position_pair_identity(run: DiagnosticRun) -> tuple[str, str]:
-    """Resolve the ONE catalog pair a model-position report may describe."""
+    """Resolve the ONE catalog-or-target pair a model-position report may describe."""
     if run.seat0_model_id != run.seat1_model_id:
         raise _ReportRefusal(
             "position-set publishes one model; run seats differ"
         )
     identities: set[tuple[str, str]] = set()
     for slot in run.session.slots.all():
+        target = slot.diagnostic_target
+        if target is not None:
+            identities.add((f"diagnostic-target/{target.id}", str(target.model_id)))
+            continue
         model = slot.ai_model
         if model is not None:
             identities.add((str(model.provider), str(model.model_id)))

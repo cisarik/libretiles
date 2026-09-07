@@ -907,3 +907,391 @@ class TestGetIsInertS6(DiagnosticAdminS6Base):
         self.assertEqual(artifact_path.read_bytes(), before_bytes)
         self.assertEqual(sorted(p.name for p in _var_dir().iterdir()), before_listing)
         self.assertEqual(DiagnosticRun.objects.count(), before_runs)
+
+
+# ---------------------------------------------------------------------------
+# S7 diagnostic targets: add-host surface, target admin, launch form (F03/F11)
+# ---------------------------------------------------------------------------
+
+from django.contrib.admin.models import LogEntry  # noqa: E402
+from game import diagnostic_targets as diagnostic_targets_module  # noqa: E402
+from game import services  # noqa: E402
+from game.models import DiagnosticAllowedHost, DiagnosticTarget  # noqa: E402
+
+PUBLIC_ADDRESS = "8.8.8.8"
+
+
+def _patch_target_dns(addresses: list[str]) -> Any:
+    return mock.patch.object(
+        diagnostic_targets_module, "resolve_host_addresses", mock.MagicMock(return_value=addresses)
+    )
+
+
+class DiagnosticTargetAdminS7Base(TestCase):
+    def setUp(self) -> None:
+        self.superuser = User.objects.create_superuser(
+            username="s7-admin",
+            email="s7-admin@example.com",
+            password="s7-admin-pass",
+        )
+        self.client.force_login(self.superuser)
+        self.host_add_url = reverse("admin:game_diagnosticallowedhost_add")
+        self.host_changelist_url = reverse("admin:game_diagnosticallowedhost_changelist")
+        self.target_add_url = reverse("admin:game_diagnostictarget_add")
+        self.target_changelist_url = reverse("admin:game_diagnostictarget_changelist")
+        self.launch_url = reverse("admin:game_diagnosticrun_launch")
+
+
+class DiagnosticAllowedHostAddSurfaceTests(DiagnosticTargetAdminS7Base):
+    def test_f03_get_add_form_is_form_only(self) -> None:
+        with mock.patch.object(
+            diagnostic_targets_module,
+            "resolve_host_addresses",
+            side_effect=AssertionError("add-host must not resolve DNS"),
+        ):
+            response = self.client.get(self.host_add_url)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("hostname", response.content.decode())
+
+    def test_f03_post_adds_host_without_dns_or_http(self) -> None:
+        with mock.patch.object(
+            diagnostic_targets_module,
+            "resolve_host_addresses",
+            side_effect=AssertionError("add-host must not resolve DNS"),
+        ):
+            response = self.client.post(
+                self.host_add_url,
+                {"hostname": "rival.example.com", "is_active": "on"},
+            )
+        self.assertEqual(response.status_code, 302)
+        host = DiagnosticAllowedHost.objects.filter(hostname="rival.example.com").first()
+        self.assertIsNotNone(host)
+        entry = LogEntry.objects.filter(
+            object_id=str(host.pk), action_flag=1  # ADDITION
+        ).first()
+        self.assertIsNotNone(entry)
+        assert entry is not None
+        self.assertEqual(entry.user_id, self.superuser.id)
+        self.assertIn("hostname", entry.change_message.lower())
+
+    def test_f03_post_rejects_noncanonical_hostname(self) -> None:
+        for bad in ("Rival.Example.Com", "rival.example.com.", "-bad.example.com"):
+            with self.subTest(hostname=bad):
+                response = self.client.post(
+                    self.host_add_url, {"hostname": bad, "is_active": "on"}
+                )
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(
+                    DiagnosticAllowedHost.objects.filter(
+                        hostname__iexact=bad.lower()
+                    ).count(),
+                    0,
+                )
+
+    def test_f03_staff_without_add_and_change_perms_cannot_add(self) -> None:
+        staffer = User.objects.create_user(
+            username="s7-staffer", password="s7-staffer-pass", is_staff=True
+        )
+        add_permission = Permission.objects.get(
+            content_type__app_label="game", codename="add_diagnosticallowedhost"
+        )
+        change_permission = Permission.objects.get(
+            content_type__app_label="game", codename="change_diagnosticallowedhost"
+        )
+        delete_permission = Permission.objects.get(
+            content_type__app_label="game", codename="delete_diagnosticallowedhost"
+        )
+        view_permission = Permission.objects.get(
+            content_type__app_label="game", codename="view_diagnosticallowedhost"
+        )
+        staffer.user_permissions.add(add_permission, delete_permission, view_permission)
+        self.client.force_login(staffer)
+        response = self.client.post(
+            self.host_add_url, {"hostname": "rival.example.com", "is_active": "on"}
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(
+            DiagnosticAllowedHost.objects.filter(hostname="rival.example.com").count(), 0
+        )
+
+        staffer.user_permissions.add(change_permission)
+        response = self.client.post(
+            self.host_add_url, {"hostname": "rival.example.com", "is_active": "on"}
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            DiagnosticAllowedHost.objects.filter(hostname="rival.example.com").count(), 1
+        )
+
+    def test_f03_csrf_is_required_for_add(self) -> None:
+        enforcing = Client(enforce_csrf_checks=True)
+        enforcing.force_login(self.superuser)
+        response = enforcing.post(
+            self.host_add_url, {"hostname": "rival.example.com", "is_active": "on"}
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(
+            DiagnosticAllowedHost.objects.filter(hostname="rival.example.com").count(), 0
+        )
+
+    def test_f11_deactivate_action_logs_field_names_only(self) -> None:
+        host = DiagnosticAllowedHost.objects.create(hostname="rival.example.com")
+        response = self.client.post(
+            self.host_changelist_url,
+            {
+                "action": "deactivate_selected_hosts",
+                "_selected_action": [str(host.pk)],
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        host.refresh_from_db()
+        self.assertFalse(host.is_active)
+        entry = LogEntry.objects.filter(object_id=str(host.pk)).order_by("-id").first()
+        self.assertIsNotNone(entry)
+        assert entry is not None
+        self.assertIn("is_active", entry.change_message)
+        self.assertNotIn("https://", entry.change_message)
+
+
+class DiagnosticTargetAdminSurfaceTests(DiagnosticTargetAdminS7Base):
+    def _host(self) -> DiagnosticAllowedHost:
+        return DiagnosticAllowedHost.objects.create(hostname="rival.example.com")
+
+    def test_f02_add_target_success_and_loopback_refusal(self) -> None:
+        host = self._host()
+        with _patch_target_dns([PUBLIC_ADDRESS]):
+            response = self.client.post(
+                self.target_add_url,
+                {
+                    "name": "Rival target",
+                    "base_url": f"https://{host.hostname}/api/v1",
+                    "allowed_host": str(host.pk),
+                    "model_id": "vendor/target-model",
+                    "credential_env_name": "OPENROUTER_API_KEY",
+                    "is_active": "on",
+                },
+            )
+        self.assertEqual(response.status_code, 302)
+        target = DiagnosticTarget.objects.filter(name="Rival target").first()
+        self.assertIsNotNone(target)
+
+        before = DiagnosticTarget.objects.count()
+        with _patch_target_dns(["127.0.0.1"]):
+            response = self.client.post(
+                self.target_add_url,
+                {
+                    "name": "Loopback target",
+                    "base_url": "https://metadata.invalid/api/v1",
+                    "allowed_host": str(host.pk),
+                    "model_id": "vendor/target-model",
+                    "credential_env_name": "OPENROUTER_API_KEY",
+                    "is_active": "on",
+                },
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("refused", response.content.decode().lower())
+        self.assertEqual(DiagnosticTarget.objects.count(), before)
+        self.assertFalse(
+            LogEntry.objects.filter(
+                object_repr__contains="Loopback target", action_flag=1
+            ).exists()
+        )
+
+    def test_f04_credential_env_name_closed_choices(self) -> None:
+        host = self._host()
+        with _patch_target_dns([PUBLIC_ADDRESS]):
+            response = self.client.post(
+                self.target_add_url,
+                {
+                    "name": "Secret thief",
+                    "base_url": f"https://{host.hostname}/api/v1",
+                    "allowed_host": str(host.pk),
+                    "model_id": "vendor/target-model",
+                    "credential_env_name": "DJANGO_SECRET_KEY",
+                    "is_active": "on",
+                },
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            DiagnosticTarget.objects.filter(credential_env_name="DJANGO_SECRET_KEY").count(),
+            0,
+        )
+
+    def test_f11_credential_presence_is_never_a_value(self) -> None:
+        host = self._host()
+        with _patch_target_dns([PUBLIC_ADDRESS]):
+            self.client.post(
+                self.target_add_url,
+                {
+                    "name": "Presence probe",
+                    "base_url": f"https://{host.hostname}/api/v1",
+                    "allowed_host": str(host.pk),
+                    "model_id": "vendor/target-model",
+                    "credential_env_name": "OPENROUTER_API_KEY",
+                    "is_active": "on",
+                },
+            )
+        response = self.client.get(self.target_changelist_url)
+        self.assertEqual(response.status_code, 200)
+        page = response.content.decode()
+        self.assertIn("credential present", page.lower())
+        self.assertIn("openrouter_api_key", page.lower())
+        self.assertNotIn("your-openrouter-api-key", page.lower())
+
+    def test_f11_frozen_target_refuses_edit_via_admin(self) -> None:
+        host = self._host()
+        with _patch_target_dns([PUBLIC_ADDRESS]):
+            self.client.post(
+                self.target_add_url,
+                {
+                    "name": "Freeze me",
+                    "base_url": f"https://{host.hostname}/api/v1",
+                    "allowed_host": str(host.pk),
+                    "model_id": "vendor/target-model",
+                    "credential_env_name": "OPENROUTER_API_KEY",
+                    "is_active": "on",
+                },
+            )
+        target = DiagnosticTarget.objects.get(name="Freeze me")
+        admin = services.ensure_diagnostic_service_user()
+        services.create_diagnostic_game(
+            variant_slug="english",
+            seed=1,
+            seat0_model_id="vendor/target-model",
+            seat1_model_id="vendor/target-model",
+            prompt_id=None,
+            created_by_id=admin.id,
+            assist_mode="assisted",
+            seat0_target_id=str(target.id),
+            seat1_target_id=str(target.id),
+        )
+        with _patch_target_dns([PUBLIC_ADDRESS]):
+            response = self.client.post(
+                reverse("admin:game_diagnostictarget_change", args=[target.pk]),
+                {
+                    "name": "Freeze me",
+                    "base_url": f"https://{host.hostname}/api/v2",
+                    "allowed_host": str(host.pk),
+                    "model_id": "vendor/target-model",
+                    "credential_env_name": "OPENROUTER_API_KEY",
+                    "is_active": "on",
+                },
+            )
+        self.assertEqual(response.status_code, 200)
+        target.refresh_from_db()
+        self.assertEqual(target.base_url, f"https://{host.hostname}/api/v1")
+
+
+class DiagnosticLaunchTargetTests(DiagnosticTargetAdminS7Base):
+    def setUp(self) -> None:
+        super().setUp()
+        self.seat0 = _make_rival()
+        self.seat1 = _make_rival(model_id=FREE_RIVAL_IDS[1])
+        self.host = DiagnosticAllowedHost.objects.create(hostname="rival.example.com")
+        self.spawns: list[Any] = []
+        self._original_spawn = admin_module.spawn_diagnostic_runner
+
+        def _capture_spawn(run_id: Any) -> None:
+            self.spawns.append(run_id)
+
+        admin_module.spawn_diagnostic_runner = _capture_spawn
+        self.addCleanup(self._restore_spawn)
+
+    def _restore_spawn(self) -> None:
+        admin_module.spawn_diagnostic_runner = self._original_spawn
+
+    def _target(self, name: str) -> DiagnosticTarget:
+        with _patch_target_dns([PUBLIC_ADDRESS]):
+            return DiagnosticTarget.objects.create(
+                name=name,
+                base_url=f"https://{self.host.hostname}/api/v1",
+                allowed_host=self.host,
+                model_id="vendor/target-model",
+                credential_env_name="OPENROUTER_API_KEY",
+            )
+
+    def _post(self, **overrides: Any) -> Any:
+        payload: dict[str, Any] = {
+            "instrument": "full-game",
+            "assist_mode": "assisted",
+            "variant_slug": "english",
+            "seat0_model_id": self.seat0.model_id,
+            "seat1_model_id": self.seat1.model_id,
+            "seat0_target": "",
+            "seat1_target": "",
+            "prompt_id": "",
+            "seed": "42",
+            "position_set_digest": "",
+            "max_plies": "2",
+            "max_provider_requests": "5",
+            "max_wall_clock_seconds": "60",
+        }
+        payload.update(overrides)
+        with _patch_target_dns([PUBLIC_ADDRESS]):
+            return self.client.post(self.launch_url, payload)
+
+    def test_f05_launch_form_lists_active_targets(self) -> None:
+        target = self._target("Shown target")
+        response = self.client.get(self.launch_url)
+        self.assertEqual(response.status_code, 200)
+        page = response.content.decode()
+        self.assertIn(str(target.id), page)
+        self.assertIn("Shown target", page)
+
+    def test_f05_full_game_seat0_target_creates_target_seat(self) -> None:
+        target = self._target("Seat0 target")
+        response = self._post(
+            seat0_model_id="",
+            seat0_target=str(target.id),
+            seat1_model_id=self.seat1.model_id,
+        )
+        self.assertEqual(response.status_code, 302)
+        run = DiagnosticRun.objects.get(pk=self.spawns[-1])
+        slot0 = run.session.slots.get(slot=0)
+        slot1 = run.session.slots.get(slot=1)
+        self.assertIsNone(slot0.ai_model)
+        self.assertEqual(slot0.diagnostic_target_id, target.id)
+        self.assertEqual(slot1.ai_model_id, self.seat1.id)
+        self.assertIsNone(slot1.diagnostic_target)
+        self.assertEqual(run.seat0_model_id, "vendor/target-model")
+        self.assertEqual(run.seat1_model_id, self.seat1.model_id)
+        self.assertEqual(run.parameters_json.get("seat0_target_id"), str(target.id))
+
+    def test_f05_seat_with_both_choices_is_refused(self) -> None:
+        target = self._target("Ambiguous")
+        response = self._post(seat0_target=str(target.id))
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("exactly one", response.content.decode().lower())
+        self.assertEqual(DiagnosticRun.objects.count(), 0)
+
+    def test_f05_position_set_requires_same_target_both_seats(self) -> None:
+        target = self._target("Pair target")
+        other = self._target("Other target")
+        response = self._post(
+            instrument="position-set",
+            position_set_digest=POSITION_SET_DIGEST,
+            seat0_model_id="",
+            seat1_model_id="",
+            seat0_target=str(target.id),
+            seat1_target=str(other.id),
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("same", response.content.decode().lower())
+        self.assertEqual(DiagnosticRun.objects.count(), 0)
+
+        response = self._post(
+            instrument="position-set",
+            position_set_digest=POSITION_SET_DIGEST,
+            seat0_model_id="",
+            seat1_model_id="",
+            seat0_target=str(target.id),
+            seat1_target=str(target.id),
+        )
+        self.assertEqual(response.status_code, 302)
+        run = DiagnosticRun.objects.get(pk=self.spawns[-1])
+        self.assertEqual(
+            run.session.slots.get(slot=0).diagnostic_target_id, target.id
+        )
+        self.assertEqual(
+            run.session.slots.get(slot=1).diagnostic_target_id, target.id
+        )

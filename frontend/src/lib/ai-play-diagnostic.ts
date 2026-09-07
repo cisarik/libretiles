@@ -18,6 +18,7 @@ import {
   consumeAIStream,
   type AiMoveStreamTerminal,
 } from "./ai-move-stream";
+import { type DiagnosticEgressMode } from "./diagnostic-egress";
 import { asAiCompletionSource, type AiCompletionSource } from "./types";
 
 export const LIVE_SENTINEL = "LIBRETILES_AI_PLAY_LIVE";
@@ -75,6 +76,7 @@ export type TerminalObservation = {
   external_provider_invocations: number;
   backend_origins: string[];
   foreign_origins: string[];
+  provider_identity?: string;
   executed_runtime_mode?: DiagnosticRuntimeMode;
   driver?: DiagnosticDriver;
   sentinel_present?: boolean;
@@ -141,6 +143,12 @@ export function installFetchGuard(
   options?: {
     mode?: DiagnosticRuntimeMode;
     providerOrigins?: readonly string[];
+    /**
+     * S7 diagnostic-egress policy. When provided and not "live", live-mode
+     * provider origins are refused BEFORE any socket. Absent = unchanged
+     * legacy behaviour for the probe/live-worker surfaces.
+     */
+    egressMode?: DiagnosticEgressMode;
   },
 ): {
   backend: string[];
@@ -149,6 +157,7 @@ export function installFetchGuard(
   restore: () => void;
 } {
   const mode: DiagnosticRuntimeMode = options?.mode ?? "fake";
+  const egressMode = options?.egressMode;
   const providerOrigins = [...(options?.providerOrigins ?? SHIPPED_PROVIDER_ORIGINS)];
   const backend: string[] = [];
   const foreign: string[] = [];
@@ -160,7 +169,11 @@ export function installFetchGuard(
       backend.push(origin);
       return original(input, init);
     }
-    if (mode === "live" && providerOrigins.includes(origin)) {
+    if (
+      mode === "live" &&
+      providerOrigins.includes(origin) &&
+      egressMode !== "deny"
+    ) {
       provider.push(origin);
       return original(input, init);
     }
@@ -168,7 +181,9 @@ export function installFetchGuard(
     return Promise.reject(
       new Error(
         mode === "live"
-          ? `diagnostic live mode blocked origin ${origin}`
+          ? egressMode === "deny"
+            ? `diagnostic egress policy denied origin ${origin}`
+            : `diagnostic live mode blocked origin ${origin}`
           : `diagnostic fake mode blocked foreign origin ${origin}`,
       ),
     );
@@ -277,6 +292,7 @@ export function serializeTerminalObservation(input: {
   externalProviderInvocations: number;
   backendOrigins: string[];
   foreignOrigins: string[];
+  providerIdentity?: string;
   executedRuntimeMode?: DiagnosticRuntimeMode;
   driver?: DiagnosticDriver;
   sentinelPresent?: boolean;
@@ -342,6 +358,9 @@ export function serializeTerminalObservation(input: {
   if (typeof input.sentinelPresent === "boolean") {
     observation.sentinel_present = input.sentinelPresent;
   }
+  if (input.providerIdentity) {
+    observation.provider_identity = input.providerIdentity;
+  }
   return redactValue(observation) as TerminalObservation;
 }
 
@@ -403,10 +422,19 @@ export async function runDiagnosticTurn(opts: {
   providerOrigins?: string[];
   executedRuntimeMode?: DiagnosticRuntimeMode;
   driver?: DiagnosticDriver;
+  /**
+   * S7 target-seat selection assertion. Carried on the POST body only; the
+   * route refuses any URL/env/runtime config and matches the id against the
+   * backend-authorized target.
+   */
+  diagnosticTargetId?: string;
 }): Promise<TerminalObservation> {
   const aiSlot = opts.aiSlot ?? 1;
   const providerOrigins = opts.providerOrigins ?? [];
   const invocations = derivedExternalProviderInvocations(providerOrigins);
+  const providerIdentity = opts.diagnosticTargetId
+    ? `diagnostic-target/${opts.diagnosticTargetId}`
+    : undefined;
   if (opts.script === "generic_unchanged") {
     return serializeTerminalObservation({
       terminal: { kind: "generic_error", message: "AI move failed" },
@@ -417,6 +445,7 @@ export async function runDiagnosticTurn(opts: {
       externalProviderInvocations: invocations,
       backendOrigins: [],
       foreignOrigins: [],
+      providerIdentity,
       executedRuntimeMode: opts.executedRuntimeMode,
       driver: opts.driver,
       sentinelPresent: liveOptInEnabled(),
@@ -449,10 +478,14 @@ export async function runDiagnosticTurn(opts: {
         timeout: request.timeoutSeconds,
         maxSteps: request.maxStepsRemaining,
       });
+      const payload =
+        opts.diagnosticTargetId === undefined
+          ? body
+          : { ...body, diagnostic_target_id: opts.diagnosticTargetId };
       const req = new NextRequest("http://localhost/api/ai/move", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify(payload),
       });
       let response = await opts.post(req);
       if (opts.script === "drop_done") {
@@ -488,6 +521,7 @@ export async function runDiagnosticTurn(opts: {
     externalProviderInvocations: invocations,
     backendOrigins: opts.backendOrigins ?? [],
     foreignOrigins: opts.foreignOrigins ?? [],
+    providerIdentity,
     executedRuntimeMode: opts.executedRuntimeMode,
     driver: opts.driver,
     sentinelPresent: liveOptInEnabled(),

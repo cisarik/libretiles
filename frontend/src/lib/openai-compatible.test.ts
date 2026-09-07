@@ -204,3 +204,31 @@ describe("credential validation", () => {
     expect(String(error)).not.toMatch(/[A-Z_]+=/);
   });
 });
+
+describe("S7 diagnostic target factory", () => {
+  it("exposes getDiagnosticOpenAICompatibleModel over a custom fetch without leaking the private factory", async () => {
+    const runtimeModule = await import("./openai-compatible");
+    const { getDiagnosticOpenAICompatibleModel } = runtimeModule;
+    expect("createTrackedOpenAIChatModel" in runtimeModule).toBe(false);
+
+    const tracker = createProviderRequestTracker();
+    let sawFetch = false;
+    const customFetch = (async () => {
+      sawFetch = true;
+      return new Response("{}");
+    }) as unknown as typeof fetch;
+    const model = getDiagnosticOpenAICompatibleModel({
+      provider: "diagnostic-target/00000000-0000-0000-0000-0000000000aa",
+      modelId: "vendor/target-model",
+      baseURL: "https://rival.example.com/api/v1",
+      apiKey: "sk-test-diagnostic-credential-1234567890",
+      tracker,
+      customFetch,
+    });
+    expect(model).toBeDefined();
+    expect(sawFetch).toBe(false);
+
+    const tracked = createTrackedProviderFetch(tracker);
+    expect(typeof tracked).toBe("function");
+  });
+});

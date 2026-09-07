@@ -1,8 +1,12 @@
 import uuid
+from typing import Any
 
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models
-from django.db.models import Q, UniqueConstraint, Value
+from django.db.models import CheckConstraint, Q, UniqueConstraint, Value
+
+from .diagnostic_targets import CREDENTIAL_ENV_NAMES, canonical_hostname, validate_target_save
 
 
 def default_structured_board() -> list[list[None]]:
@@ -74,6 +78,103 @@ class GameSession(models.Model):
         return f"Game {self.public_id.hex[:8]} ({self.status})"
 
 
+class DiagnosticAllowedHost(models.Model):
+    """Hostname allowlist row for diagnostic-only OpenAI-compatible targets.
+
+    Canonical ASCII hostnames only. A hostname is immutable after insert;
+    activation is the editable surface. Add-host performs no DNS, no HTTP,
+    and no runner spawn.
+    ⛔ No column name may contain a ``SECRET_KEY_FRAGMENTS`` substring.
+    """
+
+    hostname = models.CharField(
+        max_length=253,
+        unique=True,
+        help_text="Canonical ASCII hostname; exact-match only (no wildcard or suffix)",
+    )
+    is_active = models.BooleanField(default=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="diagnostic_allowed_hosts",
+        help_text="Staff user who registered the host",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "game_diagnostic_allowed_host"
+        verbose_name = "Diagnostic allowed host"
+        verbose_name_plural = "Diagnostic allowed hosts"
+
+    def __str__(self) -> str:
+        return f"{self.hostname} ({'active' if self.is_active else 'inactive'})"
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        canonical = canonical_hostname(self.hostname)
+        if self.pk is not None:
+            existing = DiagnosticAllowedHost.objects.filter(pk=self.pk).first()
+            if existing is not None and existing.hostname != self.hostname:
+                raise ValidationError("Diagnostic allowed host hostnames are immutable")
+        self.hostname = canonical
+        super().save(*args, **kwargs)
+
+
+class DiagnosticTarget(models.Model):
+    """Diagnostic-only OpenAI-compatible HTTPS target registered in admin.
+
+    Connection settings (``base_url``, ``allowed_host``, ``model_id``,
+    ``credential_env_name``) freeze once any PlayerSlot references the
+    target. ``save()`` validates new or changed connection settings and
+    reactivation; deactivation and renaming need no DNS. No secret value is
+    ever stored: ``credential_env_name`` is one of a closed public name set.
+    ⛔ No column name may contain a ``SECRET_KEY_FRAGMENTS`` substring.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=120)
+    base_url = models.CharField(max_length=300)
+    allowed_host = models.ForeignKey(
+        DiagnosticAllowedHost,
+        on_delete=models.PROTECT,
+        related_name="targets",
+    )
+    model_id = models.CharField(max_length=200, help_text="Model id metadata, never a URL")
+    credential_env_name = models.CharField(
+        max_length=64,
+        choices=[(name, name) for name in CREDENTIAL_ENV_NAMES],
+        help_text="Closed credential environment-name set; the value itself is never stored",
+    )
+    is_active = models.BooleanField(default=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="diagnostic_targets",
+        help_text="Staff user who registered the target",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "game_diagnostic_target"
+        verbose_name = "Diagnostic target"
+        verbose_name_plural = "Diagnostic targets"
+
+    def __str__(self) -> str:
+        return f"{self.name} ({'active' if self.is_active else 'inactive'})"
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        previous: DiagnosticTarget | None = None
+        if self.pk is not None:
+            previous = DiagnosticTarget.objects.filter(pk=self.pk).first()
+        validate_target_save(self, previous=previous)
+        super().save(*args, **kwargs)
+
+
 class PlayerSlot(models.Model):
     """A player slot in a game session (0 or 1)."""
 
@@ -106,11 +207,25 @@ class PlayerSlot(models.Model):
         related_name="player_slots",
         help_text="Per-seat AI prompt for diagnostic two-AI sessions",
     )
+    diagnostic_target = models.ForeignKey(
+        "DiagnosticTarget",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="player_slots",
+        help_text="Diagnostic-only OpenAI-compatible target; exclusive with ai_model",
+    )
 
     class Meta:
         unique_together = ("game", "slot")
         ordering = ["slot"]
         db_table = "game_player_slot"
+        constraints = [
+            CheckConstraint(
+                condition=Q(ai_model__isnull=True) | Q(diagnostic_target__isnull=True),
+                name="game_player_slot_model_xor_target",
+            ),
+        ]
 
     def __str__(self) -> str:
         name = "AI" if self.is_ai else (self.user.username if self.user else "???")

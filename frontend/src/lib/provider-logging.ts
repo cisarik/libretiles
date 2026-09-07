@@ -34,7 +34,13 @@ const BEARER_PATTERN = /Bearer[\s:_-]+\S+/gi;
 // cannot see it.
 const HIGH_ENTROPY_RUN = /[A-Za-z0-9+/=_\-]{16,}/g;
 
-const CREDENTIAL_ENV_NAMES = [
+/**
+ * Closed credential environment-name set. Exported for the S7 diagnostic
+ * target seam: the Django ``DiagnosticTarget.credential_env_name`` choices
+ * are parity-tested against exactly this list, and unlisted names — including
+ * ``DJANGO_SECRET_KEY`` — are refused on both sides.
+ */
+export const CREDENTIAL_ENV_NAMES = [
   "GROQ_API_KEY",
   "GEMINI_API_KEY",
   "MISTRAL_API_KEY",

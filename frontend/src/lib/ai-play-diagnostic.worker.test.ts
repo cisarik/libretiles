@@ -139,3 +139,19 @@ describe("ai-play-diagnostic worker", () => {
     },
   );
 });
+
+describe("S7 diagnostic worker target pass-through", () => {
+  it("forwards only the diagnostic_target_id from the JSONL command", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { dirname, join } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const source = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "../../scripts/diagnostic-worker.mjs"),
+      "utf8",
+    );
+    expect(source).toContain("diagnostic_target_id");
+    expect(source).toContain("diagnosticTargetId");
+    expect(source).not.toMatch(/base_url|credential_env_name|BASE_URL_KEY/);
+    expect(source).toContain('mode: "fake"');
+  });
+});

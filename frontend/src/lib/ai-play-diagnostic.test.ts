@@ -17,6 +17,9 @@ import type { AiMoveStreamTerminal } from "./ai-move-stream";
 
 const fallbackHarness = vi.hoisted(() => ({
   captured: [] as Array<Record<string, unknown>>,
+  runStreamHook: null as
+    | null
+    | ((opts: Record<string, unknown>) => Promise<unknown>),
 }));
 
 vi.mock("./ai-fallback", async (importOriginal) => {
@@ -25,6 +28,14 @@ vi.mock("./ai-fallback", async (importOriginal) => {
     ...actual,
     orchestrateFallbackTurn: async (opts: Record<string, unknown>) => {
       fallbackHarness.captured.push(opts);
+      if (fallbackHarness.runStreamHook !== null) {
+        const streamResult = await fallbackHarness.runStreamHook(opts);
+        return {
+          posts: [],
+          providerRequestsUsed: 0,
+          lastTerminal: streamResult,
+        };
+      }
       return {
         posts: [],
         providerRequestsUsed: 0,
@@ -330,5 +341,131 @@ describe("aiSlot parameterization and credential no-echo", () => {
     const observation = (await drive(1)) as { terminal_kind: string };
     expect(observation.terminal_kind).toBe("generic_error");
     expect(JSON.stringify(observation)).not.toContain("jwt-echo-probe-0123456789abcdef");
+  });
+});
+
+describe("S7 diagnostic target assertion", () => {
+  afterEach(() => {
+    fallbackHarness.captured = [];
+    fallbackHarness.runStreamHook = null;
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  function stubBackendFetch(): void {
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      if (url.includes("/api/catalog/models/")) {
+        return new Response("[]", {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response("{}", { status: 404 });
+    }) as unknown as typeof fetch;
+  }
+
+  async function driveWithCapturedPost(targetId: string | undefined): Promise<{
+    bodies: Array<Record<string, unknown>>;
+    observation: { provider_identity?: string } & Record<string, unknown>;
+  }> {
+    const bodies: Array<Record<string, unknown>> = [];
+    fallbackHarness.runStreamHook = async (opts) => {
+      const streamOpts = opts as {
+        runStream: (request: {
+          pair: { provider: string; model_id: string };
+          timeoutSeconds: number;
+          maxStepsRemaining: number;
+        }) => Promise<unknown>;
+      };
+      return streamOpts.runStream({
+        pair: { provider: "diagnostic-target", model_id: "vendor/target-model" },
+        timeoutSeconds: 30,
+        maxStepsRemaining: 10,
+      });
+    };
+    const observation = await runDiagnosticTurn({
+      post: async (request) => {
+        bodies.push(JSON.parse(await request.text()) as Record<string, unknown>);
+        return new Response("{}", {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      },
+      backendUrl: BACKEND,
+      gameId: "00000000-0000-0000-0000-000000000001",
+      token: "diagnostic-test-token",
+      provider: "diagnostic-target",
+      modelId: "vendor/target-model",
+      timeoutSeconds: 5,
+      maxSteps: 5,
+      queueMode: "selected-only",
+      script: "noop_rescue",
+      ...(targetId === undefined ? {} : { diagnosticTargetId: targetId }),
+    });
+    return { bodies, observation: observation as { provider_identity?: string } & Record<string, unknown> };
+  }
+
+  it("puts the diagnostic_target_id selection assertion on the POST body", async () => {
+    stubBackendFetch();
+    const { bodies, observation } = await driveWithCapturedPost(
+      "00000000-0000-0000-0000-0000000000aa",
+    );
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0].diagnostic_target_id).toBe("00000000-0000-0000-0000-0000000000aa");
+    expect(observation.provider_identity).toBe(
+      "diagnostic-target/00000000-0000-0000-0000-0000000000aa",
+    );
+    expect(JSON.stringify(observation)).not.toContain("https://");
+    expect(JSON.stringify(observation)).not.toContain("credential_env_name");
+  });
+
+  it("omits the assertion and provider identity for catalog seats", async () => {
+    stubBackendFetch();
+    const { bodies, observation } = await driveWithCapturedPost(undefined);
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0].diagnostic_target_id).toBeUndefined();
+    expect(observation.provider_identity).toBeUndefined();
+  });
+});
+
+describe("S7 installFetchGuard egress policy", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("denies provider origins in live mode when the caller passes a deny policy", async () => {
+    const original = vi.fn(async () => new Response("ok"));
+    globalThis.fetch = original as unknown as typeof fetch;
+    const guard = installFetchGuard(BACKEND, { mode: "live", egressMode: "deny" });
+    try {
+      await expect(fetch("https://openrouter.ai/api/v1/chat/completions")).rejects.toThrow(
+        /egress policy/i,
+      );
+      expect(guard.provider).toEqual([]);
+      expect(original).not.toHaveBeenCalled();
+    } finally {
+      guard.restore();
+    }
+  });
+
+  it("still denies everything foreign in fake mode before any socket", async () => {
+    const original = vi.fn(async () => new Response("ok"));
+    globalThis.fetch = original as unknown as typeof fetch;
+    const guard = installFetchGuard(BACKEND, { mode: "fake", egressMode: "deny" });
+    try {
+      await expect(fetch("https://rival.example.com/api/v1/chat/completions")).rejects.toThrow(
+        /fake mode blocked foreign origin/,
+      );
+      expect(guard.foreign).toEqual(["https://rival.example.com"]);
+      expect(original).not.toHaveBeenCalled();
+    } finally {
+      guard.restore();
+    }
   });
 });

@@ -1180,3 +1180,143 @@ class DiagnosticPositionAggregationTests(TestCase):
         assert empty["summary"]["did_not_measure"] == 0
         assert "move_quality_ratio" not in empty["summary"]
         assert "total_provider_requests" not in empty["summary"]
+
+
+# ---------------------------------------------------------------------------
+# S7 diagnostic target identity: runner + report (F10)
+# ---------------------------------------------------------------------------
+
+from unittest import mock  # noqa: E402
+
+from game import diagnostic_targets as dt_module  # noqa: E402
+from game.models import DiagnosticAllowedHost, DiagnosticTarget  # noqa: E402
+
+_RUNNER_PUBLIC_ADDRESS = "8.8.8.8"
+
+
+def _runner_target_dns(addresses: list[str]) -> Any:
+    return mock.patch.object(
+        dt_module, "resolve_host_addresses", mock.MagicMock(return_value=addresses)
+    )
+
+
+def _runner_target(*, name: str = "Runner target") -> DiagnosticTarget:
+    host = DiagnosticAllowedHost.objects.get_or_create(hostname="rival.example.com")[0]
+    with _runner_target_dns([_RUNNER_PUBLIC_ADDRESS]):
+        return DiagnosticTarget.objects.create(
+            name=name,
+            base_url=f"https://{host.hostname}/api/v1",
+            allowed_host=host,
+            model_id="vendor/target-model",
+            credential_env_name="OPENROUTER_API_KEY",
+        )
+
+
+class DiagnosticRunnerTargetIdentityTests(TransactionTestCase):
+    def setUp(self) -> None:
+        self.admin = User.objects.create_user(
+            username=f"runner-target-{uuid_module.uuid4().hex[:8]}"
+        )
+        self.target = _runner_target()
+
+    def _create_target_run(
+        self,
+        *,
+        seat0_target: bool = True,
+        seat1_target: bool = True,
+        instrument: str = "full-game",
+        max_plies: int = 2,
+        max_provider_requests: int = 20,
+        max_wall_clock_seconds: int = 60,
+    ) -> DiagnosticRun:
+        seat0 = _make_rival()
+        seat1 = _make_rival(model_id=FREE_RIVAL_IDS[1])
+        created = create_diagnostic_game(
+            variant_slug="english",
+            seed=1234,
+            seat0_model_id=self.target.model_id if seat0_target else seat0.model_id,
+            seat1_model_id=self.target.model_id if seat1_target else seat1.model_id,
+            prompt_id=None,
+            created_by_id=self.admin.id,
+            assist_mode="assisted",
+            seat0_target_id=str(self.target.id) if seat0_target else None,
+            seat1_target_id=str(self.target.id) if seat1_target else None,
+        )
+        run = DiagnosticRun.objects.get(pk=created["run_id"])
+        parameters: dict[str, Any] = {"django_origin": _CLOSED_ORIGIN}
+        return configure_diagnostic_run(
+            run,
+            instrument=instrument,
+            position_set_digest=_POSITION_SET_DIGEST if instrument == "position-set" else "",
+            max_plies=max_plies,
+            max_provider_requests=max_provider_requests,
+            max_wall_clock_seconds=max_wall_clock_seconds,
+            extra_parameters=parameters,
+        )
+
+    def test_f10_position_pair_identity_is_catalog_or_target(self) -> None:
+        run = self._create_target_run(instrument="position-set")
+        provider, model_id = runner_module._position_pair_identity(run)
+        self.assertEqual(provider, f"diagnostic-target/{self.target.id}")
+        self.assertEqual(model_id, "vendor/target-model")
+
+    def test_f10_position_pair_identity_refuses_mixed_identities(self) -> None:
+        run = self._create_target_run(instrument="position-set", seat1_target=False)
+        with self.assertRaises(runner_module._ReportRefusal):
+            runner_module._position_pair_identity(run)
+
+    def test_f10_build_record_carries_target_model_id(self) -> None:
+        run = self._create_target_run()
+        session = run.session
+        acting = services._resolve_acting_ai_slot(session)
+        assert acting is not None and acting.diagnostic_target is not None
+        runner = runner_module._DiagnosticMatchRunner(
+            run.id, stdout=StringIO(), stderr=StringIO()
+        )
+        record = runner._build_record(
+            run=run,
+            acting=acting,
+            observation=None,
+            move=None,
+            wall_clock_ms=12,
+        )
+        self.assertEqual(record.model_id, "vendor/target-model")
+
+    def test_f10_runner_jsonl_carries_only_the_target_id(self) -> None:
+        ipc_dump = _var_dir() / f"ipc-target-{uuid_module.uuid4().hex}.jsonl"
+        run = self._create_target_run(max_plies=1)
+        result: list[BaseException] = []
+        thread = threading.Thread(
+            target=_call_runner_with_env,
+            args=(run.id, {"STUB_IPC_DUMP": str(ipc_dump)}, result),
+        )
+        thread.start()
+        thread.join(timeout=180)
+        assert not thread.is_alive()
+        self.assertEqual(result, [])
+        lines = [
+            json.loads(line)
+            for line in ipc_dump.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        turn_commands = [item for item in lines if item.get("cmd") == "run_turn"]
+        self.assertTrue(turn_commands)
+        for command in turn_commands:
+            self.assertEqual(command.get("diagnostic_target_id"), str(self.target.id))
+            blob = json.dumps(command)
+            self.assertNotIn("https://", blob)
+            self.assertNotIn("base_url", blob)
+            self.assertNotIn("credential_env_name", blob)
+
+    def test_f10_runner_persists_target_model_id_for_ply(self) -> None:
+        run = self._create_target_run(max_plies=1)
+        result: list[BaseException] = []
+        thread = threading.Thread(target=_call_runner_with_env, args=(run.id, {}, result))
+        thread.start()
+        thread.join(timeout=180)
+        assert not thread.is_alive()
+        self.assertEqual(result, [])
+        ply = DiagnosticPly.objects.filter(run=run).first()
+        assert ply is not None
+        self.assertEqual(ply.model_id, "vendor/target-model")
+        self.assertEqual(ply.seat_index, run.session.current_turn_slot)

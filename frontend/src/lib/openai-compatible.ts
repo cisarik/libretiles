@@ -338,6 +338,31 @@ function createTrackedOpenAIChatModel(input: {
   return compatible.chat(input.modelId);
 }
 
+/**
+ * S7 diagnostic-target model factory. ``createTrackedOpenAIChatModel`` stays
+ * private; the diagnostic seam gets this exported sibling whose optional
+ * ``customFetch`` replaces the ambient transport (the bound diagnostic
+ * adapter owns the request tracker increment after its policy checks).
+ */
+export function getDiagnosticOpenAICompatibleModel(input: {
+  provider: string;
+  modelId: string;
+  baseURL: string;
+  apiKey: string;
+  tracker: ProviderRequestTracker;
+  customFetch?: typeof globalThis.fetch;
+}): LanguageModel {
+  const compatible = createOpenAI({
+    baseURL: input.baseURL,
+    apiKey: input.apiKey,
+    name: input.provider,
+    fetch:
+      input.customFetch ??
+      createTrackedProviderFetch(input.tracker, { provider: input.provider }),
+  });
+  return compatible.chat(input.modelId);
+}
+
 const STANDARD_PAIR_CONFIG = {
   [GROQ_PROVIDER]: {
     modelId: GROQ_MODEL_ID,

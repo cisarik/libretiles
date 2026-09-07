@@ -30,6 +30,10 @@ import {
   type ProviderRequestTracker,
 } from "@/lib/ai-runtimes";
 import {
+  getDiagnosticLanguageRuntime,
+  parseDiagnosticRuntimeSpec,
+} from "@/lib/diagnostic-target-runtime";
+import {
   MOVE_PROMPT_VERSION,
   composeMoveSystemPrompt,
   buildMoveUserPrompt,
@@ -338,6 +342,51 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+/**
+ * S7: the body carries a closed key set. Any OTHER key that names a provider
+ * URL/env/runtime-config surface refuses the whole turn before anything runs.
+ */
+const ALLOWED_BODY_KEYS = new Set([
+  "game_id",
+  "token",
+  "model_id",
+  "runtime_model_id",
+  "timeout",
+  "max_steps",
+  "no_provider_progress_deadline",
+  "diagnostic_target_id",
+]);
+const FORBIDDEN_BODY_FRAGMENTS = [
+  "base_url",
+  "baseurl",
+  "url",
+  "env",
+  "api_key",
+  "apikey",
+  "authorization",
+  "credential",
+  "secret",
+  "bearer",
+  "password",
+  "cookie",
+  "token",
+];
+const TARGET_UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** SSE provider label for a diagnostic target seat; never carries the UUID. */
+const DIAGNOSTIC_SSE_PROVIDER_PATH = "diagnostic-target";
+
+function bodyCarriesProviderConfig(body: Record<string, unknown>): string | null {
+  for (const key of Object.keys(body)) {
+    if (ALLOWED_BODY_KEYS.has(key)) continue;
+    const lowered = key.toLowerCase();
+    if (FORBIDDEN_BODY_FRAGMENTS.some((fragment) => lowered.includes(fragment))) {
+      return key;
+    }
+  }
+  return null;
+}
+
 function normalizePlacementData(value: unknown): PlacementData | null {
   if (!isRecord(value)) return null;
   const row = typeof value.row === "number" ? value.row : null;
@@ -553,8 +602,28 @@ export async function POST(req: NextRequest) {
         }
       }
 
+      // S7: body URL/env/runtime config is rejected before anything runs.
+      const bodyRecord: Record<string, unknown> = isRecord(body) ? body : {};
+      const forbiddenBodyKey = bodyCarriesProviderConfig(bodyRecord);
+      if (forbiddenBodyKey !== null) {
+        emit({
+          type: "error",
+          code: "provider_config_in_body",
+          error:
+            "The AI move request must not carry provider runtime configuration fields.",
+          terminal_cause: "provider_config_in_body",
+        });
+        closeStream();
+        return;
+      }
+      const assertedTargetId =
+        typeof bodyRecord.diagnostic_target_id === "string"
+          ? bodyRecord.diagnostic_target_id
+          : null;
+
       let providerPath = "";
       let runtimeModelId = requestedRuntimeModelId || requestedModelId || "";
+      let resolvedModelId = "";
 
       const candidates: Candidate[] = [];
       let bestScore = -1;
@@ -1125,45 +1194,6 @@ export async function POST(req: NextRequest) {
         sessionModelId =
           typeof context.ai_model_id === "string" ? context.ai_model_id : null;
 
-        const resolvedPair =
-          findCatalogPair(requestedModelId, catalogRows) ??
-          findCatalogPair(sessionModelId, catalogRows) ??
-          findCatalogPair(catalogRows[0]?.model_id, catalogRows);
-        if (!resolvedPair) {
-          emit({
-            type: "error",
-            code: "provider_unavailable",
-            error:
-              "This free rival is temporarily unavailable. Switch to another free rival or retry later.",
-            provider_path: providerPath,
-            runtime_model: runtimeModelId,
-          });
-          closeStream();
-          return;
-        }
-        const resolvedModelId = resolvedPair.model_id;
-
-        if (
-          requestedModelId &&
-          requestedModelId === resolvedPair.model_id &&
-          requestedModelId !== sessionModelId
-        ) {
-          const updateResult = await backendPatch(
-            `/api/game/${game_id}/ai-model/`,
-            { ai_model_model_id: requestedModelId },
-            token,
-          );
-          if (updateResult.ok === false) {
-            emit({
-              type: "error",
-              error: updateResult.error ?? "Could not switch AI model",
-              provider_path: providerPath,
-              runtime_model: runtimeModelId,
-            });
-            closeStream();
-            return;
-          }
-        }
         const backendMaxOutputTokens =
           typeof context.ai_move_max_output_tokens === "number"
             ? context.ai_move_max_output_tokens
@@ -1175,33 +1205,6 @@ export async function POST(req: NextRequest) {
               MAX_MAX_OUTPUT_TOKENS,
             )
           : DEFAULT_MAX_OUTPUT_TOKENS;
-        const requestedRuntimePair =
-          requestedRuntimeModelId
-            ? findCatalogPair(requestedRuntimeModelId, catalogRows)
-            : null;
-        const runtimePair =
-          requestedRuntimePair &&
-          revalidateRuntimePair(
-            requestedRuntimePair.provider,
-            requestedRuntimePair.model_id,
-            catalogRows,
-          )
-            ? requestedRuntimePair
-            : resolvedPair;
-        if (!revalidateRuntimePair(runtimePair.provider, runtimePair.model_id, catalogRows)) {
-          emit({
-            type: "error",
-            code: "provider_unavailable",
-            error:
-              "This free rival is temporarily unavailable. Switch to another free rival or retry later.",
-            provider_path: providerPath,
-            runtime_model: runtimeModelId,
-          });
-          closeStream();
-          return;
-        }
-        runtimeModelId = runtimePair.model_id;
-        providerPath = runtimePair.provider;
         const maxOutputTokens = requestedMaxOutputTokens;
         const useExtendedSearchBudget = timeoutS >= 90 || maxSteps >= 45;
         autoFinalizeGraceMs = useExtendedSearchBudget
@@ -1211,38 +1214,167 @@ export async function POST(req: NextRequest) {
           ? EXTENDED_AUTO_FINALIZE_VALID_CAP
           : AUTO_FINALIZE_VALID_CAP;
 
+        let model: Awaited<ReturnType<typeof getLanguageRuntime>>["model"];
+        const diagnosticRuntime = parseDiagnosticRuntimeSpec(context.diagnostic_runtime);
+        if (diagnosticRuntime !== null || assertedTargetId !== null) {
+          // S7 diagnostic target seat: the selection assertion must match the
+          // backend-authorized target exactly. No catalog fallback, no
+          // ai-model PATCH, and every refusal terminates BEFORE generation.
+          if (assertedTargetId === null) {
+            emit({
+              type: "error",
+              code: "diagnostic_target_required",
+              error:
+                "This seat runs a registered diagnostic target; the request must assert its target id.",
+              provider_path: DIAGNOSTIC_SSE_PROVIDER_PATH,
+              terminal_cause: "diagnostic_target_required",
+            });
+            closeStream();
+            return;
+          }
+          if (
+            !TARGET_UUID_PATTERN.test(assertedTargetId) ||
+            diagnosticRuntime === null ||
+            diagnosticRuntime.target_id !== assertedTargetId
+          ) {
+            emit({
+              type: "error",
+              code: "diagnostic_target_mismatch",
+              error:
+                "The asserted diagnostic target does not match the backend-authorized target.",
+              provider_path: DIAGNOSTIC_SSE_PROVIDER_PATH,
+              terminal_cause: "diagnostic_target_mismatch",
+            });
+            closeStream();
+            return;
+          }
+          resolvedModelId = diagnosticRuntime.model_id;
+          runtimeModelId = diagnosticRuntime.model_id;
+          providerPath = DIAGNOSTIC_SSE_PROVIDER_PATH;
+          try {
+            const runtime = await getDiagnosticLanguageRuntime({
+              runtime: diagnosticRuntime,
+            });
+            model = runtime.model;
+            languageModel = model;
+            runtimeTracker = runtime.tracker;
+          } catch (err) {
+            recordProviderFailure({
+              provider: providerPath,
+              phase: "runtime_construction",
+              error: err,
+            });
+            emit({
+              type: "error",
+              code: "provider_unavailable",
+              error: "The diagnostic target runtime was refused.",
+              provider_path: providerPath,
+              runtime_model: runtimeModelId,
+              terminal_cause: "diagnostic_target_runtime_refused",
+            });
+            closeStream();
+            return;
+          }
+        } else {
+          const resolvedPair =
+            findCatalogPair(requestedModelId, catalogRows) ??
+            findCatalogPair(sessionModelId, catalogRows) ??
+            findCatalogPair(catalogRows[0]?.model_id, catalogRows);
+          if (!resolvedPair) {
+            emit({
+              type: "error",
+              code: "provider_unavailable",
+              error:
+                "This free rival is temporarily unavailable. Switch to another free rival or retry later.",
+              provider_path: providerPath,
+              runtime_model: runtimeModelId,
+            });
+            closeStream();
+            return;
+          }
+
+          if (
+            requestedModelId &&
+            requestedModelId === resolvedPair.model_id &&
+            requestedModelId !== sessionModelId
+          ) {
+            const updateResult = await backendPatch(
+              `/api/game/${game_id}/ai-model/`,
+              { ai_model_model_id: requestedModelId },
+              token,
+            );
+            if (updateResult.ok === false) {
+              emit({
+                type: "error",
+                error: updateResult.error ?? "Could not switch AI model",
+                provider_path: providerPath,
+                runtime_model: runtimeModelId,
+              });
+              closeStream();
+              return;
+            }
+          }
+          const requestedRuntimePair =
+            requestedRuntimeModelId
+              ? findCatalogPair(requestedRuntimeModelId, catalogRows)
+              : null;
+          const runtimePair =
+            requestedRuntimePair &&
+            revalidateRuntimePair(
+              requestedRuntimePair.provider,
+              requestedRuntimePair.model_id,
+              catalogRows,
+            )
+              ? requestedRuntimePair
+              : resolvedPair;
+          if (!revalidateRuntimePair(runtimePair.provider, runtimePair.model_id, catalogRows)) {
+            emit({
+              type: "error",
+              code: "provider_unavailable",
+              error:
+                "This free rival is temporarily unavailable. Switch to another free rival or retry later.",
+              provider_path: providerPath,
+              runtime_model: runtimeModelId,
+            });
+            closeStream();
+            return;
+          }
+          runtimeModelId = runtimePair.model_id;
+          providerPath = runtimePair.provider;
+          resolvedModelId = resolvedPair.model_id;
+          try {
+            const runtime = await getLanguageRuntime(
+              runtimePair.provider,
+              runtimePair.model_id,
+            );
+            model = runtime.model;
+            languageModel = model;
+            runtimeTracker = runtime.tracker;
+          } catch (err) {
+            const normalizedError = normalizeProviderError(err) ?? {
+              code: "provider_auth_failed" as const,
+              message:
+                "This free rival could not authenticate. Switch to another free rival or retry later.",
+            };
+            emit({
+              type: "error",
+              code: normalizedError.code,
+              error: normalizedError.message,
+              provider_path: providerPath,
+              runtime_model: runtimeModelId,
+              ...retryAfterFields(),
+            });
+            closeStream();
+            return;
+          }
+        }
+
         const moveSpec = movePromptSpecFromContext(context);
         const systemPrompt = composeMoveSystemPrompt(
           typeof context.ai_prompt_text === "string" ? context.ai_prompt_text : null,
           moveSpec,
         );
         userPrompt = buildMoveUserPrompt(context);
-        let model: Awaited<ReturnType<typeof getLanguageRuntime>>["model"];
-        try {
-          const runtime = await getLanguageRuntime(
-            runtimePair.provider,
-            runtimePair.model_id,
-          );
-          model = runtime.model;
-          languageModel = model;
-          runtimeTracker = runtime.tracker;
-        } catch (err) {
-          const normalizedError = normalizeProviderError(err) ?? {
-            code: "provider_auth_failed" as const,
-            message:
-              "This free rival could not authenticate. Switch to another free rival or retry later.",
-          };
-          emit({
-            type: "error",
-            code: normalizedError.code,
-            error: normalizedError.message,
-            provider_path: providerPath,
-            runtime_model: runtimeModelId,
-            ...retryAfterFields(),
-          });
-          closeStream();
-          return;
-        }
 
         emit({
           type: "thinking",

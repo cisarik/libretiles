@@ -1587,3 +1587,191 @@ describe("POST /api/ai/move", () => {
     expect(collected.error).toBeDefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// S7 diagnostic target seam (synthetic factory/transport mocks; fake mode only)
+// ---------------------------------------------------------------------------
+
+const diagnosticHarness = vi.hoisted(() => {
+  const diagnosticTrackerSnapshot = vi.fn(() => ({ provider_requests: 0 }));
+  return {
+    diagnosticTrackerSnapshot,
+    getDiagnosticLanguageRuntimeMock: vi.fn(async () => ({
+      model: { provider: "diagnostic-target", modelId: "vendor/target-model" },
+      tracker: {
+        noteProviderRequest: vi.fn(),
+        recordUsage: vi.fn(),
+        recordRetryAfter: vi.fn(),
+        snapshot: diagnosticTrackerSnapshot,
+      },
+    })),
+  };
+});
+
+vi.mock("@/lib/diagnostic-target-runtime", () => ({
+  parseDiagnosticRuntimeSpec: (value: unknown) => {
+    if (typeof value !== "object" || value === null) return null;
+    const record = value as Record<string, unknown>;
+    const keys = Object.keys(record).sort();
+    if (keys.join(",") !== "base_url,credential_env_name,model_id,provider,target_id") {
+      return null;
+    }
+    return value;
+  },
+  getDiagnosticLanguageRuntime: diagnosticHarness.getDiagnosticLanguageRuntimeMock,
+}));
+
+const TARGET_UUID = "00000000-0000-0000-0000-0000000000aa";
+
+function diagnosticContext() {
+  return {
+    ...defaultContext(),
+    ai_model_id: null,
+    diagnostic_runtime: {
+      target_id: TARGET_UUID,
+      provider: `diagnostic-target/${TARGET_UUID}`,
+      model_id: "vendor/target-model",
+      base_url: "https://rival.example.com/api/v1",
+      credential_env_name: "OPENROUTER_API_KEY",
+    },
+  };
+}
+
+function targetRequest(overrides: Record<string, unknown> = {}): NextRequest {
+  return request({
+    model_id: "vendor/target-model",
+    runtime_model_id: "vendor/target-model",
+    ...overrides,
+  });
+}
+
+describe("POST /api/ai/move — S7 diagnostic target seam", () => {
+  beforeEach(() => {
+    generateTextMock.mockReset();
+    stepCountIsMock.mockClear();
+    trackerRecordUsageMock.mockClear();
+    trackerSnapshotMock.mockReset();
+    trackerSnapshotMock.mockReturnValue({ provider_requests: 0 });
+    generateTextMock.mockImplementation(searchWithPassText(true));
+    getLanguageRuntimeMock.mockClear();
+    diagnosticHarness.getDiagnosticLanguageRuntimeMock.mockClear();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  function assertNoTargetMaterial(events: Array<Record<string, unknown>>): void {
+    const blob = JSON.stringify(events);
+    expect(blob).not.toContain("rival.example.com");
+    expect(blob).not.toContain("OPENROUTER_API_KEY");
+    expect(blob).not.toContain(TARGET_UUID);
+    expect(blob).not.toContain("base_url");
+  }
+
+  it("runs the sibling diagnostic runtime on a matching target assertion", async () => {
+    const fetchMock = mockBackend({
+      context: { body: diagnosticContext() },
+      "/validate-move/": {
+        body: { valid: true, total_score: 2, words: [{ word: "A", valid: true }] },
+      },
+      "/ai-move/": {
+        body: { ok: true, action: "place", points: 2, words: [{ word: "A", score: 2 }] },
+      },
+    });
+
+    const { done, events } = await runRoute(
+      targetRequest({ diagnostic_target_id: TARGET_UUID }),
+    );
+
+    expect(done?.action).toBe("place");
+    expect(diagnosticHarness.getDiagnosticLanguageRuntimeMock).toHaveBeenCalledTimes(1);
+    expect(getLanguageRuntimeMock).not.toHaveBeenCalled();
+    expect(generateTextMock).toHaveBeenCalledTimes(1);
+    expect((generateTextMock.mock.calls[0][0] as { model: unknown }).model).toEqual({
+      provider: "diagnostic-target",
+      modelId: "vendor/target-model",
+    });
+    expect(done?.provider_path).toBe("diagnostic-target");
+    expect(done?.runtime_model).toBe("vendor/target-model");
+    assertNoTargetMaterial(events);
+    const calls = fetchMock.mock.calls as Array<[string | URL | Request, RequestInit?]>;
+    expect(calls.some(([, init]) => init?.method === "PATCH")).toBe(false);
+  });
+
+  it("refuses a mismatched target assertion without catalog fallback", async () => {
+    const fetchMock = mockBackend({ context: { body: diagnosticContext() } });
+
+    const { done, error, events } = await collectEvents(
+      targetRequest({ diagnostic_target_id: "00000000-0000-0000-0000-0000000000bb" }),
+    );
+
+    expect(done).toBeUndefined();
+    expect(error?.code).toBe("diagnostic_target_mismatch");
+    expect(diagnosticHarness.getDiagnosticLanguageRuntimeMock).not.toHaveBeenCalled();
+    expect(generateTextMock).not.toHaveBeenCalled();
+    assertNoTargetMaterial(events);
+    expect(fetchUrls(fetchMock).some((url) => url.endsWith("/ai-candidates/"))).toBe(false);
+    expect(fetchUrls(fetchMock).some((url) => url.endsWith("/ai-move/"))).toBe(false);
+    const calls = fetchMock.mock.calls as Array<[string | URL | Request, RequestInit?]>;
+    expect(calls.some(([, init]) => init?.method === "PATCH")).toBe(false);
+  });
+
+  it("refuses an assertion when the backend authorized no target", async () => {
+    mockBackend();
+
+    const { error } = await collectEvents(
+      targetRequest({ diagnostic_target_id: TARGET_UUID }),
+    );
+
+    expect(error?.code).toBe("diagnostic_target_mismatch");
+    expect(diagnosticHarness.getDiagnosticLanguageRuntimeMock).not.toHaveBeenCalled();
+    expect(generateTextMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses a target-configured seat whose body omits the assertion", async () => {
+    mockBackend({ context: { body: diagnosticContext() } });
+
+    const { error } = await collectEvents(targetRequest());
+
+    expect(error?.code).toBe("diagnostic_target_required");
+    expect(diagnosticHarness.getDiagnosticLanguageRuntimeMock).not.toHaveBeenCalled();
+    expect(generateTextMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["base_url", "https://rival.example.com/api/v1"],
+    ["credential_env_name", "OPENROUTER_API_KEY"],
+    ["runtime_base_url", "https://rival.example.com/api/v1"],
+  ])("rejects provider runtime config field %s on the body", async (key, value) => {
+    mockBackend({ context: { body: diagnosticContext() } });
+
+    const { error } = await collectEvents(
+      targetRequest({ diagnostic_target_id: TARGET_UUID, [key]: value }),
+    );
+
+    expect(error?.code).toBe("provider_config_in_body");
+    expect(diagnosticHarness.getDiagnosticLanguageRuntimeMock).not.toHaveBeenCalled();
+    expect(generateTextMock).not.toHaveBeenCalled();
+  });
+
+  it("terminates before generation when the sibling runtime refuses", async () => {
+    diagnosticHarness.getDiagnosticLanguageRuntimeMock.mockRejectedValueOnce(
+      new Error("diagnostic target runtime refused"),
+    );
+    const fetchMock = mockBackend({ context: { body: diagnosticContext() } });
+
+    const { done, error } = await collectEvents(
+      targetRequest({ diagnostic_target_id: TARGET_UUID }),
+    );
+
+    expect(done).toBeUndefined();
+    expect(error?.type).toBe("error");
+    expect(error?.terminal_cause).toBe("diagnostic_target_runtime_refused");
+    expect(generateTextMock).not.toHaveBeenCalled();
+    expect(fetchUrls(fetchMock).some((url) => url.endsWith("/ai-candidates/"))).toBe(false);
+    expect(fetchUrls(fetchMock).some((url) => url.endsWith("/ai-move/"))).toBe(false);
+    expect(fetchUrls(fetchMock).some((url) => url.endsWith("/ai-playability/"))).toBe(false);
+  });
+});

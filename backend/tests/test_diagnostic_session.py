@@ -765,3 +765,217 @@ def test_f_w_fresh_schema_seed_and_schema_only_reverse(tmp_path: Path) -> None:
     )
     assert reverse.returncode == 0, reverse.stderr
     _assert_managed_flag(database)
+
+
+# ---------------------------------------------------------------------------
+# S7 diagnostic target seats: creation, context seam, PATCH refusal (F05/F06)
+# ---------------------------------------------------------------------------
+
+from unittest import mock  # noqa: E402
+
+from game import diagnostic_targets as dt  # noqa: E402
+from game.models import DiagnosticAllowedHost, DiagnosticTarget  # noqa: E402
+
+_TARGET_PUBLIC_ADDRESS = "8.8.8.8"
+
+
+def _target_dns(addresses: list[str]) -> Any:
+    return mock.patch.object(
+        dt, "resolve_host_addresses", mock.MagicMock(return_value=addresses)
+    )
+
+
+class DiagnosticTargetSeatTests(TestCase):
+    def setUp(self) -> None:
+        self.player = User.objects.create_user(username="target-player", password="pass1234")
+        self.admin = User.objects.create_superuser(
+            username="target-admin",
+            email="target-admin@example.com",
+            password="target-admin-pass",
+        )
+        self.seat0, self.seat1 = _seed_two_rivals()
+        self.host = DiagnosticAllowedHost.objects.create(hostname="rival.example.com")
+        with _target_dns([_TARGET_PUBLIC_ADDRESS]):
+            self.target = DiagnosticTarget.objects.create(
+                name="Session target",
+                base_url="https://rival.example.com/api/v1",
+                allowed_host=self.host,
+                model_id="vendor/target-model",
+                credential_env_name="OPENROUTER_API_KEY",
+            )
+
+    def _create(self, **overrides: Any) -> dict[str, Any]:
+        kwargs: dict[str, Any] = {
+            "variant_slug": "english",
+            "seed": 7,
+            "seat0_model_id": self.seat0.model_id,
+            "seat1_model_id": self.seat1.model_id,
+            "prompt_id": None,
+            "created_by_id": self.admin.id,
+            "assist_mode": "assisted",
+        }
+        kwargs.update(overrides)
+        return services.create_diagnostic_game(**kwargs)
+
+    def test_f05_target_seat_has_null_catalog_model(self) -> None:
+        created = self._create(
+            seat0_model_id="vendor/target-model",
+            seat1_model_id=self.seat1.model_id,
+            seat0_target_id=str(self.target.id),
+        )
+        session = GameSession.objects.get(public_id=created["game_id"])
+        slot0 = session.slots.get(slot=0)
+        slot1 = session.slots.get(slot=1)
+        self.assertIsNone(slot0.ai_model)
+        self.assertEqual(slot0.diagnostic_target_id, self.target.id)
+        self.assertEqual(slot1.ai_model_id, self.seat1.id)
+        self.assertIsNone(slot1.diagnostic_target)
+        run = DiagnosticRun.objects.get(pk=created["run_id"])
+        self.assertEqual(run.seat0_model_id, "vendor/target-model")
+        self.assertEqual(
+            run.parameters_json.get("seat0_target_id"), str(self.target.id)
+        )
+
+    def test_f05_both_target_seats_null_session_model(self) -> None:
+        created = self._create(
+            seat0_model_id="vendor/target-model",
+            seat1_model_id="vendor/target-model",
+            seat0_target_id=str(self.target.id),
+            seat1_target_id=str(self.target.id),
+        )
+        session = GameSession.objects.get(public_id=created["game_id"])
+        self.assertIsNone(session.ai_model)
+        self.assertIsNone(session.slots.get(slot=0).ai_model)
+        self.assertIsNone(session.slots.get(slot=1).ai_model)
+
+    def test_f05_unknown_target_refused(self) -> None:
+        with self.assertRaises(services.DiagnosticSessionError):
+            self._create(seat0_target_id=str(uuid.uuid4()))
+        with self.assertRaises(services.DiagnosticSessionError):
+            self._create(seat0_target_id="not-a-uuid")
+
+    def test_f05_deactivated_target_refused_at_creation(self) -> None:
+        self.target.is_active = False
+        self.target.save()
+        with self.assertRaises(services.DiagnosticSessionError):
+            self._create(
+                seat0_model_id="vendor/target-model",
+                seat1_model_id=self.seat1.model_id,
+                seat0_target_id=str(self.target.id),
+            )
+
+    def test_f06_target_seat_context_has_no_catalog_fallback_and_carries_runtime(self) -> None:
+        created = self._create(
+            seat0_model_id="vendor/target-model",
+            seat1_model_id=self.seat1.model_id,
+            seat0_target_id=str(self.target.id),
+        )
+        session = GameSession.objects.get(public_id=created["game_id"])
+        session.current_turn_slot = 0
+        session.save(update_fields=["current_turn_slot"])
+
+        context = services.get_ai_context(created["game_id"], created["service_user_id"])
+        self.assertIsNone(context["ai_model_id"])
+        runtime = context["diagnostic_runtime"]
+        self.assertIsNotNone(runtime)
+        assert runtime is not None
+        self.assertEqual(runtime["target_id"], str(self.target.id))
+        self.assertEqual(runtime["provider"], f"diagnostic-target/{self.target.id}")
+        self.assertEqual(runtime["model_id"], "vendor/target-model")
+        self.assertEqual(runtime["base_url"], "https://rival.example.com/api/v1")
+        self.assertEqual(runtime["credential_env_name"], "OPENROUTER_API_KEY")
+
+    def test_f06_catalog_seat_context_carries_no_runtime(self) -> None:
+        created = self._create(
+            seat0_model_id="vendor/target-model",
+            seat1_model_id=self.seat1.model_id,
+            seat0_target_id=str(self.target.id),
+        )
+        session = GameSession.objects.get(public_id=created["game_id"])
+        session.current_turn_slot = 1
+        session.save(update_fields=["current_turn_slot"])
+        context = services.get_ai_context(created["game_id"], created["service_user_id"])
+        self.assertIsNone(context["diagnostic_runtime"])
+        self.assertEqual(context["ai_model_id"], self.seat1.model_id)
+
+    def test_f06_player_context_never_carries_runtime(self) -> None:
+        created = services.create_game(user_id=self.player.id, ai_model_id=self.seat0.id)
+        context = services.get_ai_context(created["game_id"], self.player.id)
+        self.assertIsNone(context["diagnostic_runtime"])
+        diagnostic = self._create(
+            seat0_model_id="vendor/target-model",
+            seat1_model_id=self.seat1.model_id,
+            seat0_target_id=str(self.target.id),
+        )
+        with self.assertRaises(services.GameNotFoundError):
+            services.get_ai_context(diagnostic["game_id"], self.player.id)
+
+    def test_f06_inactive_target_runtime_is_withheld(self) -> None:
+        created = self._create(
+            seat0_model_id="vendor/target-model",
+            seat1_model_id=self.seat1.model_id,
+            seat0_target_id=str(self.target.id),
+        )
+        session = GameSession.objects.get(public_id=created["game_id"])
+        session.current_turn_slot = 0
+        session.save(update_fields=["current_turn_slot"])
+        self.target.is_active = False
+        self.target.save()
+        context = services.get_ai_context(created["game_id"], created["service_user_id"])
+        self.assertIsNone(context["diagnostic_runtime"])
+        self.assertIsNone(context["ai_model_id"])
+
+    def test_f06_inactive_host_runtime_is_withheld(self) -> None:
+        created = self._create(
+            seat0_model_id="vendor/target-model",
+            seat1_model_id=self.seat1.model_id,
+            seat0_target_id=str(self.target.id),
+        )
+        session = GameSession.objects.get(public_id=created["game_id"])
+        session.current_turn_slot = 0
+        session.save(update_fields=["current_turn_slot"])
+        self.host.is_active = False
+        self.host.save()
+        context = services.get_ai_context(created["game_id"], created["service_user_id"])
+        self.assertIsNone(context["diagnostic_runtime"])
+
+    def test_f06_set_game_ai_model_refused_on_target_seat(self) -> None:
+        created = self._create(
+            seat0_model_id="vendor/target-model",
+            seat1_model_id=self.seat1.model_id,
+            seat0_target_id=str(self.target.id),
+        )
+        session = GameSession.objects.get(public_id=created["game_id"])
+        session.current_turn_slot = 0
+        session.save(update_fields=["current_turn_slot"])
+        result = services.set_game_ai_model(
+            game_id=created["game_id"],
+            user_id=created["service_user_id"],
+            ai_model_model_id=self.seat0.model_id,
+        )
+        self.assertFalse(result["ok"])
+        session.refresh_from_db()
+        self.assertIsNone(session.slots.get(slot=0).ai_model)
+
+    def test_f06_set_game_ai_model_unchanged_for_catalog_diagnostic_seat(self) -> None:
+        created = self._create()
+        session = GameSession.objects.get(public_id=created["game_id"])
+        session.current_turn_slot = 0
+        session.save(update_fields=["current_turn_slot"])
+        result = services.set_game_ai_model(
+            game_id=created["game_id"],
+            user_id=created["service_user_id"],
+            ai_model_model_id=self.seat1.model_id,
+        )
+        self.assertTrue(result["ok"])
+        session.refresh_from_db()
+        self.assertEqual(session.ai_model_id, self.seat1.id)
+
+    def test_f06_set_game_ai_model_unchanged_for_product_game(self) -> None:
+        created = services.create_game(user_id=self.player.id, ai_model_id=self.seat0.id)
+        result = services.set_game_ai_model(
+            game_id=created["game_id"],
+            user_id=self.player.id,
+            ai_model_model_id=self.seat1.model_id,
+        )
+        self.assertTrue(result["ok"])

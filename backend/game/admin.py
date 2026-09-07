@@ -9,10 +9,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from django.contrib import admin, messages
+from django.contrib.admin.models import LogEntry
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.paginator import EmptyPage, Paginator
 from django.db import IntegrityError
 from django.db.models import Count, QuerySet
+from django.forms import ModelForm
 from django.http import Http404, HttpRequest, HttpResponse, HttpResponseNotAllowed
 from django.shortcuts import redirect
 from django.template.response import TemplateResponse
@@ -29,8 +31,22 @@ from .diagnostic_admin_reports import (
     present_report,
     read_diagnostic_report,
 )
+from .diagnostic_targets import (
+    DiagnosticTargetError,
+    canonical_hostname,
+    credential_env_present,
+    validate_target_save,
+)
 from .diagnostics import COMPLETION_SOURCE_VOCABULARY
-from .models import ChatMessage, DiagnosticRun, GameSession, Move, PlayerSlot
+from .models import (
+    ChatMessage,
+    DiagnosticAllowedHost,
+    DiagnosticRun,
+    DiagnosticTarget,
+    GameSession,
+    Move,
+    PlayerSlot,
+)
 from .services import (
     DIAGNOSTIC_MAX_PLIES_ADMIN_MAX,
     DIAGNOSTIC_MAX_PLIES_DEFAULT,
@@ -952,6 +968,11 @@ class DiagnosticRunAdmin(_DiagnosticRunAdmin):
             ),
             "launch_url": reverse("admin:game_diagnosticrun_launch"),
             "changelist_url": reverse("admin:game_diagnosticrun_changelist"),
+            "targets": list(
+                DiagnosticTarget.objects.filter(is_active=True)
+                .select_related("allowed_host")
+                .order_by("name")
+            ),
             "defaults": {
                 "instrument": "full-game",
                 "assist_mode": "assisted",
@@ -980,11 +1001,30 @@ class DiagnosticRunAdmin(_DiagnosticRunAdmin):
             return None
         return value
 
+    def _launch_target(self, raw: str, seat_label: str) -> DiagnosticTarget | None:
+        """Resolve one launch-form target choice; None when blank."""
+        if not raw:
+            return None
+        try:
+            target_uuid = uuid_module.UUID(raw)
+        except ValueError:
+            raise ValidationError(f"{seat_label} target choice is not a valid target id.") from None
+        target = DiagnosticTarget.objects.filter(
+            pk=target_uuid, is_active=True, allowed_host__is_active=True
+        ).first()
+        if target is None:
+            raise ValidationError(
+                f"{seat_label} must choose a listed ACTIVE diagnostic target."
+            )
+        return target
+
     def _launch_post(self, request: HttpRequest) -> HttpResponse:
         instrument = request.POST.get("instrument", "")
         assist_mode = request.POST.get("assist_mode", "")
         seat0_model_id = request.POST.get("seat0_model_id", "").strip()
         seat1_model_id = request.POST.get("seat1_model_id", "").strip()
+        seat0_target_raw = request.POST.get("seat0_target", "").strip()
+        seat1_target_raw = request.POST.get("seat1_target", "").strip()
         variant_slug = request.POST.get("variant_slug", "").strip() or "english"
         position_set_digest = request.POST.get("position_set_digest", "").strip().lower()
         prompt_raw = request.POST.get("prompt_id", "").strip()
@@ -992,6 +1032,14 @@ class DiagnosticRunAdmin(_DiagnosticRunAdmin):
         seed_raw = request.POST.get("seed", "").strip()
         seed = int(seed_raw) if seed_raw.isdigit() else random.randint(0, 2**31 - 1)
         created_by_id = request.user.id
+
+        seat0_target: DiagnosticTarget | None = None
+        seat1_target: DiagnosticTarget | None = None
+        try:
+            seat0_target = self._launch_target(seat0_target_raw, "Seat 0")
+            seat1_target = self._launch_target(seat1_target_raw, "Seat 1")
+        except ValidationError as exc:
+            return self._launch_form(request, error=" ".join(exc.messages))
 
         max_plies = self._int_field(
             request.POST.get("max_plies", ""),
@@ -1014,8 +1062,26 @@ class DiagnosticRunAdmin(_DiagnosticRunAdmin):
             errors.append("Choose an instrument.")
         if assist_mode not in ("assisted", "authorship"):
             errors.append("Choose an assist mode.")
-        if not seat0_model_id or not seat1_model_id:
-            errors.append("Both seat model ids are required.")
+        for seat_number, model_id, target in (
+            (0, seat0_model_id, seat0_target),
+            (1, seat1_model_id, seat1_target),
+        ):
+            if target is None and not model_id:
+                errors.append(f"Seat {seat_number} needs exactly one choice: a catalog model id or an active target.")
+            if target is not None and model_id:
+                errors.append(f"Seat {seat_number} must carry exactly one choice: model id or target, not both.")
+        if (
+            instrument == "position-set"
+            and (seat0_target is not None or seat1_target is not None)
+            and not (
+                seat0_target is not None
+                and seat1_target is not None
+                and seat0_target.id == seat1_target.id
+            )
+        ):
+            errors.append(
+                "Position-set with a target requires the SAME active target on both seats."
+            )
         if max_plies is None:
             errors.append(f"max_plies must be 1..{DIAGNOSTIC_MAX_PLIES_ADMIN_MAX}.")
         if max_provider_requests is None:
@@ -1039,6 +1105,13 @@ class DiagnosticRunAdmin(_DiagnosticRunAdmin):
         assert max_wall_clock_seconds is not None
         assert created_by_id is not None
 
+        effective_seat0_model_id = (
+            seat0_target.model_id if seat0_target is not None else seat0_model_id
+        )
+        effective_seat1_model_id = (
+            seat1_target.model_id if seat1_target is not None else seat1_model_id
+        )
+
         stale = abandon_stale_diagnostic_runs()
         if stale:
             self.message_user(
@@ -1052,11 +1125,13 @@ class DiagnosticRunAdmin(_DiagnosticRunAdmin):
             created = create_diagnostic_game(
                 variant_slug=variant_slug,
                 seed=seed,
-                seat0_model_id=seat0_model_id,
-                seat1_model_id=seat1_model_id,
+                seat0_model_id=effective_seat0_model_id,
+                seat1_model_id=effective_seat1_model_id,
                 prompt_id=prompt_id,
                 created_by_id=created_by_id,
                 assist_mode=assist_mode,
+                seat0_target_id=str(seat0_target.id) if seat0_target is not None else None,
+                seat1_target_id=str(seat1_target.id) if seat1_target is not None else None,
             )
         except IntegrityError:
             self.message_user(
@@ -1098,3 +1173,305 @@ class DiagnosticRunAdmin(_DiagnosticRunAdmin):
         spawn_diagnostic_runner(run.id)
         self.message_user(request, _LAUNCH_SUCCESS_COPY, level=messages.SUCCESS)
         return redirect(reverse("admin:game_diagnosticrun_change", args=[run.id]))
+
+
+# ---------------------------------------------------------------------------
+# S7 diagnostic targets: hostname allowlist + diagnostic-only target rows
+# ---------------------------------------------------------------------------
+
+if TYPE_CHECKING:
+    _AllowedHostAdminBase = admin.ModelAdmin[DiagnosticAllowedHost]
+    _DiagnosticTargetModelAdminBase = admin.ModelAdmin[DiagnosticTarget]
+    _AllowedHostFormBase = ModelForm[DiagnosticAllowedHost]
+    _DiagnosticTargetFormBase = ModelForm[DiagnosticTarget]
+else:
+    _AllowedHostAdminBase = admin.ModelAdmin
+    _DiagnosticTargetModelAdminBase = admin.ModelAdmin
+    _AllowedHostFormBase = ModelForm
+    _DiagnosticTargetFormBase = ModelForm
+
+
+def _log_admin_action(
+    *,
+    user_id: int | None,
+    instance: DiagnosticAllowedHost | DiagnosticTarget,
+    action_flag: int,
+    change_message: str,
+) -> None:
+    """Audit with actor, object identity, and FIELD NAMES — never a value."""
+    from django.contrib.contenttypes.models import ContentType
+
+    if user_id is None:
+        # Audited actions only run behind authenticated admin views; an
+        # unauthenticated actor never reaches this path.
+        return
+    LogEntry.objects.log_action(
+        user_id=user_id,
+        content_type_id=ContentType.objects.get_for_model(instance).pk,
+        object_id=str(instance.pk),
+        object_repr=str(instance)[:200],
+        action_flag=action_flag,
+        change_message=change_message,
+    )
+
+
+def _field_names_for(model: Any) -> str:
+    excluded = {"id", "created_at", "updated_at"}
+    return ", ".join(
+        sorted(field.name for field in model._meta.fields if field.name not in excluded)
+    )
+
+
+class DiagnosticAllowedHostForm(_AllowedHostFormBase):
+    class Meta:
+        model = DiagnosticAllowedHost
+        fields = ("hostname", "is_active")
+        help_texts = {
+            "hostname": (
+                "Canonical ASCII hostname, already lowercase. Adding a host performs "
+                "no DNS, no HTTP, and no runner spawn."
+            ),
+        }
+
+    def clean(self) -> dict[str, Any]:
+        cleaned = super().clean() or {}
+        hostname = cleaned.get("hostname")
+        if hostname:
+            try:
+                canonical_hostname(hostname)
+            except DiagnosticTargetError as exc:
+                raise ValidationError({"hostname": str(exc)}) from exc
+        return cleaned
+
+
+@admin.register(DiagnosticAllowedHost)
+class DiagnosticAllowedHostAdmin(_AllowedHostAdminBase):
+    form = DiagnosticAllowedHostForm
+    list_display = ("hostname", "is_active", "created_by", "created_at", "updated_at")
+    list_filter = ("is_active",)
+    search_fields = ("hostname",)
+    readonly_fields = ("created_by", "created_at", "updated_at")
+    actions = ("activate_selected_hosts", "deactivate_selected_hosts")
+
+    def has_add_permission(self, request: HttpRequest) -> bool:
+        return super().has_add_permission(request) and self.has_change_permission(request)
+
+    def log_addition(
+        self, request: HttpRequest, obj: DiagnosticAllowedHost, change_message: str
+    ) -> LogEntry:
+        return super().log_addition(
+            request,
+            obj,
+            f"Added fields: {_field_names_for(DiagnosticAllowedHost)}",
+        )
+
+    def save_model(
+        self,
+        request: HttpRequest,
+        obj: DiagnosticAllowedHost,
+        form: _AllowedHostFormBase,
+        change: bool,
+    ) -> None:
+        if not change and obj.created_by_id is None and request.user.is_authenticated:
+            obj.created_by = request.user
+        super().save_model(request, obj, form, change)
+
+    @admin.action(description="Activate selected allowed hosts")
+    def activate_selected_hosts(
+        self, request: HttpRequest, queryset: QuerySet[DiagnosticAllowedHost]
+    ) -> None:
+        changed = 0
+        for host in queryset.filter(is_active=False):
+            host.is_active = True
+            host.save(update_fields=["is_active", "updated_at"])
+            _log_admin_action(
+                user_id=request.user.id,
+                instance=host,
+                action_flag=2,
+                change_message="Changed fields: is_active (activated diagnostic allowed host)",
+            )
+            changed += 1
+        if changed:
+            self.message_user(
+                request, f"Activated {changed} allowed host(s).", level=messages.SUCCESS
+            )
+
+    @admin.action(description="Deactivate selected allowed hosts")
+    def deactivate_selected_hosts(
+        self, request: HttpRequest, queryset: QuerySet[DiagnosticAllowedHost]
+    ) -> None:
+        changed = 0
+        for host in queryset.filter(is_active=True):
+            host.is_active = False
+            host.save(update_fields=["is_active", "updated_at"])
+            _log_admin_action(
+                user_id=request.user.id,
+                instance=host,
+                action_flag=2,
+                change_message="Changed fields: is_active (deactivated diagnostic allowed host)",
+            )
+            changed += 1
+        if changed:
+            self.message_user(
+                request, f"Deactivated {changed} allowed host(s).", level=messages.SUCCESS
+            )
+
+
+class DiagnosticTargetForm(_DiagnosticTargetFormBase):
+    class Meta:
+        model = DiagnosticTarget
+        fields = (
+            "name",
+            "base_url",
+            "allowed_host",
+            "model_id",
+            "credential_env_name",
+            "is_active",
+        )
+        help_texts = {
+            "base_url": (
+                "HTTPS OpenAI-compatible base, implicit or :443 port only. Host must equal "
+                "the referenced allowed host exactly. Refused: userinfo, IP literals, "
+                "Unicode/xn-- hosts, trailing dots, queries, fragments, dot path segments, "
+                "percent-escapes. New or changed settings resolve DNS once before persisting."
+            ),
+            "credential_env_name": (
+                "Closed environment-name set. The credential VALUE is never stored, "
+                "rendered, or echoed."
+            ),
+            "model_id": "Model id metadata only; it is never used as a URL.",
+        }
+
+    def clean(self) -> dict[str, Any]:
+        cleaned = super().clean() or {}
+        if self.errors:
+            return cleaned
+        allowed_host = cleaned.get("allowed_host")
+        probe = DiagnosticTarget(
+            pk=self.instance.pk,
+            name=cleaned.get("name") or "",
+            base_url=cleaned.get("base_url") or "",
+            model_id=cleaned.get("model_id") or "",
+            credential_env_name=cleaned.get("credential_env_name") or "",
+            is_active=bool(cleaned.get("is_active", False)),
+        )
+        if allowed_host is not None:
+            probe.allowed_host = allowed_host
+        previous = (
+            DiagnosticTarget.objects.filter(pk=self.instance.pk).first()
+            if self.instance.pk
+            else None
+        )
+        try:
+            validate_target_save(probe, previous=previous)
+        except DiagnosticTargetError as exc:
+            raise ValidationError(str(exc)) from exc
+        return cleaned
+
+
+@admin.register(DiagnosticTarget)
+class DiagnosticTargetAdmin(_DiagnosticTargetModelAdminBase):
+    form = DiagnosticTargetForm
+    list_display = (
+        "name",
+        "base_url",
+        "allowed_host",
+        "model_id",
+        "credential_env_name",
+        "is_active",
+        "credential_present",
+        "updated_at",
+    )
+    list_filter = ("is_active", "allowed_host", "credential_env_name")
+    search_fields = ("name", "base_url", "model_id")
+    readonly_fields = ("created_by", "created_at", "updated_at")
+    actions = ("activate_selected_targets", "deactivate_selected_targets")
+
+    @admin.display(description="credential present")
+    def credential_present(self, obj: DiagnosticTarget) -> str:
+        return credential_env_present(obj.credential_env_name)
+
+    def has_add_permission(self, request: HttpRequest) -> bool:
+        return super().has_add_permission(request) and self.has_change_permission(request)
+
+    def log_addition(
+        self, request: HttpRequest, obj: DiagnosticTarget, change_message: str
+    ) -> LogEntry:
+        return super().log_addition(
+            request,
+            obj,
+            f"Added fields: {_field_names_for(DiagnosticTarget)}",
+        )
+
+    def save_model(
+        self,
+        request: HttpRequest,
+        obj: DiagnosticTarget,
+        form: _DiagnosticTargetFormBase,
+        change: bool,
+    ) -> None:
+        if not change and obj.created_by_id is None and request.user.is_authenticated:
+            obj.created_by = request.user
+        super().save_model(request, obj, form, change)
+
+    @admin.action(description="Activate selected diagnostic targets")
+    def activate_selected_targets(
+        self, request: HttpRequest, queryset: QuerySet[DiagnosticTarget]
+    ) -> None:
+        changed = 0
+        refused = 0
+        for target in queryset.filter(is_active=False):
+            target.is_active = True
+            try:
+                target.save(update_fields=["is_active", "updated_at"])
+            except (DiagnosticTargetError, ValidationError) as exc:
+                target.is_active = False
+                refused += 1
+                self.message_user(
+                    request,
+                    f"Target {target.name} could not be activated: {_diagnostic_error_text(exc)}",
+                    level=messages.ERROR,
+                )
+                continue
+            _log_admin_action(
+                user_id=request.user.id,
+                instance=target,
+                action_flag=2,
+                change_message="Changed fields: is_active (activated diagnostic target)",
+            )
+            changed += 1
+        if changed:
+            self.message_user(request, f"Activated {changed} target(s).", level=messages.SUCCESS)
+        if refused:
+            self.message_user(
+                request, f"{refused} selected target(s) could not be activated.", level=messages.WARNING
+            )
+
+    @admin.action(description="Deactivate selected diagnostic targets")
+    def deactivate_selected_targets(
+        self, request: HttpRequest, queryset: QuerySet[DiagnosticTarget]
+    ) -> None:
+        changed = 0
+        for target in queryset.filter(is_active=True):
+            target.is_active = False
+            target.save(update_fields=["is_active", "updated_at"])
+            _log_admin_action(
+                user_id=request.user.id,
+                instance=target,
+                action_flag=2,
+                change_message="Changed fields: is_active (deactivated diagnostic target)",
+            )
+            changed += 1
+        if changed:
+            self.message_user(
+                request, f"Deactivated {changed} target(s).", level=messages.SUCCESS
+            )
+
+
+def _diagnostic_error_text(exc: Exception) -> str:
+    message = getattr(exc, "message", None)
+    if isinstance(message, str) and message:
+        return message
+    if isinstance(exc, ValidationError):
+        return "; ".join(str(item) for item in exc.messages)
+    return str(exc)

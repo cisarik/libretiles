@@ -61,6 +61,11 @@ async function runTurn(command) {
     providerOrigins: guard.provider,
     executedRuntimeMode: "fake",
     driver: "fake",
+    // S7: the ONLY target field crossing IPC is the selection-assertion id.
+    // No target URL, no credential environment name, no secret.
+    ...(typeof command.diagnostic_target_id === "string" && command.diagnostic_target_id
+      ? { diagnosticTargetId: command.diagnostic_target_id }
+      : {}),
   });
   return observation;
 }

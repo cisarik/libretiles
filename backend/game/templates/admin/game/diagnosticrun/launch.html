@@ -53,6 +53,12 @@
     <div class="diag-panel">
       <h1>{{ title }}</h1>
       <p>{{ subtitle }}</p>
+      <p>
+        Each seat carries exactly one choice: a catalog model id OR one active
+        diagnostic target. A position-set launch with a target requires the
+        same target on both seats. Target connections are registered under
+        Diagnostic targets and resolved through the hostname allowlist.
+      </p>
       {% if error %}<p class="diag-error"><strong>{{ error }}</strong></p>{% endif %}
       <form method="post" action="{{ launch_url }}">
         {% csrf_token %}
@@ -75,8 +81,24 @@
           <label for="id_seat0_model_id">Seat 0 model id</label>
           <input type="text" name="seat0_model_id" id="id_seat0_model_id" maxlength="200">
 
+          <label for="id_seat0_target">Seat 0 diagnostic target (alternative to the model id)</label>
+          <select name="seat0_target" id="id_seat0_target">
+            <option value="">— catalog model id —</option>
+            {% for target in targets %}
+            <option value="{{ target.id }}">{{ target.name }} — {{ target.model_id }} — {{ target.allowed_host.hostname }}</option>
+            {% endfor %}
+          </select>
+
           <label for="id_seat1_model_id">Seat 1 model id</label>
           <input type="text" name="seat1_model_id" id="id_seat1_model_id" maxlength="200">
+
+          <label for="id_seat1_target">Seat 1 diagnostic target (alternative to the model id)</label>
+          <select name="seat1_target" id="id_seat1_target">
+            <option value="">— catalog model id —</option>
+            {% for target in targets %}
+            <option value="{{ target.id }}">{{ target.name }} — {{ target.model_id }} — {{ target.allowed_host.hostname }}</option>
+            {% endfor %}
+          </select>
 
           <label for="id_prompt_id">Prompt id (optional)</label>
           <input type="text" name="prompt_id" id="id_prompt_id" inputmode="numeric">
