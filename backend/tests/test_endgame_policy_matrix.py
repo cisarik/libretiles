@@ -437,11 +437,11 @@ def test_node_bound_matrix_regression_tuples() -> None:
         for sample in samples
     ] == [
         (POLICY_WITNESS, "slovak", 55, "SIX_CONSECUTIVE_ZERO_SCORES", (303, 243)),
-        (POLICY_RANKED_BEST, "slovak", 26, "BAG_EMPTY_AND_PLAYER_OUT", (586, 533)),
-        (POLICY_RANKED_RACK, "slovak", 31, "BAG_EMPTY_AND_PLAYER_OUT", (494, 365)),
+        (POLICY_RANKED_BEST, "slovak", 26, "BAG_EMPTY_AND_PLAYER_OUT", (502, 452)),
+        (POLICY_RANKED_RACK, "slovak", 27, "BAG_EMPTY_AND_PLAYER_OUT", (487, 375)),
         (POLICY_WITNESS, "english", 69, "SIX_CONSECUTIVE_ZERO_SCORES", (375, 138)),
-        (POLICY_RANKED_BEST, "english", 22, "BAG_EMPTY_AND_PLAYER_OUT", (511, 418)),
-        (POLICY_RANKED_RACK, "english", 22, "BAG_EMPTY_AND_PLAYER_OUT", (511, 418)),
+        (POLICY_RANKED_BEST, "english", 22, "BAG_EMPTY_AND_PLAYER_OUT", (497, 340)),
+        (POLICY_RANKED_RACK, "english", 22, "BAG_EMPTY_AND_PLAYER_OUT", (497, 340)),
     ]
 
 
@@ -604,7 +604,7 @@ def test_shared_rack_aware_selector_keeps_threshold_bonus_and_physical_tiles() -
     def candidate(score, placements):
         return RankedMoveCandidate(
             placements=tuple(placements), words=(), total_score=score,
-            tiles_used=len(placements), leave_value=0, rack_out=False,
+            tiles_used=len(placements), leave_equity_cp=0, rack_out=False,
             canonical_key=tuple((p.row, p.col, p.letter, p.blank_as or "") for p in placements),
         )
 

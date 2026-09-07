@@ -44,7 +44,7 @@ _COMMITTED_DIR = (
     Path(__file__).resolve().parents[1] / "assets" / "diagnostics" / "position_sets"
 )
 _COMMITTED_SET_DIGEST = (
-    "f5ae61b467b4f21e6fe9ee94024e9c3c06e09e0dbae7e6cc8954ff911dc86ef4"
+    "aaac5c27282a67fbe3d3fabd202098181b5101d66598e35bf79ebb746226773a"
 )
 
 

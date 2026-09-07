@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from .board import BOARD_SIZE, Board
+from .leave_equity import LeaveEquityProfile, leave_equity_cp, profile_for_variant
 from .legality import evaluate_scoring_move
 from .tiles import get_tile_points
 from .types import Direction, Placement
@@ -42,16 +43,6 @@ _DELTA = {
 }
 
 
-def _vowel_set(variant: object) -> frozenset[str]:
-    """Optional variant vowels, defaulting to AEIOU so en/sk ranking is unchanged."""
-    vowels = getattr(variant, "vowels", None)
-    if vowels is None:
-        return frozenset("AEIOU")
-    if isinstance(vowels, str):
-        return frozenset(vowels)
-    return frozenset(str(token) for token in vowels)
-
-
 @dataclass(frozen=True)
 class SearchResult:
     status: SearchStatus
@@ -69,7 +60,7 @@ class RankedMoveCandidate:
     words: tuple[str, ...]
     total_score: int
     tiles_used: int
-    leave_value: int
+    leave_equity_cp: int
     rack_out: bool
     canonical_key: CanonicalPlacementKey
 
@@ -163,7 +154,6 @@ class _Searcher:
         self.blank_letters = blank_letters
         self.letter_set = frozenset(blank_letters)
         self.variant = variant
-        self.vowel_set = _vowel_set(variant)
         self.rack_size = len(rack)
         self.initial_rack = Counter(rack)
         self.nodes = 0
@@ -493,6 +483,8 @@ class _RankedSearcher(_Searcher):
         self.top_k = top_k
         self.max_unique_placements = max_unique_placements
         self.tile_points = dict(tile_points) if tile_points is not None else get_tile_points()
+        self.profile: LeaveEquityProfile = profile_for_variant(variant, self.tile_points)
+        self._leave_cache: dict[tuple[tuple[str, int], ...], int] = {}
         self.seen: set[CanonicalPlacementKey] = set()
         self.ranked: list[RankedMoveCandidate] = []
 
@@ -535,33 +527,30 @@ class _RankedSearcher(_Searcher):
             )
         )
 
-    def _leave_components(self, placements: Sequence[Placement]) -> tuple[int, int, int]:
+    def _calculate_leave_equity(self, placed: Sequence[Placement]) -> int:
         remaining = Counter(self.rack_tiles)
-        for placement in placements:
+        for placement in placed:
             tile = "?" if placement.letter == "?" else placement.letter
             remaining[tile] -= 1
             if remaining[tile] <= 0:
                 del remaining[tile]
-
-        point_burden = sum(
-            self.tile_points.get(tile, 0) * count for tile, count in remaining.items()
-        )
-        duplicate_excess = sum(max(count - 1, 0) for count in remaining.values())
-        vowels = sum(remaining.get(vowel, 0) for vowel in self.vowel_set)
-        consonants = sum(
-            count
-            for tile, count in remaining.items()
-            if tile != "?" and tile not in self.vowel_set
-        )
-        imbalance = abs(vowels - consonants)
-        return point_burden, duplicate_excess, imbalance
+        key = tuple(sorted(remaining.items()))
+        cached = self._leave_cache.get(key)
+        if cached is None:
+            cached = leave_equity_cp(
+                remaining,
+                profile=self.profile,
+                bag_count=self.bag_count,
+                tile_points=self.tile_points,
+            )
+            self._leave_cache[key] = cached
+        return cached
 
     @staticmethod
     def _rank_key(candidate: RankedMoveCandidate) -> tuple[object, ...]:
         return (
-            -candidate.total_score,
+            -(candidate.total_score * 100 + candidate.leave_equity_cp),
             -(1 if candidate.rack_out else 0),
-            candidate.leave_value,
             -candidate.tiles_used,
             candidate.canonical_key,
         )
@@ -593,18 +582,13 @@ class _RankedSearcher(_Searcher):
             return
         self.seen.add(canonical_key)
 
-        point_burden, duplicate_excess, imbalance = self._leave_components(placed)
-        leave_value = min(
-            point_burden * 100 + duplicate_excess * 10 + imbalance,
-            10_000,
-        )
         tiles_used = len(placed)
         candidate = RankedMoveCandidate(
             placements=tuple(sorted(placed, key=lambda item: (item.row, item.col))),
             words=certified.words,
             total_score=certified.total_score,
             tiles_used=tiles_used,
-            leave_value=leave_value,
+            leave_equity_cp=self._calculate_leave_equity(placed),
             rack_out=self.bag_count == 0 and tiles_used == len(self.rack_tiles),
             canonical_key=canonical_key,
         )

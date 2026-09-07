@@ -30,7 +30,7 @@ from game.diagnostics import COMPLETION_SOURCE_VOCABULARY, ARTIFACT_ID
 from game.models import DiagnosticPly, DiagnosticRun
 from game.services import configure_diagnostic_run, create_diagnostic_game
 
-POSITION_SET_DIGEST = "f5ae61b467b4f21e6fe9ee94024e9c3c06e09e0dbae7e6cc8954ff911dc86ef4"
+POSITION_SET_DIGEST = "aaac5c27282a67fbe3d3fabd202098181b5101d66598e35bf79ebb746226773a"
 _CLOSED_ORIGIN = "http://127.0.0.1:9"
 
 _PROVIDER_BY_ID = {model_id: provider for provider, model_id in FREE_RIVAL_PAIRS}

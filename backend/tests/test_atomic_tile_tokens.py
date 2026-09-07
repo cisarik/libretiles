@@ -630,8 +630,8 @@ def test_declared_vowels_change_leave_quality_slovak_stays_on_default(
         slug="vowel-probe",
     )
 
-    def _leave(variant: object) -> tuple[int, int, int]:
-        searcher = _RankedSearcher(
+    def _searcher(variant: object) -> _RankedSearcher:
+        return _RankedSearcher(
             board=Board(get_premiums_path()),
             rack=["Á", "B"],
             authority=WordAuthority.from_words(("ÁB", "BÁ")),
@@ -644,13 +644,14 @@ def test_declared_vowels_change_leave_quality_slovak_stays_on_default(
             blank_letters=("Á", "B"),
             variant=variant,
         )
-        return searcher._leave_components([])
 
-    default_leave = _leave(slovak)
-    declared_leave = _leave(declared)
-    assert default_leave != declared_leave
-    # Residual: Á is not in default AEIOU, so it counts as a consonant.
-    _burden, _dup, default_imbalance = default_leave
-    _burden2, _dup2, declared_imbalance = declared_leave
-    assert default_imbalance == 2
-    assert declared_imbalance == 0
+    def _leave_equity(variant: object) -> int:
+        return _searcher(variant)._calculate_leave_equity([])
+
+    default_equity = _leave_equity(slovak)
+    declared_equity = _leave_equity(declared)
+    assert default_equity != declared_equity
+    # Residual: the loaded Slovak object carries the default AEIOU vowels, so
+    # Á counts as a consonant there; the probe variant declares Á as a vowel.
+    assert "Á" not in _searcher(slovak).profile.vowels
+    assert "Á" in _searcher(declared).profile.vowels

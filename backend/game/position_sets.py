@@ -168,7 +168,11 @@ def game_from_snapshot(snapshot: Mapping[str, Any]) -> Game:
     bag_tiles = snapshot.get("bag_tiles")
     if not isinstance(bag_tiles, list) or not all(isinstance(tile, str) for tile in bag_tiles):
         raise PositionSetError("snapshot bag_tiles must be a list of tokens")
-    bag = TileBag(tiles=list(bag_tiles), variant=variant_slug)
+    # TileBag.__post_init__ refills an empty ``tiles`` list as a brand-new bag;
+    # an explicitly empty snapshot bag must stay empty, so construct with a
+    # placeholder and assign the true (possibly empty) sequence afterwards.
+    bag = TileBag(tiles=list(bag_tiles) or ["?"], variant=variant_slug)
+    bag.tiles = list(bag_tiles)
     getattr(bag, "_rng").setstate(_rng_state_from_json(snapshot.get("bag_rng_state")))
     to_move = snapshot.get("to_move_seat_index")
     if to_move not in {0, 1}:

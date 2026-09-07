@@ -42,7 +42,7 @@ _COMMITTED_POSITION_SET = (
     / "assets"
     / "diagnostics"
     / "position_sets"
-    / "english-f5ae61b4.json"
+    / "english-aaac5c27.json"
 )
 
 

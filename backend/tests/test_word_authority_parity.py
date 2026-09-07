@@ -919,11 +919,13 @@ def test_ranked_search_matches_the_pinned_baseline(frozen_search_clock: None) ->
     assert top.words == ("SQUIZ",)
     assert top.total_score == 66
     assert top.tiles_used == 5
-    assert top.leave_value == 200
+    assert top.leave_equity_cp == 575
     assert top.rack_out is False
-    assert [candidate.total_score for candidate in result.candidates] == sorted(
-        (candidate.total_score for candidate in result.candidates), reverse=True
-    )
+    utilities = [
+        candidate.total_score * 100 + candidate.leave_equity_cp
+        for candidate in result.candidates
+    ]
+    assert utilities == sorted(utilities, reverse=True)
 
 
 def test_blank_premium_and_bingo_scoring_match_the_pinned_baseline() -> None:

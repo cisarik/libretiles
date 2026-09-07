@@ -1626,7 +1626,7 @@ class GameAPITest(TestCase):
                     words=("AT",),
                     total_score=46,
                     tiles_used=1,
-                    leave_value=123,
+                    leave_equity_cp=123,
                     rack_out=False,
                     canonical_key=((7, 7, "A", ""),),
                 ),

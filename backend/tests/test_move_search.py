@@ -279,9 +279,11 @@ def test_ranked_search_is_deterministic_and_immediate_score_dominates(
     assert first.candidates[0].total_score > find_legal_scoring_move(
         board, list("QUIZERS"), authority=authority
     ).total_score
-    assert [candidate.total_score for candidate in first.candidates] == sorted(
-        (candidate.total_score for candidate in first.candidates), reverse=True
-    )
+    utilities = [
+        candidate.total_score * 100 + candidate.leave_equity_cp
+        for candidate in first.candidates
+    ]
+    assert utilities == sorted(utilities, reverse=True)
 
 
 def test_ranked_search_canonical_dedupe_keeps_blank_identity(
@@ -390,5 +392,14 @@ def test_ranked_midgame_prefers_stronger_collins_move(
 
     assert witness.status == "found"
     assert ranked.status == "found"
-    assert ranked.candidates[0].total_score == 38
+    # Utility ranking keeps QUIZ 35 (leave E,R,S) over RISQUE 38 (leave Z):
+    # the higher raw score survives in the pool but loses the top slot.
+    assert ranked.candidates[0].total_score == 35
+    assert ranked.candidates[0].words == ("QUIZ", "QAT")
+    assert max(candidate.total_score for candidate in ranked.candidates) == 38
     assert ranked.candidates[0].total_score > witness.total_score
+    utilities = [
+        candidate.total_score * 100 + candidate.leave_equity_cp
+        for candidate in ranked.candidates
+    ]
+    assert utilities == sorted(utilities, reverse=True)

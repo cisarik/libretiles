@@ -217,10 +217,10 @@ def test_node_bound_strength_regression_tuples() -> None:
         (result.seed, result.strategy_slot, result.spread, result.end_reason.name)
         for result in results
     ] == [
-        (300, 0, 420, "BAG_EMPTY_AND_PLAYER_OUT"),
-        (300, 1, 505, "BAG_EMPTY_AND_PLAYER_OUT"),
-        (301, 0, 461, "BAG_EMPTY_AND_PLAYER_OUT"),
-        (301, 1, 501, "BAG_EMPTY_AND_PLAYER_OUT"),
+        (300, 0, 583, "BAG_EMPTY_AND_PLAYER_OUT"),
+        (300, 1, 419, "BAG_EMPTY_AND_PLAYER_OUT"),
+        (301, 0, 282, "BAG_EMPTY_AND_PLAYER_OUT"),
+        (301, 1, 515, "BAG_EMPTY_AND_PLAYER_OUT"),
     ]
 
 
