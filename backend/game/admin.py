@@ -1,22 +1,35 @@
 import os
 import random
+import re
 import subprocess
 import sys
+import uuid as uuid_module
 from collections import defaultdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from django.contrib import admin, messages
-from django.core.exceptions import PermissionDenied
+from django.core.exceptions import PermissionDenied, ValidationError
+from django.core.paginator import EmptyPage, Paginator
 from django.db import IntegrityError
 from django.db.models import Count, QuerySet
-from django.http import HttpRequest, HttpResponse
+from django.http import Http404, HttpRequest, HttpResponse, HttpResponseNotAllowed
 from django.shortcuts import redirect
 from django.template.response import TemplateResponse
 from django.urls import URLPattern, path, reverse
 from django.utils import timezone
 
 from accounts.models import User
+from .diagnostic_admin_reports import (
+    AVAILABILITY_COPY,
+    AVAILABILITY_EMPTY,
+    ReportReadResult,
+    comparison_metrics_summary,
+    floor_violations,
+    present_report,
+    read_diagnostic_report,
+)
+from .diagnostics import COMPLETION_SOURCE_VOCABULARY
 from .models import ChatMessage, DiagnosticRun, GameSession, Move, PlayerSlot
 from .services import (
     DIAGNOSTIC_MAX_PLIES_ADMIN_MAX,
@@ -355,6 +368,207 @@ def spawn_diagnostic_runner(run_id: Any) -> None:
     )
 
 
+_TERMINAL_DIAGNOSTIC_STATUSES = ("completed", "failed", "cancelled", "abandoned", "blocked_dependency")
+_COMPARE_PAGE_SIZE = 20
+_DIGEST_FILTER_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+
+# CSS classes come ONLY from these closed maps of DiagnosticRun literals.
+_STATUS_CLASSES = {
+    "queued": "diag-status-queued",
+    "running": "diag-status-running",
+    "completed": "diag-status-completed",
+    "failed": "diag-status-failed",
+    "cancelled": "diag-status-cancelled",
+    "abandoned": "diag-status-abandoned",
+    "blocked_dependency": "diag-status-blocked-dependency",
+}
+_INSTRUMENT_CLASSES = {
+    "position-set": "diag-instrument-position-set",
+    "full-game": "diag-instrument-full-game",
+}
+
+_HEARTBEAT_CADENCE_COPY = (
+    "The runner records a heartbeat at least every five plies or approximately "
+    "every 30 seconds."
+)
+_NOT_MEASURED = "Not measured."
+_LAUNCH_SUCCESS_COPY = (
+    "Diagnostic run launched in fake mode. This page shows its heartbeat, "
+    "recorded plies, and report when available."
+)
+
+_REASON_NOT_COMPLETED = "Run status is not completed."
+_REASON_NOT_MODEL_POSITION = "Report is not a model-position report."
+_REASON_IDENTITY = "Artifact identity does not agree with the run."
+_REASON_MIXED_SEATS = "Mixed seats — attributed to neither model."
+_REASON_SAMPLE_MODELS = "Sample model ids do not agree with the run seats."
+_REASON_COUNTS = "Artifact counts are inconsistent."
+_REASON_RUNTIME = "Executed runtime is not live; fake and mixed-runtime runs are never pooled."
+_REASON_RUNTIME_SAMPLES = "Sample executed runtime is not consistently live."
+_REASON_TRUNCATED = "Report is truncated."
+_REASON_UNATTEMPTED = "Report records unattempted positions."
+_REASON_FLOOR = "A displayed metric is below its sample floor."
+_REASON_PROVENANCE = "Provenance is incomplete: {field}."
+
+_COMPARE_NOTE_PAGE = (
+    "This table covers only the runs displayed on this page and holds no rolling statistics."
+)
+_COMPARE_NOTE_PROMPT = "Persisted prompt IDs are not historical prompt-content fingerprints."
+_POOL_EMPTY_COPY = "No measured comparison pool on this page."
+_NO_RUNS_COPY = "No position-set terminal runs on this page."
+
+
+def _samples_of(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    raw = payload.get("samples")
+    if not isinstance(raw, list):
+        return []
+    return [sample for sample in raw if isinstance(sample, dict)]
+
+
+def _d3_counts_consistent(summary: dict[str, Any], sample_count_total: int) -> bool:
+    """D3 count consistency: sample_count equals the sample list length,
+    position_count splits into attempted + unattempted, the completion-source
+    histogram stays inside the six-word vocabulary, and histogram totals
+    reconcile with the did-not-measure count."""
+    sample_count = summary.get("sample_count")
+    if not isinstance(sample_count, int) or isinstance(sample_count, bool):
+        return False
+    if sample_count != sample_count_total:
+        return False
+    position_count = summary.get("position_count")
+    if not isinstance(position_count, int) or isinstance(position_count, bool):
+        return False
+    unattempted = summary.get("unattempted_count")
+    if not isinstance(unattempted, int) or isinstance(unattempted, bool):
+        return False
+    if position_count != sample_count + unattempted:
+        return False
+    counts_raw = summary.get("completion_source_counts")
+    if not isinstance(counts_raw, dict):
+        return False
+    if any(key not in COMPLETION_SOURCE_VOCABULARY for key in counts_raw):
+        return False
+    for value in counts_raw.values():
+        if not isinstance(value, int) or isinstance(value, bool):
+            return False
+    did_not_measure = summary.get("completion_source_did_not_measure_count")
+    if not isinstance(did_not_measure, int) or isinstance(did_not_measure, bool):
+        return False
+    return sum(counts_raw.values()) == sample_count - did_not_measure
+
+
+def _comparison_pool_status(
+    run: DiagnosticRun, result: ReportReadResult
+) -> tuple[bool, str, dict[str, Any] | None]:
+    """Measured-pool qualification for the comparison table.
+
+    The pool requires completed + position-set + model-position, agreeing
+    identities, one model on both seats and in every sample, consistent D3
+    counts, a consistently LIVE executed runtime, no truncation, no
+    unattempted positions, floors met, and complete provenance. Fake,
+    insufficient, partial, failed, mismatched, and no-report runs stay
+    visible with an explicit exclusion reason and are never pooled.
+    """
+    if run.status != "completed":
+        return False, _REASON_NOT_COMPLETED, None
+    if run.seat0_model_id != run.seat1_model_id:
+        return False, _REASON_MIXED_SEATS, None
+    if result.failure is not None:
+        return False, AVAILABILITY_COPY[result.failure], None
+    payload = result.payload
+    assert payload is not None
+    if payload.get("report_kind") != "model-position":
+        return False, _REASON_NOT_MODEL_POSITION, None
+    requested_raw = payload.get("requested")
+    requested = requested_raw if isinstance(requested_raw, dict) else {}
+    if (
+        requested.get("instrument") != run.instrument
+        or requested.get("position_set_digest") != run.position_set_digest
+        or requested.get("variant_slug") != run.variant_slug
+        or requested.get("assist_mode") != run.assist_mode
+    ):
+        return False, _REASON_IDENTITY, None
+    model_id = run.seat0_model_id
+    provider = requested.get("provider")
+    if requested.get("model_id") != model_id:
+        return False, _REASON_IDENTITY, None
+    if not isinstance(provider, str) or not provider:
+        return False, _REASON_IDENTITY, None
+    samples = _samples_of(payload)
+    if any(sample.get("model_id") != model_id for sample in samples):
+        return False, _REASON_SAMPLE_MODELS, None
+    indices: set[int] = set()
+    for sample in samples:
+        position_raw = sample.get("position")
+        position = position_raw if isinstance(position_raw, dict) else {}
+        index = position.get("position_index")
+        if not isinstance(index, int) or isinstance(index, bool) or index in indices:
+            return False, _REASON_COUNTS, None
+        indices.add(index)
+    summary_raw = payload.get("summary")
+    if not isinstance(summary_raw, dict):
+        return False, _REASON_COUNTS, None
+    if not _d3_counts_consistent(summary_raw, len(samples)):
+        return False, _REASON_COUNTS, None
+    if run.executed_runtime_mode != "live" or requested.get("executed_runtime_mode") != "live":
+        return False, _REASON_RUNTIME, None
+    if any(sample.get("executed_runtime_mode") != "live" for sample in samples):
+        return False, _REASON_RUNTIME_SAMPLES, None
+    unattempted = summary_raw.get("unattempted_count")
+    if not isinstance(unattempted, int) or isinstance(unattempted, bool) or unattempted != 0:
+        return False, _REASON_UNATTEMPTED, None
+    if summary_raw.get("truncated") is not False:
+        return False, _REASON_TRUNCATED, None
+    if floor_violations(samples, summary_raw):
+        return False, _REASON_FLOOR, None
+    source_revision = payload.get("source_revision")
+    parameters = run.parameters_json if isinstance(run.parameters_json, dict) else {}
+    script = parameters.get("script", requested.get("script"))
+    queue_mode = parameters.get("queue_mode", requested.get("queue_mode"))
+    provenance_fields = [
+        ("source revision", isinstance(source_revision, str) and bool(source_revision)),
+        ("persisted prompt id", run.prompt_id is not None),
+        ("script", isinstance(script, str) and bool(script)),
+        ("queue mode", isinstance(queue_mode, str) and bool(queue_mode)),
+        ("configured caps", min(run.max_plies, run.max_provider_requests, run.max_wall_clock_seconds) > 0),
+    ]
+    for field, present in provenance_fields:
+        if not present:
+            return False, _REASON_PROVENANCE.format(field=field), None
+    return True, "", payload
+
+
+def _pool_group_parts(run: DiagnosticRun, payload: dict[str, Any]) -> tuple[str, str, str]:
+    """(sort key, label, model identity) for one pooled comparison group."""
+    requested_raw = payload.get("requested")
+    requested = requested_raw if isinstance(requested_raw, dict) else {}
+    source_revision = str(payload.get("source_revision") or "")
+    script = str(requested.get("script") or "")
+    queue_mode = str(requested.get("queue_mode") or "")
+    sort_key = "|".join(
+        (
+            run.position_set_digest,
+            run.variant_slug,
+            run.assist_mode,
+            run.executed_runtime_mode,
+            source_revision,
+            str(run.prompt_id),
+            script,
+            queue_mode,
+        )
+    )
+    label = (
+        f"digest {run.position_set_digest[:12]}… · variant {run.variant_slug} · "
+        f"assist {run.assist_mode} · runtime {run.executed_runtime_mode} · "
+        f"source revision {source_revision} · prompt #{run.prompt_id} · "
+        f"script {script} · queue {queue_mode} · caps "
+        f"{run.max_plies}/{run.max_provider_requests}/{run.max_wall_clock_seconds}"
+    )
+    provider = str(requested.get("provider") or "")
+    model_id = str(requested.get("model_id") or "")
+    return sort_key, label, f"{provider}|{model_id}"
+
+
 @admin.register(DiagnosticRun)
 class DiagnosticRunAdmin(_DiagnosticRunAdmin):
     change_list_template = "admin/game/diagnosticrun/change_list.html"
@@ -410,6 +624,16 @@ class DiagnosticRunAdmin(_DiagnosticRunAdmin):
                 self.admin_site.admin_view(self.launch_view),
                 name="game_diagnosticrun_launch",
             ),
+            path(
+                "compare/",
+                self.admin_site.admin_view(self.compare_view),
+                name="game_diagnosticrun_compare",
+            ),
+            path(
+                "<uuid:run_id>/cancel/",
+                self.admin_site.admin_view(self.cancel_view),
+                name="game_diagnosticrun_cancel",
+            ),
         ]
         return custom_urls + super().get_urls()
 
@@ -456,6 +680,257 @@ class DiagnosticRunAdmin(_DiagnosticRunAdmin):
                 f"{refused} selected run(s) could not be cancelled.",
                 level=messages.WARNING,
             )
+
+    def change_view(
+        self,
+        request: HttpRequest,
+        object_id: str,
+        form_url: str = "",
+        extra_context: dict[str, Any] | None = None,
+    ) -> HttpResponse:
+        """Read-only live run page. GET only; never the default change form."""
+        if request.method != "GET":
+            return HttpResponseNotAllowed(["GET"])
+        run = self._get_run_or_404(object_id)
+        if not self.has_view_permission(request, run):
+            raise PermissionDenied
+        return self._run_page(request, run)
+
+    def _get_run_or_404(self, object_id: str) -> DiagnosticRun:
+        try:
+            run = DiagnosticRun.objects.filter(pk=object_id).first()
+        except (TypeError, ValueError, ValidationError):
+            raise Http404("Diagnostic run not found") from None
+        if run is None:
+            raise Http404("Diagnostic run not found")
+        return run
+
+    def _run_page(self, request: HttpRequest, run: DiagnosticRun) -> TemplateResponse:
+        in_flight = run.status in ("queued", "running")
+        if in_flight:
+            # In-flight GET must not open a report file: no reader call at all.
+            report_context: dict[str, Any] = {
+                "state": "empty",
+                "message": AVAILABILITY_EMPTY,
+            }
+        else:
+            report_context = present_report(
+                run.id,
+                run.report_path,
+                terminal=True,
+                run_score_authority=run.score_authority,
+            )
+        # Query budget: the PK get above plus ONE bounded ply query. The 20
+        # newest rows are fetched descending and reversed in memory; the
+        # latest ply identity comes from this same list.
+        ply_rows: list[Any] = list(
+            run.plies.order_by("-ply_index")
+            .values_list(
+                "ply_index",
+                "position_index",
+                "seat_index",
+                "model_id",
+                "executed_runtime_mode",
+                "score_authority",
+                "completion_source",
+                "terminal_cause",
+                "model_legal_score",
+                "ranked_best_score",
+                "valid_candidate_count",
+                "provider_requests_used",
+                "wall_clock_ms",
+                named=True,
+            )[:20]
+        )
+        ply_rows.reverse()
+        latest = ply_rows[-1] if ply_rows else None
+        context = {
+            **self.admin_site.each_context(request),
+            "opts": self.model._meta,
+            "title": f"Diagnostic run {run.id.hex[:8]}",
+            "subtitle": (
+                "Live run status, recorded plies, and finished report (fake mode only)."
+            ),
+            "run_id": str(run.id),
+            "run_id_short": run.id.hex[:8],
+            "status": run.status,
+            "status_display": run.get_status_display(),
+            "status_class": _STATUS_CLASSES.get(run.status, "diag-status-unknown"),
+            "instrument": run.instrument,
+            "instrument_display": run.get_instrument_display(),
+            "instrument_class": _INSTRUMENT_CLASSES.get(
+                run.instrument, "diag-instrument-unknown"
+            ),
+            "seat0_model_id": run.seat0_model_id,
+            "seat1_model_id": run.seat1_model_id,
+            "assist_mode_display": run.get_assist_mode_display(),
+            "executed_runtime_mode": run.executed_runtime_mode or "not recorded",
+            "variant_slug": run.variant_slug,
+            "digest_short": run.position_set_digest[:12] if run.position_set_digest else "",
+            "end_reason": run.diagnostic_end_reason,
+            "has_heartbeat": run.heartbeat_at is not None,
+            "heartbeat_at": timezone.localtime(run.heartbeat_at) if run.heartbeat_at else None,
+            "heartbeat_age_seconds": (
+                int((timezone.now() - run.heartbeat_at).total_seconds())
+                if run.heartbeat_at
+                else None
+            ),
+            "heartbeat_cadence": _HEARTBEAT_CADENCE_COPY,
+            "max_plies": run.max_plies,
+            "last_ply_index": ply_rows[-1].ply_index if ply_rows else None,
+            "ply_rows": ply_rows,
+            "latest_seat_index": latest.seat_index if latest else None,
+            "latest_model_id": latest.model_id if latest else None,
+            "latest_completion_source": (
+                latest.completion_source
+                if latest is not None and latest.completion_source
+                else _NOT_MEASURED
+            )
+            if latest is not None
+            else None,
+            "in_flight": in_flight,
+            "can_cancel": in_flight and self.has_change_permission(request, run),
+            "cancel_url": reverse("admin:game_diagnosticrun_cancel", args=[run.id]),
+            "change_url": reverse("admin:game_diagnosticrun_change", args=[run.id]),
+            "compare_url": reverse("admin:game_diagnosticrun_compare"),
+            "report": report_context,
+        }
+        response = TemplateResponse(
+            request, "admin/game/diagnosticrun/change_form.html", context
+        )
+        if in_flight:
+            response["Refresh"] = "2"
+        return response
+
+    def cancel_view(self, request: HttpRequest, run_id: uuid_module.UUID) -> HttpResponse:
+        """POST-only cancel; delegates to cancel_diagnostic_run (cancelled,
+        never failed). Terminal races are informational only; no retry."""
+        try:
+            run = DiagnosticRun.objects.get(pk=run_id)
+        except DiagnosticRun.DoesNotExist:
+            raise Http404("Diagnostic run not found") from None
+        if not self.has_change_permission(request, run):
+            raise PermissionDenied
+        if request.method != "POST":
+            return HttpResponseNotAllowed(["POST"])
+        try:
+            cancel_diagnostic_run(run_id=run.id)
+        except DiagnosticSessionError:
+            self.message_user(
+                request,
+                f"Diagnostic run {run.id.hex[:8]} is not in flight; no cancel "
+                "was applied.",
+                level=messages.INFO,
+            )
+        else:
+            self.message_user(
+                request,
+                f"Diagnostic run {run.id.hex[:8]} cancelled at its next ply "
+                "boundary; no Move rows were created.",
+                level=messages.SUCCESS,
+            )
+        return redirect(reverse("admin:game_diagnosticrun_change", args=[run.id]))
+
+    def compare_view(self, request: HttpRequest) -> HttpResponse:
+        """GET-only cross-model comparison over the displayed page of runs."""
+        if not self.has_view_permission(request):
+            raise PermissionDenied
+        if request.method != "GET":
+            return HttpResponseNotAllowed(["GET"])
+        digest_raw = request.GET.get("digest", "").strip().lower()
+        digest_filter = digest_raw if _DIGEST_FILTER_PATTERN.fullmatch(digest_raw) else ""
+        queryset = DiagnosticRun.objects.filter(
+            instrument="position-set",
+            status__in=_TERMINAL_DIAGNOSTIC_STATUSES,
+        )
+        if digest_filter:
+            queryset = queryset.filter(position_set_digest=digest_filter)
+        paginator = Paginator(queryset.order_by("-created_at"), _COMPARE_PAGE_SIZE)
+        page_raw = request.GET.get("page", "1")
+        page_number = int(page_raw) if page_raw.isdigit() and int(page_raw) >= 1 else 1
+        try:
+            page = paginator.page(page_number)
+        except EmptyPage:
+            page = paginator.page(paginator.num_pages)
+
+        # At most one artifact parse per run and at most 20 runs per page.
+        excluded_rows: list[dict[str, Any]] = []
+        pool: dict[str, dict[str, Any]] = {}
+        for run in page.object_list:
+            result = read_diagnostic_report(run.id, run.report_path)
+            pooled, reason, payload = _comparison_pool_status(run, result)
+            row: dict[str, Any] = {
+                "run_id_short": run.id.hex[:8],
+                "status_display": run.get_status_display(),
+                "status_class": _STATUS_CLASSES.get(run.status, "diag-status-unknown"),
+                "seat0_model_id": run.seat0_model_id,
+                "seat1_model_id": run.seat1_model_id,
+                "mixed_seats": run.seat0_model_id != run.seat1_model_id,
+                "created_at": run.created_at,
+            }
+            if not pooled:
+                row["reason"] = reason
+                excluded_rows.append(row)
+                continue
+            assert payload is not None
+            metrics = comparison_metrics_summary(_samples_of(payload), payload["summary"])
+            row["metrics"] = metrics
+            sort_key, label, model_identity = _pool_group_parts(run, payload)
+            entry = pool.setdefault(sort_key, {"label": label, "models": {}})
+            model_entry = entry["models"].setdefault(
+                model_identity,
+                {
+                    "provider": model_identity.split("|", 1)[0],
+                    "model_id": model_identity.split("|", 1)[1],
+                    "runs": [],
+                },
+            )
+            model_entry["runs"].append(row)
+
+        groups: list[dict[str, Any]] = []
+        for entry in pool.values():
+            models = [
+                {
+                    "provider": model["provider"],
+                    "model_id": model["model_id"],
+                    "runs": model["runs"],
+                }
+                for model in sorted(
+                    entry["models"].values(), key=lambda model: model["model_id"]
+                )
+            ]
+            groups.append({"label": entry["label"], "models": models})
+        groups.sort(key=lambda group: group["label"])
+
+        base_url = reverse("admin:game_diagnosticrun_compare")
+
+        def _page_url(number: int) -> str:
+            url = f"{base_url}?page={number}"
+            return f"{url}&digest={digest_filter}" if digest_filter else url
+
+        context = {
+            **self.admin_site.each_context(request),
+            "opts": self.model._meta,
+            "title": "Diagnostic model comparison",
+            "subtitle": (
+                "Cross-model comparison over the displayed page of finished "
+                "position-set runs. Fake-mode runs are shown but never pooled."
+            ),
+            "groups": groups,
+            "excluded_rows": excluded_rows,
+            "pool_empty": not groups,
+            "pool_empty_copy": _POOL_EMPTY_COPY,
+            "no_runs": paginator.count == 0,
+            "no_runs_copy": _NO_RUNS_COPY,
+            "note_page": _COMPARE_NOTE_PAGE,
+            "note_prompt": _COMPARE_NOTE_PROMPT,
+            "digest_filter": digest_filter,
+            "page_number": page.number,
+            "num_pages": paginator.num_pages,
+            "prev_url": _page_url(page.previous_page_number()) if page.has_previous() else None,
+            "next_url": _page_url(page.next_page_number()) if page.has_next() else None,
+        }
+        return TemplateResponse(request, "admin/game/diagnosticrun/comparison.html", context)
 
     def launch_view(self, request: HttpRequest) -> HttpResponse:
         self._guard_change_permission(request)
@@ -621,10 +1096,5 @@ class DiagnosticRunAdmin(_DiagnosticRunAdmin):
             return self._launch_form(request, error="Refusing to spawn with a zero cap.")
 
         spawn_diagnostic_runner(run.id)
-        self.message_user(
-            request,
-            f"Diagnostic run {run.id.hex[:8]} launched (fake mode). Heartbeat and "
-            "plies appear on the run's change page.",
-            level=messages.SUCCESS,
-        )
-        return redirect(reverse("admin:game_diagnosticrun_changelist"))
+        self.message_user(request, _LAUNCH_SUCCESS_COPY, level=messages.SUCCESS)
+        return redirect(reverse("admin:game_diagnosticrun_change", args=[run.id]))

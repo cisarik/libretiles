@@ -1,0 +1,77 @@
+{% extends "admin/base_site.html" %}
+{% block content %}
+<div class="module">
+  <h2>Diagnostic run {{ run_id_short }} — <span class="{{ status_class }}">{{ status_display }}</span></h2>
+  <p><span class="{{ instrument_class }}">{{ instrument_display }}</span> · variant {{ variant_slug }}{% if digest_short %} · digest {{ digest_short }}…{% endif %}</p>
+  <ul>
+    <li>Run UUID: {{ run_id }}</li>
+    <li>Seat 0 model: {{ seat0_model_id }}</li>
+    <li>Seat 1 model: {{ seat1_model_id }}</li>
+    <li>Assist mode: {{ assist_mode_display }}</li>
+    <li>Executed runtime mode: {{ executed_runtime_mode }}</li>
+    {% if end_reason %}<li>End reason: {{ end_reason }}</li>{% endif %}
+    <li>Heartbeat: {% if has_heartbeat %}{{ heartbeat_at }} ({{ heartbeat_age_seconds }}s ago){% else %}No heartbeat recorded{% endif %}</li>
+    <li>{{ heartbeat_cadence }}</li>
+    <li>
+      Recorded plies:
+      {% if last_ply_index is not None %}
+        last zero-based ply_index {{ last_ply_index }} of the max_plies cap {{ max_plies }}
+      {% else %}
+        none yet of the max_plies cap {{ max_plies }}
+      {% endif %}
+    </li>
+  </ul>
+  {% if can_cancel %}
+  <form method="post" action="{{ cancel_url }}">
+    {% csrf_token %}
+    <input type="submit" value="Cancel this run">
+  </form>
+  {% endif %}
+  <p><a href="{{ change_url }}">Reload this page</a> · <a href="{{ compare_url }}">Compare models</a></p>
+</div>
+
+<h2>Recorded plies</h2>
+{% if ply_rows %}
+<table>
+  <thead>
+    <tr>
+      <th>Ply</th><th>Position</th><th>Seat</th><th>Model</th><th>Runtime</th>
+      <th>Score authority</th><th>Completion source</th><th>Terminal cause</th>
+      <th>Model score</th><th>Ranked best</th><th>Valid candidates</th>
+      <th>Provider requests</th><th>Wall clock (ms)</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in ply_rows %}
+    <tr>
+      <td>{{ row.ply_index }}</td>
+      <td>{{ row.position_index|default_if_none:"—" }}</td>
+      <td>{{ row.seat_index }}</td>
+      <td>{{ row.model_id }}</td>
+      <td>{{ row.executed_runtime_mode|default_if_none:"—" }}</td>
+      <td>{{ row.score_authority }}</td>
+      <td>{{ row.completion_source|default_if_none:"—" }}</td>
+      <td>{{ row.terminal_cause|default_if_none:"—" }}</td>
+      <td>{{ row.model_legal_score|default_if_none:"—" }}</td>
+      <td>{{ row.ranked_best_score|default_if_none:"—" }}</td>
+      <td>{{ row.valid_candidate_count|default_if_none:"—" }}</td>
+      <td>{{ row.provider_requests_used|default_if_none:"—" }}</td>
+      <td>{{ row.wall_clock_ms|default_if_none:"—" }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p>Showing the latest 20 recorded plies.</p>
+{% else %}
+<p>No plies recorded yet.</p>
+{% endif %}
+
+<h2>Latest turn</h2>
+{% if latest_model_id %}
+<p>Seat {{ latest_seat_index }} model {{ latest_model_id }} — completion source: {{ latest_completion_source }}</p>
+{% else %}
+<p>No turn recorded yet.</p>
+{% endif %}
+
+{% include "admin/game/diagnosticrun/report.html" %}
+{% endblock %}

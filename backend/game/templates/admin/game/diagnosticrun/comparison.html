@@ -1,0 +1,74 @@
+{% extends "admin/base_site.html" %}
+{% block content %}
+<p>{{ subtitle }}</p>
+
+<form method="get" action="">
+  <p>
+    <label for="digest-filter">Position-set digest (exact 64-hex, optional)</label>
+    <input type="text" id="digest-filter" name="digest" value="{{ digest_filter }}" maxlength="64">
+    <input type="submit" value="Filter">
+  </p>
+</form>
+
+<p>Page {{ page_number }} of {{ num_pages }}.
+{% if prev_url %}<a href="{{ prev_url }}">Previous page</a>{% endif %}
+{% if next_url %}<a href="{{ next_url }}">Next page</a>{% endif %}
+</p>
+
+<h2>Measured comparison pool</h2>
+{% if no_runs %}
+<p>{{ no_runs_copy }}</p>
+{% endif %}
+{% for group in groups %}
+<div class="diag-compare-group">
+  <h3>{{ group.label }}</h3>
+  {% for model in group.models %}
+  <div class="diag-compare-model">
+    <h4>Provider {{ model.provider }} — model {{ model.model_id }}</h4>
+    <table>
+      <thead>
+        <tr><th>Run</th><th>Status</th><th>Created</th><th>Measured metrics (this run's artifact only)</th></tr>
+      </thead>
+      <tbody>
+        {% for row in model.runs %}
+        <tr>
+          <td>{{ row.run_id_short }}</td>
+          <td><span class="{{ row.status_class }}">{{ row.status_display }}</span></td>
+          <td>{{ row.created_at }}</td>
+          <td>{{ row.metrics }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endfor %}
+</div>
+{% empty %}
+{% if not no_runs %}<p>{{ pool_empty_copy }}</p>{% endif %}
+{% endfor %}
+
+<h2>Runs on this page not in a measured pool</h2>
+{% if excluded_rows %}
+<table>
+  <thead>
+    <tr><th>Run</th><th>Status</th><th>Seat 0 model</th><th>Seat 1 model</th><th>Exclusion reason</th></tr>
+  </thead>
+  <tbody>
+    {% for row in excluded_rows %}
+    <tr>
+      <td>{{ row.run_id_short }}</td>
+      <td><span class="{{ row.status_class }}">{{ row.status_display }}</span></td>
+      <td>{{ row.seat0_model_id }}</td>
+      <td>{{ row.seat1_model_id }}</td>
+      <td>{{ row.reason }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>Every run on this page is in the measured pool above.</p>
+{% endif %}
+
+<p>{{ note_page }}</p>
+<p>{{ note_prompt }}</p>
+{% endblock %}

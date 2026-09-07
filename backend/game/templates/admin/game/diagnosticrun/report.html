@@ -1,0 +1,67 @@
+<h2>Finished report</h2>
+{% if report.state == "ok" %}
+  {% if report.fake_warning %}
+  <p class="diag-report-fake-warning">{{ report.fake_warning }}</p>
+  {% endif %}
+
+  <h3>Report metadata</h3>
+  <ul>
+    {% for row in report.metadata_rows %}
+    <li>{{ row.0 }}: {{ row.1 }}</li>
+    {% endfor %}
+  </ul>
+
+  {% if report.kind == "model-position" %}
+  <h3>Recorded diagnostic verdicts.</h3>
+  <p>pass: {{ report.verdict_pass }} · fail: {{ report.verdict_fail }}</p>
+
+  <h3>Completion-source histogram</h3>
+  <table>
+    <tbody>
+      {% for row in report.histogram_rows %}
+      <tr><td>{{ row.source }}</td><td>{{ row.count }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if report.histogram_unknown %}
+  <p>Unknown completion sources are rendered as escaped text; the histogram is not vocabulary-clean.</p>
+  {% endif %}
+
+  <h3>Position-set summary</h3>
+  <ul>
+    {% for row in report.summary_rows %}
+    <li>{{ row.0 }}: {{ row.1 }}</li>
+    {% endfor %}
+  </ul>
+
+  <h3>LTAI components (text only)</h3>
+  <table>
+    <thead>
+      <tr><th>Component</th><th>Observation</th><th>Floor</th></tr>
+    </thead>
+    <tbody>
+      {% for row in report.ltai_rows %}
+      <tr><td>{{ row.component }}</td><td>{{ row.observation }}</td><td>{{ row.floor }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p>{{ report.ltai_composite }}</p>
+  {% elif report.kind == "ai-match" %}
+  <p>{{ report.match_copy }}</p>
+  <ul>
+    {% for row in report.match_rows %}
+    <li>{{ row.0 }}: {{ row.1 }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+
+  <h3>Reported samples</h3>
+  {% for sample in report.samples %}
+  <details>
+    <summary>{{ sample.title }}</summary>
+    <pre>{{ sample.body }}</pre>
+  </details>
+  {% endfor %}
+{% else %}
+  <p>{{ report.message }}</p>
+{% endif %}
