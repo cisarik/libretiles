@@ -442,6 +442,7 @@ export async function probeProviderCapability(
       generateText({
         model,
         maxRetries: 0,
+        maxOutputTokens: 512,
         abortSignal: abortController.signal,
         tools,
         prompt:

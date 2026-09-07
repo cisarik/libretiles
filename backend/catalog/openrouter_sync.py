@@ -6,8 +6,10 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 import httpx
+from django.db import transaction
 from django.utils import timezone as django_timezone
 
+from .admin_controls import acquire_or_create_catalog_write_lock
 from .models import AIModel
 from .selection import (
     EXCLUDED_MODEL_IDS,
@@ -74,25 +76,6 @@ def sync_openrouter_models(
     models: list[OpenRouterModelRecord],
     allow_large_drop: bool = False,
 ) -> dict[str, int]:
-    previous_count = AIModel.objects.filter(
-        provider=OPENROUTER_PROVIDER,
-        openrouter_managed=True,
-        openrouter_available=True,
-    ).count()
-    new_count = len(models)
-    if new_count == 0:
-        raise CatalogSyncAborted(
-            reason="empty-cohort",
-            previous_count=previous_count,
-            new_count=new_count,
-        )
-    if not allow_large_drop and previous_count > 0 and new_count * 2 < previous_count:
-        raise CatalogSyncAborted(
-            reason="large-drop",
-            previous_count=previous_count,
-            new_count=new_count,
-        )
-
     now = django_timezone.now()
     seen_model_ids = {model.model_id for model in models}
 
@@ -101,71 +84,95 @@ def sync_openrouter_models(
     unchanged = 0
     disabled = 0
 
-    for index, remote in enumerate(models):
-        if remote.model_id == NVIDIA_NIM_MODEL_ID:
-            continue
-        is_shortlist = remote.model_id in OPENROUTER_SHORTLIST_IDS
-        sort_order = (
-            SHORTLIST_SORT_ORDER[remote.model_id]
-            if is_shortlist
-            else AUTO_SORT_ORDER_START + index
-        )
-        obj = AIModel.objects.filter(model_id=remote.model_id).first()
-        if obj is not None and obj.provider == NVIDIA_NIM_PROVIDER:
-            continue
-        if obj is None:
-            AIModel.objects.create(
-                provider=OPENROUTER_PROVIDER,
-                model_id=remote.model_id,
-                display_name=remote.display_name,
-                description=remote.description,
-                quality_tier="standard",
-                openrouter_managed=True,
-                openrouter_available=True,
-                model_type=remote.model_type,
-                context_window=remote.context_window,
-                max_tokens=remote.max_tokens,
-                tags=remote.tags,
-                released_at=remote.released_at,
-                last_synced_at=now,
-                is_active=True,
-                sort_order=sort_order,
+    with transaction.atomic():
+        control = acquire_or_create_catalog_write_lock()
+        previous_count = AIModel.objects.filter(
+            provider=OPENROUTER_PROVIDER,
+            openrouter_managed=True,
+            openrouter_available=True,
+        ).count()
+        new_count = len(models)
+        if new_count == 0:
+            raise CatalogSyncAborted(
+                reason="empty-cohort",
+                previous_count=previous_count,
+                new_count=new_count,
             )
-            created += 1
-            continue
+        if not allow_large_drop and previous_count > 0 and new_count * 2 < previous_count:
+            raise CatalogSyncAborted(
+                reason="large-drop",
+                previous_count=previous_count,
+                new_count=new_count,
+            )
 
-        changed_fields: list[str] = []
-        changed_fields.extend(_set_if_changed(obj, "provider", OPENROUTER_PROVIDER))
-        changed_fields.extend(_set_if_changed(obj, "openrouter_available", True))
-        changed_fields.extend(_set_if_changed(obj, "openrouter_managed", True))
-        changed_fields.extend(_set_if_changed(obj, "model_type", remote.model_type))
-        changed_fields.extend(_set_if_changed(obj, "context_window", remote.context_window))
-        changed_fields.extend(_set_if_changed(obj, "max_tokens", remote.max_tokens))
-        changed_fields.extend(_set_if_changed(obj, "tags", remote.tags))
-        changed_fields.extend(_set_if_changed(obj, "released_at", remote.released_at))
-        changed_fields.extend(_set_if_changed(obj, "last_synced_at", now))
-        if is_shortlist:
-            changed_fields.extend(_set_if_changed(obj, "sort_order", sort_order))
-        changed_fields.extend(_set_if_changed(obj, "display_name", remote.display_name))
-        changed_fields.extend(_set_if_changed(obj, "description", remote.description))
+        for index, remote in enumerate(models):
+            if remote.model_id == NVIDIA_NIM_MODEL_ID:
+                continue
+            is_shortlist = remote.model_id in OPENROUTER_SHORTLIST_IDS
+            sort_order = (
+                SHORTLIST_SORT_ORDER[remote.model_id]
+                if is_shortlist
+                else AUTO_SORT_ORDER_START + index
+            )
+            obj = AIModel.objects.filter(model_id=remote.model_id).first()
+            if obj is not None and obj.provider == NVIDIA_NIM_PROVIDER:
+                continue
+            if obj is None:
+                AIModel.objects.create(
+                    provider=OPENROUTER_PROVIDER,
+                    model_id=remote.model_id,
+                    display_name=remote.display_name,
+                    description=remote.description,
+                    quality_tier="standard",
+                    openrouter_managed=True,
+                    openrouter_available=True,
+                    model_type=remote.model_type,
+                    context_window=remote.context_window,
+                    max_tokens=remote.max_tokens,
+                    tags=remote.tags,
+                    released_at=remote.released_at,
+                    last_synced_at=now,
+                    is_active=True,
+                    sort_order=sort_order,
+                )
+                created += 1
+                continue
 
-        if changed_fields:
-            obj.save(update_fields=changed_fields)
-            updated += 1
-        else:
-            unchanged += 1
+            changed_fields: list[str] = []
+            changed_fields.extend(_set_if_changed(obj, "provider", OPENROUTER_PROVIDER))
+            changed_fields.extend(_set_if_changed(obj, "openrouter_available", True))
+            changed_fields.extend(_set_if_changed(obj, "openrouter_managed", True))
+            changed_fields.extend(_set_if_changed(obj, "model_type", remote.model_type))
+            changed_fields.extend(
+                _set_if_changed(obj, "context_window", remote.context_window)
+            )
+            changed_fields.extend(_set_if_changed(obj, "max_tokens", remote.max_tokens))
+            changed_fields.extend(_set_if_changed(obj, "tags", remote.tags))
+            changed_fields.extend(_set_if_changed(obj, "released_at", remote.released_at))
+            changed_fields.extend(_set_if_changed(obj, "last_synced_at", now))
+            changed_fields.extend(_set_if_changed(obj, "display_name", remote.display_name))
+            changed_fields.extend(_set_if_changed(obj, "description", remote.description))
 
-    missing = (
-        AIModel.objects.filter(openrouter_managed=True)
-        .exclude(model_id__in=seen_model_ids)
-        .exclude(provider=NVIDIA_NIM_PROVIDER)
-    )
-    for obj in missing:
-        changed_fields = _set_if_changed(obj, "openrouter_available", False)
-        changed_fields.extend(_set_if_changed(obj, "last_synced_at", now))
-        if changed_fields:
-            obj.save(update_fields=changed_fields)
-            disabled += 1
+            if changed_fields:
+                obj.save(update_fields=changed_fields)
+                updated += 1
+            else:
+                unchanged += 1
+
+        missing = (
+            AIModel.objects.filter(openrouter_managed=True)
+            .exclude(model_id__in=seen_model_ids)
+            .exclude(provider=NVIDIA_NIM_PROVIDER)
+        )
+        for obj in missing:
+            changed_fields = _set_if_changed(obj, "openrouter_available", False)
+            changed_fields.extend(_set_if_changed(obj, "last_synced_at", now))
+            if changed_fields:
+                obj.save(update_fields=changed_fields)
+                disabled += 1
+
+        control.revision = control.revision + 1
+        control.save(update_fields=["revision"])
 
     return {
         "created": created,

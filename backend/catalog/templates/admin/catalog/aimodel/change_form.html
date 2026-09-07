@@ -1,0 +1,51 @@
+{% extends "admin/change_form.html" %}
+
+{% block after_related_objects %}
+  {% if original %}
+    <fieldset class="module aligned">
+      <h2>Capability probe</h2>
+      {% if can_probe %}
+        <form method="post" action="{{ probe_url }}">
+          {% csrf_token %}
+          <p>
+            <button type="submit" name="mode" value="fake">Run fake probe</button>
+            <button type="submit" name="mode" value="live">Run live probe</button>
+          </p>
+        </form>
+      {% endif %}
+      <p>{{ simulated_pass_label }}</p>
+      {% if latest_live_probe %}
+        <p>
+          Latest live result: {{ latest_live_probe.status }}
+          at {{ latest_live_probe.completed_at }}
+        </p>
+      {% endif %}
+      <h3>Recent observations</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>When</th>
+            <th>Mode</th>
+            <th>Status</th>
+            <th>Summary</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for probe in recent_probes %}
+            <tr>
+              <td>{{ probe.probed_at }}</td>
+              <td>{{ probe.executed_runtime_mode }}</td>
+              <td>{{ probe.status }}</td>
+              <td>{{ probe.summary }}</td>
+            </tr>
+          {% empty %}
+            <tr>
+              <td colspan="4">No probe observations yet.</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <p><a href="{{ history_url }}">Full probe history</a></p>
+    </fieldset>
+  {% endif %}
+{% endblock %}

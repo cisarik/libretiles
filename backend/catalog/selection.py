@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from typing import TypedDict
+from typing import Sequence, TypedDict
 
 from django.conf import settings
 from django.utils import timezone as django_timezone
@@ -129,32 +129,89 @@ def _dynamic_catalog_enabled() -> bool:
 
 
 def get_selectable_models() -> list[AIModel]:
-    rows = {
-        (model.provider, model.model_id): model
-        for model in AIModel.objects.filter(
+    rows = list(
+        AIModel.objects.filter(
             is_active=True,
             model_type="language",
         )
+    )
+    return select_models_from_rows(
+        rows,
+        dynamic_enabled=_dynamic_catalog_enabled(),
+        ordering_reviewed=_ordering_reviewed(),
+        now=django_timezone.now(),
+    )
+
+
+def select_models_from_rows(
+    rows: Sequence[AIModel],
+    *,
+    dynamic_enabled: bool,
+    ordering_reviewed: bool,
+    now: datetime,
+) -> list[AIModel]:
+    active = {
+        (model.provider, model.model_id): model
+        for model in rows
+        if model.is_active and model.model_type == "language"
     }
-    direct = _direct_selectable(rows)
+    direct = _direct_selectable(active, ordering_reviewed=ordering_reviewed)
     compatibility = (
-        _dynamic_selectable(rows)
-        if _dynamic_catalog_enabled()
-        else _bootstrap_selectable(rows)
+        _dynamic_selectable(active, now=now)
+        if dynamic_enabled
+        else _bootstrap_selectable(active, ordering_reviewed=ordering_reviewed)
     )
     return _without_duplicate_pairs([*direct, *compatibility])
 
 
-def _direct_selectable(rows: dict[tuple[str, str], AIModel]) -> list[AIModel]:
+def _ordering_reviewed() -> bool:
+    from .models import CatalogAdminControl
+
+    control = CatalogAdminControl.objects.filter(
+        pk=CatalogAdminControl.SINGLETON_PK
+    ).first()
+    return bool(control is not None and control.ordering_reviewed)
+
+
+def _direct_pair_index(provider: str, model_id: str) -> int:
+    try:
+        return DIRECT_FREE_RIVAL_PAIRS.index((provider, model_id))
+    except ValueError:
+        return len(DIRECT_FREE_RIVAL_PAIRS)
+
+
+def _bootstrap_pair_index(provider: str, model_id: str) -> int:
+    try:
+        return FREE_RIVAL_PAIRS.index((provider, model_id))
+    except ValueError:
+        return len(FREE_RIVAL_PAIRS)
+
+
+def _direct_selectable(
+    rows: dict[tuple[str, str], AIModel],
+    *,
+    ordering_reviewed: bool,
+) -> list[AIModel]:
     selected: list[AIModel] = []
     for provider, model_id in DIRECT_FREE_RIVAL_PAIRS:
         model = rows.get((provider, model_id))
         if model is not None and _has_tools_tag(model):
             selected.append(model)
+    if ordering_reviewed:
+        selected.sort(
+            key=lambda model: (
+                model.sort_order,
+                _direct_pair_index(model.provider, model.model_id),
+            )
+        )
     return selected
 
 
-def _bootstrap_selectable(rows: dict[tuple[str, str], AIModel]) -> list[AIModel]:
+def _bootstrap_selectable(
+    rows: dict[tuple[str, str], AIModel],
+    *,
+    ordering_reviewed: bool,
+) -> list[AIModel]:
     selected: list[AIModel] = []
     for provider, model_id in FREE_RIVAL_PAIRS:
         model = rows.get((provider, model_id))
@@ -165,16 +222,27 @@ def _bootstrap_selectable(rows: dict[tuple[str, str], AIModel]) -> list[AIModel]
         if not _has_tools_tag(model):
             continue
         selected.append(model)
+    if ordering_reviewed:
+        selected.sort(
+            key=lambda model: (
+                model.sort_order,
+                _bootstrap_pair_index(model.provider, model.model_id),
+            )
+        )
     return selected
 
 
-def _dynamic_selectable(rows: dict[tuple[str, str], AIModel]) -> list[AIModel]:
+def _dynamic_selectable(
+    rows: dict[tuple[str, str], AIModel],
+    *,
+    now: datetime,
+) -> list[AIModel]:
     openrouter_models = [
         model
         for (provider, _model_id), model in rows.items()
         if provider == OPENROUTER_PROVIDER and _is_dynamic_openrouter_candidate(model)
     ]
-    openrouter_models.sort(key=_newest_first_key)
+    openrouter_models.sort(key=lambda model: _newest_first_key(model, now=now))
     selected = openrouter_models[:OPENROUTER_COHORT_SIZE]
     nim = rows.get((NVIDIA_NIM_PROVIDER, NVIDIA_NIM_MODEL_ID))
     if nim is not None and _has_tools_tag(nim):
@@ -204,17 +272,17 @@ def _is_dynamic_openrouter_candidate(model: AIModel) -> bool:
     return _has_tools_tag(model)
 
 
-def _usable_released_at(model: AIModel) -> datetime | None:
+def _usable_released_at(model: AIModel, *, now: datetime) -> datetime | None:
     released = model.released_at
     if released is None:
         return None
-    if released > django_timezone.now() + MAX_FUTURE_RELEASE_SKEW:
+    if released > now + MAX_FUTURE_RELEASE_SKEW:
         return None
     return released
 
 
-def _newest_first_key(model: AIModel) -> tuple[int, float, int, str]:
-    released = _usable_released_at(model)
+def _newest_first_key(model: AIModel, *, now: datetime) -> tuple[int, float, int, str]:
+    released = _usable_released_at(model, now=now)
     missing = 1 if released is None else 0
     descending = -released.timestamp() if released is not None else 0.0
     bootstrap = SHORTLIST_SORT_ORDER.get(model.model_id, _NON_BOOTSTRAP_SORT_ORDER)

@@ -39,6 +39,7 @@ type ValidateInput = {
 
 type ProbeGenerationOptions = {
   maxRetries: number;
+  maxOutputTokens: number;
   abortSignal: AbortSignal;
   tools: {
     validateMove: {
@@ -154,6 +155,9 @@ describe("provider capability probe", () => {
     expect(generationOptions(mocks.generateText.mock.calls[0][0]).maxRetries).toBe(
       0,
     );
+    expect(
+      generationOptions(mocks.generateText.mock.calls[0][0]).maxOutputTokens,
+    ).toBe(512);
     expect(result).toEqual({
       provider: GROQ_PROVIDER,
       model: GROQ_MODEL_ID,

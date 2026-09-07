@@ -1,0 +1,95 @@
+{% extends "admin/base_site.html" %}
+
+{% block content %}
+  <h1>{{ title }}</h1>
+  <p>
+    Direct rivals stay ahead of the compatibility tail. Dynamic OpenRouter
+    ranking stays newest-first with NIM last. Watchlist rows stay unselectable.
+  </p>
+  <p>Reviewed ordering enabled: {{ ordering_reviewed }}</p>
+
+  <h2>Effective fallback (dynamic catalog disabled)</h2>
+  <ol>
+    {% for model in flag_off %}
+      <li>{{ model.display_name }} — {{ model.provider }} / {{ model.model_id }}</li>
+    {% empty %}
+      <li>No selectable models.</li>
+    {% endfor %}
+  </ol>
+  {% if flagship_off %}
+    <p>Flagship: {{ flagship_off.display_name }}</p>
+  {% endif %}
+
+  <h2>Effective fallback (dynamic catalog enabled)</h2>
+  <ol>
+    {% for model in flag_on %}
+      <li>{{ model.display_name }} — {{ model.provider }} / {{ model.model_id }}</li>
+    {% empty %}
+      <li>No selectable models.</li>
+    {% endfor %}
+  </ol>
+  {% if flagship_on %}
+    <p>Flagship: {{ flagship_on.display_name }}</p>
+  {% endif %}
+
+  {% if preview %}
+    <h2>Proposed sequences</h2>
+    <h3>After change, dynamic catalog disabled</h3>
+    <ol>
+      {% for model in preview.proposed_flag_off %}
+        <li>{{ model.display_name }} — {{ model.provider }} / {{ model.model_id }}</li>
+      {% endfor %}
+    </ol>
+    <h3>After change, dynamic catalog enabled</h3>
+    <ol>
+      {% for model in preview.proposed_flag_on %}
+        <li>{{ model.display_name }} — {{ model.provider }} / {{ model.model_id }}</li>
+      {% endfor %}
+    </ol>
+    {% if can_change and review_token %}
+      <form method="post" action="{{ apply_url }}">
+        {% csrf_token %}
+        <input type="hidden" name="review_token" value="{{ review_token }}">
+        <button type="submit">Apply reviewed changes</button>
+      </form>
+    {% endif %}
+  {% endif %}
+
+  {% if can_change %}
+    <form method="post" action="{{ review_url }}">
+      {% csrf_token %}
+      <input type="hidden" name="form-TOTAL_FORMS" value="{{ rows|length }}">
+      <input type="hidden" name="form-INITIAL_FORMS" value="{{ rows|length }}">
+      <table>
+        <thead>
+          <tr>
+            <th>Display name</th>
+            <th>Provider</th>
+            <th>Model id</th>
+            <th>Active</th>
+            <th>Sort order</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+            <tr>
+              <td>{{ row.model.display_name }}</td>
+              <td>{{ row.model.provider }}</td>
+              <td>{{ row.model.model_id }}</td>
+              <td>
+                <input type="hidden" name="form-{{ forloop.counter0 }}-id" value="{{ row.model.pk }}">
+                <input type="checkbox" name="form-{{ forloop.counter0 }}-is_active"{% if row.is_active %} checked{% endif %}>
+              </td>
+              <td>
+                <input type="number" name="form-{{ forloop.counter0 }}-sort_order" value="{{ row.sort_order }}">
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <button type="submit">Review changes</button>
+    </form>
+  {% endif %}
+
+  <p><a href="{{ changelist_url }}">Back to catalog</a></p>
+{% endblock %}

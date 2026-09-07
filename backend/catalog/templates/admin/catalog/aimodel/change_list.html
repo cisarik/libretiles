@@ -2,6 +2,9 @@
 
 {% block object-tools-items %}
   <li>
+    <a href="{% url 'admin:catalog_aimodel_controls' %}">Review fallback order</a>
+  </li>
+  <li>
     <a href="{% url 'admin:catalog_aimodel_sync' %}">Sync OpenRouter models</a>
   </li>
   {{ block.super }}

@@ -8,7 +8,9 @@ Usage:
 from typing import TypedDict
 
 from django.core.management.base import BaseCommand
+from django.db import transaction
 
+from catalog.admin_controls import bump_catalog_revision_locked
 from catalog.models import AIModel
 from catalog.selection import (
     DEFAULT_FREE_MODEL_ID,
@@ -112,36 +114,38 @@ class Command(BaseCommand):
         created = 0
         updated = 0
         skipped = 0
-        for data in SEEDED_MODELS:
-            model_id = data["model_id"]
-            provider = data["provider"]
-            existing = AIModel.objects.filter(model_id=model_id).first()
-            if existing is not None and existing.provider != provider:
-                skipped += 1
-                continue
-            fields = {
-                "provider": provider,
-                "display_name": data["display_name"],
-                "description": data["description"],
-                "quality_tier": data["quality_tier"],
-                "openrouter_managed": data["openrouter_managed"],
-                "openrouter_available": data["openrouter_available"],
-                "model_type": "language",
-                "tags": ["tools"],
-                "sort_order": data["sort_order"],
-            }
-            if existing is None:
-                AIModel.objects.create(
-                    model_id=model_id,
-                    is_active=data["is_active_on_create"],
-                    **fields,
-                )
-                created += 1
-                continue
-            for field_name, value in fields.items():
-                setattr(existing, field_name, value)
-            existing.save()
-            updated += 1
+        with transaction.atomic():
+            bump_catalog_revision_locked()
+            for data in SEEDED_MODELS:
+                model_id = data["model_id"]
+                provider = data["provider"]
+                existing = AIModel.objects.filter(model_id=model_id).first()
+                if existing is not None and existing.provider != provider:
+                    skipped += 1
+                    continue
+                fields = {
+                    "provider": provider,
+                    "display_name": data["display_name"],
+                    "description": data["description"],
+                    "quality_tier": data["quality_tier"],
+                    "openrouter_managed": data["openrouter_managed"],
+                    "openrouter_available": data["openrouter_available"],
+                    "model_type": "language",
+                    "tags": ["tools"],
+                }
+                if existing is None:
+                    AIModel.objects.create(
+                        model_id=model_id,
+                        is_active=data["is_active_on_create"],
+                        sort_order=data["sort_order"],
+                        **fields,
+                    )
+                    created += 1
+                    continue
+                for field_name, value in fields.items():
+                    setattr(existing, field_name, value)
+                existing.save()
+                updated += 1
 
         assert {(item["provider"], item["model_id"]) for item in CURATED_MODELS} == set(
             FREE_RIVAL_PAIRS
