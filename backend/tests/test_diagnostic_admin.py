@@ -1182,6 +1182,81 @@ class DiagnosticTargetAdminSurfaceTests(DiagnosticTargetAdminS7Base):
         self.assertEqual(target.base_url, f"https://{host.hostname}/api/v1")
 
 
+class DiagnosticBulkActionPermissionS7Tests(DiagnosticTargetAdminS7Base):
+    """F02: view-only staff must not run activation/deactivation actions."""
+
+    def _view_only_client(self, model_name: str) -> Client:
+        staffer = User.objects.create_user(
+            username=f"s7-viewer-{uuid_module.uuid4().hex[:8]}",
+            password="s7-viewer-pass",
+            is_staff=True,
+        )
+        staffer.user_permissions.add(
+            Permission.objects.get(
+                content_type__app_label="game",
+                codename=f"view_{model_name}",
+            )
+        )
+        client = Client()
+        client.force_login(staffer)
+        return client
+
+    @staticmethod
+    def _post_action(client: Client, changelist: str, action: str, pk: Any) -> Any:
+        return client.post(changelist, {"action": action, "_selected_action": [str(pk)]})
+
+    def test_f02_view_only_staff_cannot_activate_or_deactivate_hosts(self) -> None:
+        active = DiagnosticAllowedHost.objects.create(hostname="active.example.com")
+        inactive = DiagnosticAllowedHost.objects.create(
+            hostname="inactive.example.com", is_active=False
+        )
+        client = self._view_only_client("diagnosticallowedhost")
+
+        self._post_action(
+            client, self.host_changelist_url, "deactivate_selected_hosts", active.pk
+        )
+        active.refresh_from_db()
+        self.assertTrue(active.is_active)
+
+        self._post_action(
+            client, self.host_changelist_url, "activate_selected_hosts", inactive.pk
+        )
+        inactive.refresh_from_db()
+        self.assertFalse(inactive.is_active)
+
+    def test_f02_view_only_staff_cannot_activate_or_deactivate_targets(self) -> None:
+        host = DiagnosticAllowedHost.objects.create(hostname="rival.example.com")
+        with _patch_target_dns([PUBLIC_ADDRESS]):
+            active = DiagnosticTarget.objects.create(
+                name="Active target",
+                base_url=f"https://{host.hostname}/api/v1",
+                allowed_host=host,
+                model_id="vendor/target-model",
+                credential_env_name="OPENROUTER_API_KEY",
+            )
+            inactive = DiagnosticTarget.objects.create(
+                name="Inactive target",
+                base_url=f"https://{host.hostname}/api/v1",
+                allowed_host=host,
+                model_id="vendor/target-model",
+                credential_env_name="OPENROUTER_API_KEY",
+                is_active=False,
+            )
+        client = self._view_only_client("diagnostictarget")
+
+        self._post_action(
+            client, self.target_changelist_url, "deactivate_selected_targets", active.pk
+        )
+        active.refresh_from_db()
+        self.assertTrue(active.is_active)
+
+        self._post_action(
+            client, self.target_changelist_url, "activate_selected_targets", inactive.pk
+        )
+        inactive.refresh_from_db()
+        self.assertFalse(inactive.is_active)
+
+
 class DiagnosticLaunchTargetTests(DiagnosticTargetAdminS7Base):
     def setUp(self) -> None:
         super().setUp()

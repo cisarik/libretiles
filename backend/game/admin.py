@@ -1256,6 +1256,10 @@ class DiagnosticAllowedHostAdmin(_AllowedHostAdminBase):
     def has_add_permission(self, request: HttpRequest) -> bool:
         return super().has_add_permission(request) and self.has_change_permission(request)
 
+    def _guard_change_permission(self, request: HttpRequest) -> None:
+        if not self.has_change_permission(request):
+            raise PermissionDenied
+
     def log_addition(
         self, request: HttpRequest, obj: DiagnosticAllowedHost, change_message: str
     ) -> LogEntry:
@@ -1276,10 +1280,13 @@ class DiagnosticAllowedHostAdmin(_AllowedHostAdminBase):
             obj.created_by = request.user
         super().save_model(request, obj, form, change)
 
-    @admin.action(description="Activate selected allowed hosts")
+    @admin.action(
+        description="Activate selected allowed hosts", permissions=["change"]
+    )
     def activate_selected_hosts(
         self, request: HttpRequest, queryset: QuerySet[DiagnosticAllowedHost]
     ) -> None:
+        self._guard_change_permission(request)
         changed = 0
         for host in queryset.filter(is_active=False):
             host.is_active = True
@@ -1296,10 +1303,13 @@ class DiagnosticAllowedHostAdmin(_AllowedHostAdminBase):
                 request, f"Activated {changed} allowed host(s).", level=messages.SUCCESS
             )
 
-    @admin.action(description="Deactivate selected allowed hosts")
+    @admin.action(
+        description="Deactivate selected allowed hosts", permissions=["change"]
+    )
     def deactivate_selected_hosts(
         self, request: HttpRequest, queryset: QuerySet[DiagnosticAllowedHost]
     ) -> None:
+        self._guard_change_permission(request)
         changed = 0
         for host in queryset.filter(is_active=True):
             host.is_active = False
@@ -1394,6 +1404,10 @@ class DiagnosticTargetAdmin(_DiagnosticTargetModelAdminBase):
     def has_add_permission(self, request: HttpRequest) -> bool:
         return super().has_add_permission(request) and self.has_change_permission(request)
 
+    def _guard_change_permission(self, request: HttpRequest) -> None:
+        if not self.has_change_permission(request):
+            raise PermissionDenied
+
     def log_addition(
         self, request: HttpRequest, obj: DiagnosticTarget, change_message: str
     ) -> LogEntry:
@@ -1414,10 +1428,13 @@ class DiagnosticTargetAdmin(_DiagnosticTargetModelAdminBase):
             obj.created_by = request.user
         super().save_model(request, obj, form, change)
 
-    @admin.action(description="Activate selected diagnostic targets")
+    @admin.action(
+        description="Activate selected diagnostic targets", permissions=["change"]
+    )
     def activate_selected_targets(
         self, request: HttpRequest, queryset: QuerySet[DiagnosticTarget]
     ) -> None:
+        self._guard_change_permission(request)
         changed = 0
         refused = 0
         for target in queryset.filter(is_active=False):
@@ -1447,10 +1464,13 @@ class DiagnosticTargetAdmin(_DiagnosticTargetModelAdminBase):
                 request, f"{refused} selected target(s) could not be activated.", level=messages.WARNING
             )
 
-    @admin.action(description="Deactivate selected diagnostic targets")
+    @admin.action(
+        description="Deactivate selected diagnostic targets", permissions=["change"]
+    )
     def deactivate_selected_targets(
         self, request: HttpRequest, queryset: QuerySet[DiagnosticTarget]
     ) -> None:
+        self._guard_change_permission(request)
         changed = 0
         for target in queryset.filter(is_active=True):
             target.is_active = False

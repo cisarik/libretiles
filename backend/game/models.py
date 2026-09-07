@@ -3,7 +3,7 @@ from typing import Any
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
-from django.db import models
+from django.db import models, transaction
 from django.db.models import CheckConstraint, Q, UniqueConstraint, Value
 
 from .diagnostic_targets import CREDENTIAL_ENV_NAMES, canonical_hostname, validate_target_save
@@ -168,11 +168,16 @@ class DiagnosticTarget(models.Model):
         return f"{self.name} ({'active' if self.is_active else 'inactive'})"
 
     def save(self, *args: Any, **kwargs: Any) -> None:
-        previous: DiagnosticTarget | None = None
-        if self.pk is not None:
-            previous = DiagnosticTarget.objects.filter(pk=self.pk).first()
-        validate_target_save(self, previous=previous)
-        super().save(*args, **kwargs)
+        with transaction.atomic():
+            previous: DiagnosticTarget | None = None
+            if self.pk is not None:
+                previous = (
+                    DiagnosticTarget.objects.select_for_update()
+                    .filter(pk=self.pk)
+                    .first()
+                )
+            validate_target_save(self, previous=previous)
+            super().save(*args, **kwargs)
 
 
 class PlayerSlot(models.Model):

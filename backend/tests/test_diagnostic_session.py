@@ -939,6 +939,63 @@ class DiagnosticTargetSeatTests(TestCase):
         context = services.get_ai_context(created["game_id"], created["service_user_id"])
         self.assertIsNone(context["diagnostic_runtime"])
 
+    def test_f03_inactive_target_seat_still_flags_diagnostic_target_seat(self) -> None:
+        created = self._create(
+            seat0_model_id="vendor/target-model",
+            seat1_model_id=self.seat1.model_id,
+            seat0_target_id=str(self.target.id),
+        )
+        session = GameSession.objects.get(public_id=created["game_id"])
+        session.current_turn_slot = 0
+        session.save(update_fields=["current_turn_slot"])
+        self.target.is_active = False
+        self.target.save()
+        context = services.get_ai_context(created["game_id"], created["service_user_id"])
+        self.assertIsNone(context["diagnostic_runtime"])
+        self.assertIs(context["diagnostic_target_seat"], True)
+
+    def test_f03_inactive_host_seat_still_flags_diagnostic_target_seat(self) -> None:
+        created = self._create(
+            seat0_model_id="vendor/target-model",
+            seat1_model_id=self.seat1.model_id,
+            seat0_target_id=str(self.target.id),
+        )
+        session = GameSession.objects.get(public_id=created["game_id"])
+        session.current_turn_slot = 0
+        session.save(update_fields=["current_turn_slot"])
+        self.host.is_active = False
+        self.host.save()
+        context = services.get_ai_context(created["game_id"], created["service_user_id"])
+        self.assertIsNone(context["diagnostic_runtime"])
+        self.assertIs(context["diagnostic_target_seat"], True)
+
+    def test_f03_target_seat_flag_false_for_catalog_and_player_contexts(self) -> None:
+        created = self._create(
+            seat0_model_id="vendor/target-model",
+            seat1_model_id=self.seat1.model_id,
+            seat0_target_id=str(self.target.id),
+        )
+        session = GameSession.objects.get(public_id=created["game_id"])
+        session.current_turn_slot = 0
+        session.save(update_fields=["current_turn_slot"])
+        active_context = services.get_ai_context(
+            created["game_id"], created["service_user_id"]
+        )
+        self.assertIsNotNone(active_context["diagnostic_runtime"])
+        self.assertIs(active_context["diagnostic_target_seat"], True)
+
+        session.current_turn_slot = 1
+        session.save(update_fields=["current_turn_slot"])
+        catalog_context = services.get_ai_context(
+            created["game_id"], created["service_user_id"]
+        )
+        self.assertIs(catalog_context["diagnostic_target_seat"], False)
+
+        player_game = services.create_game(user_id=self.player.id, ai_model_id=self.seat0.id)
+        player_context = services.get_ai_context(player_game["game_id"], self.player.id)
+        self.assertIs(player_context["diagnostic_target_seat"], False)
+        self.assertIsNone(player_context["diagnostic_runtime"])
+
     def test_f06_set_game_ai_model_refused_on_target_seat(self) -> None:
         created = self._create(
             seat0_model_id="vendor/target-model",

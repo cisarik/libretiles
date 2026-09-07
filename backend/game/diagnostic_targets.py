@@ -392,3 +392,8 @@ def validate_target_save(
                 "the referenced allowed host must be active",
             )
         validate_target_dns_addresses(parsed.hostname)
+        if connection_changed and _target_is_referenced(target):
+            raise DiagnosticTargetError(
+                "frozen",
+                "connection settings freeze once a diagnostic seat references the target",
+            )

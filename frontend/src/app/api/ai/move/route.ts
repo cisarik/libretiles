@@ -1216,7 +1216,8 @@ export async function POST(req: NextRequest) {
 
         let model: Awaited<ReturnType<typeof getLanguageRuntime>>["model"];
         const diagnosticRuntime = parseDiagnosticRuntimeSpec(context.diagnostic_runtime);
-        if (diagnosticRuntime !== null || assertedTargetId !== null) {
+        const diagnosticTargetSeat = context.diagnostic_target_seat === true;
+        if (diagnosticTargetSeat || diagnosticRuntime !== null || assertedTargetId !== null) {
           // S7 diagnostic target seat: the selection assertion must match the
           // backend-authorized target exactly. No catalog fallback, no
           // ai-model PATCH, and every refusal terminates BEFORE generation.

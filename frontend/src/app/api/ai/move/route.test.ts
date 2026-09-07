@@ -1637,6 +1637,15 @@ function diagnosticContext() {
   };
 }
 
+function unavailableTargetSeatContext() {
+  return {
+    ...defaultContext(),
+    ai_model_id: null,
+    diagnostic_runtime: null,
+    diagnostic_target_seat: true,
+  };
+}
+
 function targetRequest(overrides: Record<string, unknown> = {}): NextRequest {
   return request({
     model_id: "vendor/target-model",
@@ -1736,6 +1745,30 @@ describe("POST /api/ai/move — S7 diagnostic target seam", () => {
     const { error } = await collectEvents(targetRequest());
 
     expect(error?.code).toBe("diagnostic_target_required");
+    expect(diagnosticHarness.getDiagnosticLanguageRuntimeMock).not.toHaveBeenCalled();
+    expect(generateTextMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses an unavailable diagnostic target seat without catalog fallback", async () => {
+    mockBackend({ context: { body: unavailableTargetSeatContext() } });
+
+    const { error } = await collectEvents(targetRequest());
+
+    expect(error?.code).toBe("diagnostic_target_required");
+    expect(getLanguageRuntimeMock).not.toHaveBeenCalled();
+    expect(diagnosticHarness.getDiagnosticLanguageRuntimeMock).not.toHaveBeenCalled();
+    expect(generateTextMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses an assertion against an unavailable diagnostic target seat as a mismatch", async () => {
+    mockBackend({ context: { body: unavailableTargetSeatContext() } });
+
+    const { error } = await collectEvents(
+      targetRequest({ diagnostic_target_id: TARGET_UUID }),
+    );
+
+    expect(error?.code).toBe("diagnostic_target_mismatch");
+    expect(getLanguageRuntimeMock).not.toHaveBeenCalled();
     expect(diagnosticHarness.getDiagnosticLanguageRuntimeMock).not.toHaveBeenCalled();
     expect(generateTextMock).not.toHaveBeenCalled();
   });

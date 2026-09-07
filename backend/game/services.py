@@ -1361,9 +1361,12 @@ def _resolve_diagnostic_seat_target(target_id: str | None) -> DiagnosticTarget |
         target_uuid = uuid.UUID(str(target_id))
     except ValueError as exc:
         raise DiagnosticSessionError("Unknown diagnostic target") from exc
-    target = DiagnosticTarget.objects.select_related("allowed_host").filter(
-        pk=target_uuid, is_active=True, allowed_host__is_active=True
-    ).first()
+    target = (
+        DiagnosticTarget.objects.select_for_update()
+        .select_related("allowed_host")
+        .filter(pk=target_uuid, is_active=True, allowed_host__is_active=True)
+        .first()
+    )
     if target is None:
         raise DiagnosticSessionError("Unknown diagnostic target")
     return target
@@ -2181,6 +2184,9 @@ def get_ai_context(game_id: str, user_id: int) -> dict[str, Any]:
         multigraph=has_multigraph_tile_token(variant.playable_letters),
     )
     diagnostic_runtime = None
+    diagnostic_target_seat = bool(
+        session.is_diagnostic and acting.diagnostic_target_id is not None
+    )
     if session.is_diagnostic and acting.diagnostic_target_id is not None:
         # A target seat must NOT inherit the other seat's catalog model:
         # the target identity is checked before any session fallback.
@@ -2203,6 +2209,7 @@ def get_ai_context(game_id: str, user_id: int) -> dict[str, Any]:
         "ai_move_max_output_tokens": settings.AI_MOVE_MAX_OUTPUT_TOKENS,
         "ai_move_timeout_seconds": settings.AI_MOVE_TIMEOUT_SECONDS,
         "diagnostic_runtime": diagnostic_runtime,
+        "diagnostic_target_seat": diagnostic_target_seat,
         **_variant_snapshot_fields(session),
     }
 

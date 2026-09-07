@@ -302,6 +302,34 @@ class DiagnosticTargetSaveValidationTests(TestCase):
         with self.assertRaises(dt.DiagnosticTargetError):
             fresh.save()
 
+    def test_f11_reference_created_during_dns_freezes_the_save(self) -> None:
+        target = _make_target()
+        admin = services.ensure_diagnostic_service_user()
+
+        def _launch_during_dns(hostname: str, **kwargs: Any) -> list[str]:
+            services.create_diagnostic_game(
+                variant_slug="english",
+                seed=1,
+                seat0_model_id="vendor/target-model",
+                seat1_model_id="vendor/target-model",
+                prompt_id=None,
+                created_by_id=admin.id,
+                assist_mode="assisted",
+                seat0_target_id=str(target.id),
+                seat1_target_id=str(target.id),
+            )
+            return [PUBLIC_ADDRESS]
+
+        fresh = DiagnosticTarget.objects.get(pk=target.pk)
+        fresh.model_id = "vendor/other-model"
+        with mock.patch.object(
+            dt, "resolve_host_addresses", mock.MagicMock(side_effect=_launch_during_dns)
+        ):
+            with self.assertRaises(dt.DiagnosticTargetError):
+                fresh.save()
+        fresh.refresh_from_db()
+        assert fresh.model_id == "vendor/target-model"
+
     def test_f01_allowed_host_hostname_is_immutable(self) -> None:
         host = _make_host()
         host.hostname = "api.groq.com"
