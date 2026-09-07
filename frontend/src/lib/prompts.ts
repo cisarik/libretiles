@@ -13,10 +13,24 @@ import { boardCellLetter, type BoardCell } from "./types";
 
 export const MOVE_PROMPT_VERSION = "pfr-s2-core-1";
 
-export type MovePromptLexiconId = "collins2019" | "slovak";
+export type PromptLexiconId =
+  | "collins2019"
+  | "slovak"
+  | "czech"
+  | "polish"
+  | "german"
+  | "portuguese"
+  | "icelandic"
+  | "italian"
+  | "dutch"
+  | "danish"
+  | "swedish"
+  | "afrikaans";
+
+export type MovePromptLexiconId = PromptLexiconId;
 
 export type MovePromptSpec = {
-  lexiconId: MovePromptLexiconId;
+  lexiconId: PromptLexiconId;
   productLine: string;
   shedTiles: string;
   exemplarA: {
@@ -32,10 +46,10 @@ export type MovePromptSpec = {
   };
 };
 
-export type JudgePromptLexiconId = "collins2019" | "slovak";
+export type JudgePromptLexiconId = PromptLexiconId;
 
 export type JudgePromptSpec = {
-  lexiconId: JudgePromptLexiconId;
+  lexiconId: PromptLexiconId;
   language: string;
   authorityName: string;
   entryName: string;
@@ -134,6 +148,216 @@ export const slovakMoveSpec: MovePromptSpec = {
   },
 };
 
+export const czechMoveSpec: MovePromptSpec = {
+  lexiconId: "czech",
+  productLine: "Czech Scrabble (shipped Czech lexicon)",
+  shedTiles: "X / Ď / Ó / Ť / Ň",
+  exemplarA: {
+    rack: "A U T O H R D",
+    validateInput:
+      '{"placements":[{"row":7,"col":5,"letter":"A"},{"row":7,"col":6,"letter":"U"},{"row":7,"col":7,"letter":"T"},{"row":7,"col":8,"letter":"O"}]}',
+    validateOutput:
+      '{"valid":true,"words":[{"word":"AUTO","valid":true}],"total_score":10}',
+  },
+  exemplarB: {
+    firstInput:
+      '{"placements":[{"row":4,"col":8,"letter":"X"},{"row":5,"col":8,"letter":"A"}]}',
+    firstOutput: '{"valid":false,"reason":"Move must connect to existing tiles"}',
+    pivotInput: '{"placements":[{"row":7,"col":6,"letter":"H"}]}',
+    pivotOutput:
+      '{"valid":true,"words":[{"word":"HRAD","valid":true}],"total_score":5}',
+  },
+};
+
+export const polishMoveSpec: MovePromptSpec = {
+  lexiconId: "polish",
+  productLine: "Polish Scrabble (shipped Polish lexicon)",
+  shedTiles: "Ź / Ń / Ć / Ą / Ę",
+  exemplarA: {
+    rack: "W O D A L A S",
+    validateInput:
+      '{"placements":[{"row":7,"col":5,"letter":"W"},{"row":7,"col":6,"letter":"O"},{"row":7,"col":7,"letter":"D"},{"row":7,"col":8,"letter":"A"}]}',
+    validateOutput:
+      '{"valid":true,"words":[{"word":"WODA","valid":true}],"total_score":10}',
+  },
+  exemplarB: {
+    firstInput:
+      '{"placements":[{"row":4,"col":8,"letter":"Ź"},{"row":5,"col":8,"letter":"A"}]}',
+    firstOutput: '{"valid":false,"reason":"Move must connect to existing tiles"}',
+    pivotInput: '{"placements":[{"row":7,"col":6,"letter":"L"}]}',
+    pivotOutput:
+      '{"valid":true,"words":[{"word":"LAS","valid":true}],"total_score":4}',
+  },
+};
+
+export const germanMoveSpec: MovePromptSpec = {
+  lexiconId: "german",
+  productLine: "German Scrabble (shipped German lexicon)",
+  shedTiles: "Q / Y / Ö / X",
+  exemplarA: {
+    rack: "H A U S M E N",
+    validateInput:
+      '{"placements":[{"row":7,"col":5,"letter":"H"},{"row":7,"col":6,"letter":"A"},{"row":7,"col":7,"letter":"U"},{"row":7,"col":8,"letter":"S"}]}',
+    validateOutput:
+      '{"valid":true,"words":[{"word":"HAUS","valid":true}],"total_score":10}',
+  },
+  exemplarB: {
+    firstInput:
+      '{"placements":[{"row":4,"col":8,"letter":"Q"},{"row":5,"col":8,"letter":"I"}]}',
+    firstOutput: '{"valid":false,"reason":"Move must connect to existing tiles"}',
+    pivotInput: '{"placements":[{"row":7,"col":6,"letter":"M"}]}',
+    pivotOutput:
+      '{"valid":true,"words":[{"word":"MAUS","valid":true}],"total_score":6}',
+  },
+};
+
+export const portugueseMoveSpec: MovePromptSpec = {
+  lexiconId: "portuguese",
+  productLine: "Portuguese Scrabble (shipped Portuguese lexicon)",
+  shedTiles: "X / Z / Q / J",
+  exemplarA: {
+    rack: "C A S A M R O",
+    validateInput:
+      '{"placements":[{"row":7,"col":5,"letter":"C"},{"row":7,"col":6,"letter":"A"},{"row":7,"col":7,"letter":"S"},{"row":7,"col":8,"letter":"A"}]}',
+    validateOutput:
+      '{"valid":true,"words":[{"word":"CASA","valid":true}],"total_score":10}',
+  },
+  exemplarB: {
+    firstInput:
+      '{"placements":[{"row":4,"col":8,"letter":"X"},{"row":5,"col":8,"letter":"A"}]}',
+    firstOutput: '{"valid":false,"reason":"Move must connect to existing tiles"}',
+    pivotInput: '{"placements":[{"row":7,"col":6,"letter":"M"}]}',
+    pivotOutput:
+      '{"valid":true,"words":[{"word":"MAR","valid":true}],"total_score":3}',
+  },
+};
+
+export const icelandicMoveSpec: MovePromptSpec = {
+  lexiconId: "icelandic",
+  productLine: "Icelandic Scrabble (shipped Icelandic lexicon)",
+  shedTiles: "X / Ý / É / Ú / Ö",
+  exemplarA: {
+    rack: "S A G A R Ó N",
+    validateInput:
+      '{"placements":[{"row":7,"col":5,"letter":"S"},{"row":7,"col":6,"letter":"A"},{"row":7,"col":7,"letter":"G"},{"row":7,"col":8,"letter":"A"}]}',
+    validateOutput:
+      '{"valid":true,"words":[{"word":"SAGA","valid":true}],"total_score":10}',
+  },
+  exemplarB: {
+    firstInput:
+      '{"placements":[{"row":4,"col":8,"letter":"X"},{"row":5,"col":8,"letter":"A"}]}',
+    firstOutput: '{"valid":false,"reason":"Move must connect to existing tiles"}',
+    pivotInput: '{"placements":[{"row":7,"col":6,"letter":"R"}]}',
+    pivotOutput:
+      '{"valid":true,"words":[{"word":"RÓS","valid":true}],"total_score":8}',
+  },
+};
+
+export const italianMoveSpec: MovePromptSpec = {
+  lexiconId: "italian",
+  productLine: "Italian Scrabble (shipped Italian lexicon)",
+  shedTiles: "Q / G / H / Z",
+  exemplarA: {
+    rack: "C A S A M R E",
+    validateInput:
+      '{"placements":[{"row":7,"col":5,"letter":"C"},{"row":7,"col":6,"letter":"A"},{"row":7,"col":7,"letter":"S"},{"row":7,"col":8,"letter":"A"}]}',
+    validateOutput:
+      '{"valid":true,"words":[{"word":"CASA","valid":true}],"total_score":12}',
+  },
+  exemplarB: {
+    firstInput:
+      '{"placements":[{"row":4,"col":8,"letter":"Q"},{"row":5,"col":8,"letter":"I"}]}',
+    firstOutput: '{"valid":false,"reason":"Move must connect to existing tiles"}',
+    pivotInput: '{"placements":[{"row":7,"col":6,"letter":"M"}]}',
+    pivotOutput:
+      '{"valid":true,"words":[{"word":"MARE","valid":true}],"total_score":7}',
+  },
+};
+
+export const dutchMoveSpec: MovePromptSpec = {
+  lexiconId: "dutch",
+  productLine: "Dutch Scrabble (shipped Dutch lexicon)",
+  shedTiles: "Q / X / Y",
+  exemplarA: {
+    rack: "H U I S B O M",
+    validateInput:
+      '{"placements":[{"row":7,"col":5,"letter":"H"},{"row":7,"col":6,"letter":"U"},{"row":7,"col":7,"letter":"I"},{"row":7,"col":8,"letter":"S"}]}',
+    validateOutput:
+      '{"valid":true,"words":[{"word":"HUIS","valid":true}],"total_score":22}',
+  },
+  exemplarB: {
+    firstInput:
+      '{"placements":[{"row":4,"col":8,"letter":"Q"},{"row":5,"col":8,"letter":"I"}]}',
+    firstOutput: '{"valid":false,"reason":"Move must connect to existing tiles"}',
+    pivotInput: '{"placements":[{"row":7,"col":6,"letter":"B"}]}',
+    pivotOutput:
+      '{"valid":true,"words":[{"word":"BOOM","valid":true}],"total_score":8}',
+  },
+};
+
+export const danishMoveSpec: MovePromptSpec = {
+  lexiconId: "danish",
+  productLine: "Danish Scrabble (shipped Danish lexicon)",
+  shedTiles: "C / W / X / Z",
+  exemplarA: {
+    rack: "G A D E B O R",
+    validateInput:
+      '{"placements":[{"row":7,"col":5,"letter":"G"},{"row":7,"col":6,"letter":"A"},{"row":7,"col":7,"letter":"D"},{"row":7,"col":8,"letter":"E"}]}',
+    validateOutput:
+      '{"valid":true,"words":[{"word":"GADE","valid":true}],"total_score":14}',
+  },
+  exemplarB: {
+    firstInput:
+      '{"placements":[{"row":4,"col":8,"letter":"X"},{"row":5,"col":8,"letter":"E"}]}',
+    firstOutput: '{"valid":false,"reason":"Move must connect to existing tiles"}',
+    pivotInput: '{"placements":[{"row":7,"col":6,"letter":"B"}]}',
+    pivotOutput:
+      '{"valid":true,"words":[{"word":"BORD","valid":true}],"total_score":8}',
+  },
+};
+
+export const swedishMoveSpec: MovePromptSpec = {
+  lexiconId: "swedish",
+  productLine: "Swedish Scrabble (shipped Swedish lexicon)",
+  shedTiles: "Z / C / X / J / Y",
+  exemplarA: {
+    rack: "S T O L J R E",
+    validateInput:
+      '{"placements":[{"row":7,"col":5,"letter":"S"},{"row":7,"col":6,"letter":"T"},{"row":7,"col":7,"letter":"O"},{"row":7,"col":8,"letter":"L"}]}',
+    validateOutput:
+      '{"valid":true,"words":[{"word":"STOL","valid":true}],"total_score":10}',
+  },
+  exemplarB: {
+    firstInput:
+      '{"placements":[{"row":4,"col":8,"letter":"Z"},{"row":5,"col":8,"letter":"A"}]}',
+    firstOutput: '{"valid":false,"reason":"Move must connect to existing tiles"}',
+    pivotInput: '{"placements":[{"row":7,"col":6,"letter":"J"}]}',
+    pivotOutput:
+      '{"valid":true,"words":[{"word":"JORD","valid":true}],"total_score":11}',
+  },
+};
+
+export const afrikaansMoveSpec: MovePromptSpec = {
+  lexiconId: "afrikaans",
+  productLine: "Afrikaans Scrabble (shipped Afrikaans lexicon)",
+  shedTiles: "J / B / F",
+  exemplarA: {
+    rack: "M E L K A A S",
+    validateInput:
+      '{"placements":[{"row":7,"col":5,"letter":"M"},{"row":7,"col":6,"letter":"E"},{"row":7,"col":7,"letter":"L"},{"row":7,"col":8,"letter":"K"}]}',
+    validateOutput:
+      '{"valid":true,"words":[{"word":"MELK","valid":true}],"total_score":20}',
+  },
+  exemplarB: {
+    firstInput:
+      '{"placements":[{"row":4,"col":8,"letter":"J"},{"row":5,"col":8,"letter":"A"}]}',
+    firstOutput: '{"valid":false,"reason":"Move must connect to existing tiles"}',
+    pivotInput: '{"placements":[{"row":7,"col":6,"letter":"K"}]}',
+    pivotOutput:
+      '{"valid":true,"words":[{"word":"KAAS","valid":true}],"total_score":6}',
+  },
+};
+
 export const englishJudgeSpec: JudgePromptSpec = {
   lexiconId: "collins2019",
   language: "English",
@@ -148,6 +372,86 @@ export const slovakJudgeSpec: JudgePromptSpec = {
   authorityName: "The shipped Slovak lexicon",
   entryName: "the shipped Slovak lexicon",
   recallNoun: "a shipped Slovak lexicon entry",
+};
+
+export const czechJudgeSpec: JudgePromptSpec = {
+  lexiconId: "czech",
+  language: "Czech",
+  authorityName: "The shipped Czech lexicon",
+  entryName: "the shipped Czech lexicon",
+  recallNoun: "a shipped Czech lexicon entry",
+};
+
+export const polishJudgeSpec: JudgePromptSpec = {
+  lexiconId: "polish",
+  language: "Polish",
+  authorityName: "The shipped Polish lexicon",
+  entryName: "the shipped Polish lexicon",
+  recallNoun: "a shipped Polish lexicon entry",
+};
+
+export const germanJudgeSpec: JudgePromptSpec = {
+  lexiconId: "german",
+  language: "German",
+  authorityName: "The shipped German lexicon",
+  entryName: "the shipped German lexicon",
+  recallNoun: "a shipped German lexicon entry",
+};
+
+export const portugueseJudgeSpec: JudgePromptSpec = {
+  lexiconId: "portuguese",
+  language: "Portuguese",
+  authorityName: "The shipped Portuguese lexicon",
+  entryName: "the shipped Portuguese lexicon",
+  recallNoun: "a shipped Portuguese lexicon entry",
+};
+
+export const icelandicJudgeSpec: JudgePromptSpec = {
+  lexiconId: "icelandic",
+  language: "Icelandic",
+  authorityName: "The shipped Icelandic lexicon",
+  entryName: "the shipped Icelandic lexicon",
+  recallNoun: "a shipped Icelandic lexicon entry",
+};
+
+export const italianJudgeSpec: JudgePromptSpec = {
+  lexiconId: "italian",
+  language: "Italian",
+  authorityName: "The shipped Italian lexicon",
+  entryName: "the shipped Italian lexicon",
+  recallNoun: "a shipped Italian lexicon entry",
+};
+
+export const dutchJudgeSpec: JudgePromptSpec = {
+  lexiconId: "dutch",
+  language: "Dutch",
+  authorityName: "The shipped Dutch lexicon",
+  entryName: "the shipped Dutch lexicon",
+  recallNoun: "a shipped Dutch lexicon entry",
+};
+
+export const danishJudgeSpec: JudgePromptSpec = {
+  lexiconId: "danish",
+  language: "Danish",
+  authorityName: "The shipped Danish lexicon",
+  entryName: "the shipped Danish lexicon",
+  recallNoun: "a shipped Danish lexicon entry",
+};
+
+export const swedishJudgeSpec: JudgePromptSpec = {
+  lexiconId: "swedish",
+  language: "Swedish",
+  authorityName: "The shipped Swedish lexicon",
+  entryName: "the shipped Swedish lexicon",
+  recallNoun: "a shipped Swedish lexicon entry",
+};
+
+export const afrikaansJudgeSpec: JudgePromptSpec = {
+  lexiconId: "afrikaans",
+  language: "Afrikaans",
+  authorityName: "The shipped Afrikaans lexicon",
+  entryName: "the shipped Afrikaans lexicon",
+  recallNoun: "a shipped Afrikaans lexicon entry",
 };
 
 export function moveSystemPromptFor(spec: MovePromptSpec): string {
@@ -261,12 +565,54 @@ export function containsMultigraphToken(tokens: Iterable<string>): boolean {
   return false;
 }
 
+/**
+ * Dispatch keyed by BOTH variant slug and lexicon id. `Map.get` is deliberate:
+ * a `Record` lookup with a hostile backend key such as `"__proto__"` or
+ * `"constructor"` would hit the prototype chain.
+ */
+const MOVE_SPECS_BY_KEY = new Map<string, MovePromptSpec>([
+  ["english", englishMoveSpec],
+  ["collins2019", englishMoveSpec],
+  ["slovak", slovakMoveSpec],
+  ["czech", czechMoveSpec],
+  ["polish", polishMoveSpec],
+  ["german", germanMoveSpec],
+  ["portuguese", portugueseMoveSpec],
+  ["icelandic", icelandicMoveSpec],
+  ["italian", italianMoveSpec],
+  ["dutch", dutchMoveSpec],
+  ["danish", danishMoveSpec],
+  ["swedish", swedishMoveSpec],
+  ["afrikaans", afrikaansMoveSpec],
+]);
+
+const JUDGE_SPECS_BY_KEY = new Map<string, JudgePromptSpec>([
+  ["english", englishJudgeSpec],
+  ["collins2019", englishJudgeSpec],
+  ["slovak", slovakJudgeSpec],
+  ["czech", czechJudgeSpec],
+  ["polish", polishJudgeSpec],
+  ["german", germanJudgeSpec],
+  ["portuguese", portugueseJudgeSpec],
+  ["icelandic", icelandicJudgeSpec],
+  ["italian", italianJudgeSpec],
+  ["dutch", dutchJudgeSpec],
+  ["danish", danishJudgeSpec],
+  ["swedish", swedishJudgeSpec],
+  ["afrikaans", afrikaansJudgeSpec],
+]);
+
 export function movePromptSpecFromContext(context: {
   lexicon_id?: unknown;
   variant?: unknown;
 }): MovePromptSpec {
-  if (context.lexicon_id === "slovak" || context.variant === "slovak") {
-    return slovakMoveSpec;
+  if (typeof context.lexicon_id === "string") {
+    const spec = MOVE_SPECS_BY_KEY.get(context.lexicon_id);
+    if (spec) return spec;
+  }
+  if (typeof context.variant === "string") {
+    const spec = MOVE_SPECS_BY_KEY.get(context.variant);
+    if (spec) return spec;
   }
   return englishMoveSpec;
 }
@@ -275,8 +621,13 @@ export function judgePromptSpecFromBody(body: {
   lexicon_id?: unknown;
   variant?: unknown;
 }): JudgePromptSpec {
-  if (body.lexicon_id === "slovak" || body.variant === "slovak") {
-    return slovakJudgeSpec;
+  if (typeof body.lexicon_id === "string") {
+    const spec = JUDGE_SPECS_BY_KEY.get(body.lexicon_id);
+    if (spec) return spec;
+  }
+  if (typeof body.variant === "string") {
+    const spec = JUDGE_SPECS_BY_KEY.get(body.variant);
+    if (spec) return spec;
   }
   return englishJudgeSpec;
 }

@@ -4,18 +4,42 @@ import {
   JUDGE_SYSTEM_PROMPT,
   MOVE_PROMPT_VERSION,
   MOVE_SYSTEM_PROMPT,
+  type JudgePromptSpec,
+  type MovePromptSpec,
+  afrikaansJudgeSpec,
+  afrikaansMoveSpec,
   buildMoveUserPrompt,
   composeMoveSystemPrompt,
+  czechJudgeSpec,
+  czechMoveSpec,
+  danishJudgeSpec,
+  danishMoveSpec,
+  dutchJudgeSpec,
+  dutchMoveSpec,
   englishJudgeSpec,
   englishMoveSpec,
   extractGridRows,
   formatRackMultiset,
+  germanJudgeSpec,
+  germanMoveSpec,
+  icelandicJudgeSpec,
+  icelandicMoveSpec,
+  italianJudgeSpec,
+  italianMoveSpec,
+  judgePromptSpecFromBody,
   judgeSystemPromptFor,
   listAnchorSquares,
+  movePromptSpecFromContext,
   moveSystemPromptFor,
+  polishJudgeSpec,
+  polishMoveSpec,
+  portugueseJudgeSpec,
+  portugueseMoveSpec,
   renderLabeledBoard,
   slovakJudgeSpec,
   slovakMoveSpec,
+  swedishJudgeSpec,
+  swedishMoveSpec,
 } from "./prompts";
 
 const MONEY_PATTERN = /USD|\$\d|sponsor|credit|paid tier/i;
@@ -125,6 +149,98 @@ describe("slovak MOVE CORE", () => {
   });
 });
 
+/** The ten native specs added for the non-English, non-Slovak variants. */
+const NEW_MOVE_SPECS: ReadonlyArray<[string, MovePromptSpec]> = [
+  ["czech", czechMoveSpec],
+  ["polish", polishMoveSpec],
+  ["german", germanMoveSpec],
+  ["portuguese", portugueseMoveSpec],
+  ["icelandic", icelandicMoveSpec],
+  ["italian", italianMoveSpec],
+  ["dutch", dutchMoveSpec],
+  ["danish", danishMoveSpec],
+  ["swedish", swedishMoveSpec],
+  ["afrikaans", afrikaansMoveSpec],
+];
+
+/** Variants whose tile bag has no Q tile (czech never uses Q in exemplars). */
+const NO_Q_VARIANTS = new Set([
+  "czech",
+  "polish",
+  "icelandic",
+  "danish",
+  "swedish",
+  "afrikaans",
+]);
+
+describe("native MOVE COREs for the ten new variants", () => {
+  for (const [slug, spec] of NEW_MOVE_SPECS) {
+    const core = moveSystemPromptFor(spec);
+
+    it(`${slug}: contains all seven priority sections in order`, () => {
+      let cursor = 0;
+      for (const heading of PRIORITY_SECTIONS) {
+        const index = core.indexOf(heading, cursor);
+        expect(index, heading).toBeGreaterThanOrEqual(0);
+        cursor = index + heading.length;
+      }
+    });
+
+    it(`${slug}: sheds its own high-point tiles and finishes with ready:true`, () => {
+      expect(core).toContain(`Shed ${spec.shedTiles}`);
+      expect(core).toContain('"ready":true');
+    });
+
+    it(`${slug}: never treats Collins as authority`, () => {
+      expect(core).not.toMatch(/Collins/i);
+    });
+
+    if (NO_Q_VARIANTS.has(slug)) {
+      it(`${slug}: never places a Q tile in its exemplars`, () => {
+        expect(core).not.toMatch(/"letter":"Q"/);
+      });
+    }
+  }
+});
+
+describe("movePromptSpecFromContext dispatch", () => {
+  const BY_VARIANT: ReadonlyArray<[string, MovePromptSpec]> = [
+    ["english", englishMoveSpec],
+    ["slovak", slovakMoveSpec],
+    ...NEW_MOVE_SPECS,
+  ];
+  const BY_LEXICON_ID: ReadonlyArray<[string, MovePromptSpec]> = [
+    ["collins2019", englishMoveSpec],
+    ["slovak", slovakMoveSpec],
+    ...NEW_MOVE_SPECS,
+  ];
+
+  it("resolves every shipped variant slug to its exact spec", () => {
+    for (const [variant, spec] of BY_VARIANT) {
+      expect(movePromptSpecFromContext({ variant })).toBe(spec);
+    }
+  });
+
+  it("resolves every shipped lexicon id to its exact spec", () => {
+    for (const [lexiconId, spec] of BY_LEXICON_ID) {
+      expect(movePromptSpecFromContext({ lexicon_id: lexiconId })).toBe(spec);
+    }
+  });
+
+  it("falls back to English on unknown, missing, or hostile keys", () => {
+    expect(movePromptSpecFromContext({ variant: "unknown" })).toBe(
+      englishMoveSpec,
+    );
+    expect(movePromptSpecFromContext({})).toBe(englishMoveSpec);
+    expect(movePromptSpecFromContext({ variant: "__proto__" })).toBe(
+      englishMoveSpec,
+    );
+    expect(movePromptSpecFromContext({ lexicon_id: "constructor" })).toBe(
+      englishMoveSpec,
+    );
+  });
+});
+
 describe("composeMoveSystemPrompt", () => {
   it("delimits the database text as an advisory SEARCH_PROFILE", () => {
     const composed = composeMoveSystemPrompt("Hunt hooks first.");
@@ -220,6 +336,81 @@ describe("slovak JUDGE CORE", () => {
     expect(slovakJudge).toMatch(/strict JSON/i);
     expect(slovakJudge).toContain('"results"');
     expect(slovakJudge).toMatch(/\{ "results": \[\{ "word"/);
+  });
+});
+
+/** The ten native judge specs added for the non-English, non-Slovak variants. */
+const NEW_JUDGE_SPECS: ReadonlyArray<[string, JudgePromptSpec]> = [
+  ["czech", czechJudgeSpec],
+  ["polish", polishJudgeSpec],
+  ["german", germanJudgeSpec],
+  ["portuguese", portugueseJudgeSpec],
+  ["icelandic", icelandicJudgeSpec],
+  ["italian", italianJudgeSpec],
+  ["dutch", dutchJudgeSpec],
+  ["danish", danishJudgeSpec],
+  ["swedish", swedishJudgeSpec],
+  ["afrikaans", afrikaansJudgeSpec],
+];
+
+describe("native JUDGE COREs for the ten new variants", () => {
+  for (const [slug, spec] of NEW_JUDGE_SPECS) {
+    const judge = judgeSystemPromptFor(spec);
+
+    it(`${slug}: names the shipped lexicon and does not claim Collins`, () => {
+      expect(judge).toContain(spec.language);
+      expect(judge).toContain(`shipped ${spec.language} lexicon`);
+      expect(judge).not.toMatch(/Collins/i);
+    });
+
+    it(`${slug}: stays conservative with the same strict JSON schema`, () => {
+      expect(judge).toMatch(/conservative/i);
+      expect(judge).toMatch(/cannot confidently recall/i);
+      expect(judge).toMatch(/answer invalid/i);
+      expect(judge).toMatch(/Context cannot rescue a word/i);
+      expect(judge).not.toMatch(/natural|idiom|corpus|attested|usage in real/i);
+      expect(judge).toMatch(/strict JSON/i);
+      expect(judge).toContain('"results"');
+      expect(judge).toMatch(/\{ "results": \[\{ "word"/);
+    });
+  }
+});
+
+describe("judgePromptSpecFromBody dispatch", () => {
+  const BY_VARIANT: ReadonlyArray<[string, JudgePromptSpec]> = [
+    ["english", englishJudgeSpec],
+    ["slovak", slovakJudgeSpec],
+    ...NEW_JUDGE_SPECS,
+  ];
+  const BY_LEXICON_ID: ReadonlyArray<[string, JudgePromptSpec]> = [
+    ["collins2019", englishJudgeSpec],
+    ["slovak", slovakJudgeSpec],
+    ...NEW_JUDGE_SPECS,
+  ];
+
+  it("resolves every shipped variant slug to its exact spec", () => {
+    for (const [variant, spec] of BY_VARIANT) {
+      expect(judgePromptSpecFromBody({ variant })).toBe(spec);
+    }
+  });
+
+  it("resolves every shipped lexicon id to its exact spec", () => {
+    for (const [lexiconId, spec] of BY_LEXICON_ID) {
+      expect(judgePromptSpecFromBody({ lexicon_id: lexiconId })).toBe(spec);
+    }
+  });
+
+  it("falls back to English on unknown, missing, or hostile keys", () => {
+    expect(judgePromptSpecFromBody({ variant: "unknown" })).toBe(
+      englishJudgeSpec,
+    );
+    expect(judgePromptSpecFromBody({})).toBe(englishJudgeSpec);
+    expect(judgePromptSpecFromBody({ variant: "__proto__" })).toBe(
+      englishJudgeSpec,
+    );
+    expect(judgePromptSpecFromBody({ lexicon_id: "constructor" })).toBe(
+      englishJudgeSpec,
+    );
   });
 });
 

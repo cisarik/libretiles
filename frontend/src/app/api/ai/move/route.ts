@@ -1402,7 +1402,7 @@ export async function POST(req: NextRequest) {
               "Validate a proposed tile placement on the board. Returns " +
               "legality, all words formed, per-word scores, and total score. " +
               "Call this FIRST with your best candidate. Only use it for " +
-              "plausible English candidates, hooks, extensions, or premium shots, " +
+              "plausible candidates for this game's lexicon, hooks, extensions, or premium shots, " +
               "not random dictionary guesses.",
             inputSchema: z.object({
               placements: z
