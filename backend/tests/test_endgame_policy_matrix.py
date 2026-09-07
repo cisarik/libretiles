@@ -118,7 +118,8 @@ _fingerprint = partial(fingerprint, include_pass_streak=False)
 
 
 def _run_sample(
-    variant_slug: str, policy_id: str, seed: int, *, node_bound: bool = False,
+    variant_slug: str, policy_id: str, seed: int, *,
+    node_bound: bool = False, late_game: bool = False,
 ) -> PolicyComparisonSample:
     context = _CONTEXTS[variant_slug]
     expected = _EXPECTED_TILES[variant_slug]
@@ -140,6 +141,9 @@ def _run_sample(
             ranked_max_unique_placements=DEFAULT_RANKED_MAX_UNIQUE_PLACEMENTS,
             include_pass_streak=False, strict_unknown_tile=False,
             record_trace=True,
+            # The matrix pins the LEGACY policy tuples; the strategic
+            # late-game cohort opts in explicitly below.
+            late_game_enabled=late_game,
         ),
         context=SelfPlayContext(
             authority=context.authority, letters=context.letters,
@@ -149,7 +153,12 @@ def _run_sample(
     )
     if node_bound:
         assert all(event.decision.elapsed_ms < _PARITY_MAX_ELAPSED_MS for event in sample.trace)
-        capped = [event for event in sample.trace if not event.decision.complete]
+        # Strategic endgame decisions carry solver node accounting, not the
+        # ranked traversal cap; the parity pin applies to the ranked path.
+        capped = [
+            event for event in sample.trace
+            if not event.decision.complete and event.decision.strategy_mode is None
+        ]
         assert all(event.decision.nodes == _PARITY_RANKED_MAX_NODES for event in capped)
         if policy_id != POLICY_WITNESS:
             assert capped, "ranked parity must exercise the node bound"
@@ -443,6 +452,30 @@ def test_node_bound_matrix_regression_tuples() -> None:
         (POLICY_RANKED_BEST, "english", 22, "BAG_EMPTY_AND_PLAYER_OUT", (497, 340)),
         (POLICY_RANKED_RACK, "english", 22, "BAG_EMPTY_AND_PLAYER_OUT", (497, 340)),
     ]
+
+
+def test_late_game_matrix_terminates_and_is_deterministic() -> None:
+    """Strategic late-game cohort beside the pinned legacy tuples."""
+    samples = [
+        _run_sample(variant, POLICY_RANKED_BEST, 0, node_bound=True, late_game=True)
+        for variant in VARIANT_SLUGS
+    ]
+    allowed = {reason.name for reason in ALLOWED_END_REASONS}
+    for sample in samples:
+        assert sample.end_reason in allowed
+        assert sample.rejected_two_letter_words == ()
+        print(
+            "late-game-matrix",
+            (sample.variant_slug, sample.plies, sample.end_reason,
+             tuple(sample.final_scores.values())),
+            flush=True,
+        )
+    repeat = _run_sample(
+        VARIANT_SLUGS[0], POLICY_RANKED_BEST, 0, node_bound=True, late_game=True
+    )
+    assert repeat.final_scores == samples[0].final_scores
+    assert repeat.plies == samples[0].plies
+    assert repeat.end_reason == samples[0].end_reason
 
 
 def test_slovak_endgame_metrics_are_deterministic_for_a_fixed_seed() -> None:

@@ -43,6 +43,7 @@ from gamecore.selfplay import (
     SelfPlayPly,
     simulate_engine_game,
 )
+from gamecore.tile_tracking import late_game_context_for_game
 from gamecore.tiles import TileBag, get_tile_distribution, get_tile_points
 from gamecore.types import BLANK_TOKEN
 from gamecore.variant_store import VariantDefinition, _variant_path, load_variant
@@ -316,6 +317,9 @@ def _selfplay_config(config: PositionSetConfig, seed: int) -> SelfPlayConfig:
         include_pass_streak=False,
         strict_unknown_tile=False,
         record_trace=True,
+        # Explicit: reconstruction (_ranked_on_game) builds the SAME context,
+        # otherwise mount equivalence would compare different policies.
+        late_game_enabled=True,
     )
 
 
@@ -587,6 +591,14 @@ def _ranked_on_game(
         tile_points=get_tile_points(config.variant_slug),
         blank_letters=tuple(probe.variant.playable_letters),
         variant=config.variant_slug,
+        # Mount equivalence: identical late-game policy to the generating
+        # self-play search (SelfPlayConfig.late_game_enabled=True).
+        late_game_context=late_game_context_for_game(
+            game,
+            acting_index=game.current_index,
+            variant=config.variant_slug,
+            opponent_action_rules="ai_scoring",
+        ),
     )
 
 

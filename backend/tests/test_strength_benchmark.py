@@ -70,7 +70,7 @@ class StrengthGameResult:
 
 
 def _simulate(
-    seed: int, strategy_slot: int, *, node_bound: bool = False,
+    seed: int, strategy_slot: int, *, node_bound: bool = False, late_game: bool = False,
 ) -> StrengthGameResult:
     assert strategy_slot in {0, 1}
     policies = [POLICY_WITNESS, POLICY_WITNESS]
@@ -92,6 +92,9 @@ def _simulate(
             ranked_max_unique_placements=DEFAULT_RANKED_MAX_UNIQUE_PLACEMENTS,
             include_pass_streak=True, strict_unknown_tile=None,
             player_policy_ids=(policies[0], policies[1]), record_trace=True,
+            # Pinned tuples below freeze the LEGACY policy; the strategic
+            # late-game stack has its own enabled matrices.
+            late_game_enabled=late_game,
         ),
         context=SelfPlayContext(
             authority=_AUTHORITY, letters=frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZ"),
@@ -101,7 +104,12 @@ def _simulate(
     )
     if node_bound:
         assert all(event.decision.elapsed_ms < _PARITY_MAX_ELAPSED_MS for event in sample.trace)
-        capped = [event for event in sample.trace if not event.decision.complete]
+        # Strategic endgame decisions carry solver node accounting, not the
+        # ranked traversal cap; the parity pin applies to the ranked path.
+        capped = [
+            event for event in sample.trace
+            if not event.decision.complete and event.decision.strategy_mode is None
+        ]
         assert all(event.decision.nodes == _PARITY_RANKED_MAX_NODES for event in capped)
         assert capped, "ranked parity must exercise the node bound"
     game = sample.initial_state
@@ -222,6 +230,29 @@ def test_node_bound_strength_regression_tuples() -> None:
         (301, 0, 282, "BAG_EMPTY_AND_PLAYER_OUT"),
         (301, 1, 515, "BAG_EMPTY_AND_PLAYER_OUT"),
     ]
+
+
+def test_late_game_strategy_engages_and_terminates_on_default_seeds() -> None:
+    """Node-bound late-game runs: deterministic evidence, allowed terminals."""
+    results = [
+        _simulate(seed, strategy_slot, node_bound=True, late_game=True)
+        for seed in (300, 301) for strategy_slot in (0, 1)
+    ]
+    for result in results:
+        assert result.end_reason in _ALLOWED_END_REASONS
+        assert 0 < result.plies <= _MAX_PLIES
+    total = sum(result.spread for result in results)
+    print(
+        "strength-late-game "
+        + " ".join(
+            f"(seed={r.seed},slot={r.strategy_slot},spread={r.spread:+d},{r.end_reason.name})"
+            for r in results
+        )
+        + f" total={total:+d}",
+        flush=True,
+    )
+    repeat = _simulate(300, 0, node_bound=True, late_game=True)
+    assert repeat == results[0]
 
 
 @pytest.mark.slow

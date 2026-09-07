@@ -447,6 +447,130 @@ describe("POST /api/ai/move", () => {
     expect(JSON.parse(String(moveCall?.[1]?.body)).placements).toEqual(BACKEND_MOVE);
   });
 
+  const BLOCK_MOVE = [{ row: 7, col: 6, letter: "B" }];
+
+  function strategicRankedPayload(
+    strategyMode: string | undefined,
+    candidates: Array<{ placements: typeof PLACE_A; score: number }>,
+  ) {
+    return {
+      status: "found",
+      ...(strategyMode === undefined ? {} : { strategy_mode: strategyMode }),
+      candidates: candidates.map((candidate) => ({
+        placements: candidate.placements,
+        words: ["AT"],
+        score: candidate.score,
+        tiles_used: candidate.placements.length,
+      })),
+      search: {
+        complete: true,
+        nodes: 100,
+        elapsed_ms: 5,
+        unique_placements: candidates.length,
+        candidate_count: candidates.length,
+        ...(strategyMode === undefined
+          ? {}
+          : { strategy_mode: strategyMode, out_in_two: "proven", completed_depth: 3 }),
+      },
+    };
+  }
+
+  it.each(["exact", "bounded", "pre_endgame"])(
+    "preserves strategic backend order for strategy_mode %s instead of re-sorting by score",
+    async (strategyMode) => {
+      // The backend ranked the 18-point blocking move ABOVE the 46-point
+      // greedy move by proven spread; a raw-score merge would invert it.
+      generateTextMock.mockResolvedValue({ text: "prose only", steps: [stepFinish(0)] });
+      const fetchMock = mockBackend({
+        "/ai-candidates/": {
+          body: strategicRankedPayload(strategyMode, [
+            { placements: BLOCK_MOVE, score: 18 },
+            { placements: BACKEND_MOVE, score: 46 },
+          ]),
+        },
+        "/ai-move/": {
+          body: { ok: true, action: "place", points: 18, words: [{ word: "BAT", score: 18 }] },
+        },
+      });
+
+      const { done } = await runRoute();
+
+      expect(done?.completion_source).toBe("backend_ranked_candidate");
+      const moveCall = fetchMock.mock.calls.find(([url]) =>
+        String(url).endsWith("/ai-move/"),
+      );
+      expect(JSON.parse(String(moveCall?.[1]?.body)).placements).toEqual(BLOCK_MOVE);
+    },
+  );
+
+  it("keeps a strategic backend move ahead of a higher-scoring provider move", async () => {
+    const fetchMock = mockBackend({
+      "/validate-move/": {
+        body: { valid: true, total_score: 50, words: [{ word: "A", valid: true }] },
+      },
+      "/ai-candidates/": {
+        body: strategicRankedPayload("exact", [{ placements: BLOCK_MOVE, score: 18 }]),
+      },
+      "/ai-move/": {
+        body: { ok: true, action: "place", points: 18, words: [{ word: "BAT", score: 18 }] },
+      },
+    });
+
+    const { done } = await runRoute();
+
+    expect(done?.completion_source).toBe("backend_ranked_candidate");
+    const moveCall = fetchMock.mock.calls.find(([url]) =>
+      String(url).endsWith("/ai-move/"),
+    );
+    expect(JSON.parse(String(moveCall?.[1]?.body)).placements).toEqual(BLOCK_MOVE);
+  });
+
+  it("an unmarked ranked payload keeps the legacy raw-score merge", async () => {
+    generateTextMock.mockResolvedValue({ text: "prose only", steps: [stepFinish(0)] });
+    const fetchMock = mockBackend({
+      "/ai-candidates/": {
+        body: strategicRankedPayload(undefined, [
+          { placements: BLOCK_MOVE, score: 18 },
+          { placements: BACKEND_MOVE, score: 46 },
+        ]),
+      },
+      "/ai-move/": {
+        body: { ok: true, action: "place", points: 46, words: [{ word: "AT", score: 46 }] },
+      },
+    });
+
+    const { done } = await runRoute();
+
+    expect(done?.completion_source).toBe("backend_ranked_candidate");
+    const moveCall = fetchMock.mock.calls.find(([url]) =>
+      String(url).endsWith("/ai-move/"),
+    );
+    expect(JSON.parse(String(moveCall?.[1]?.body)).placements).toEqual(BACKEND_MOVE);
+  });
+
+  it("an unknown strategy_mode value is not treated as strategic", async () => {
+    generateTextMock.mockResolvedValue({ text: "prose only", steps: [stepFinish(0)] });
+    const fetchMock = mockBackend({
+      "/ai-candidates/": {
+        body: strategicRankedPayload("oracle", [
+          { placements: BLOCK_MOVE, score: 18 },
+          { placements: BACKEND_MOVE, score: 46 },
+        ]),
+      },
+      "/ai-move/": {
+        body: { ok: true, action: "place", points: 46, words: [{ word: "AT", score: 46 }] },
+      },
+    });
+
+    const { done } = await runRoute();
+
+    expect(done?.completion_source).toBe("backend_ranked_candidate");
+    const moveCall = fetchMock.mock.calls.find(([url]) =>
+      String(url).endsWith("/ai-move/"),
+    );
+    expect(JSON.parse(String(moveCall?.[1]?.body)).placements).toEqual(BACKEND_MOVE);
+  });
+
   it("resolves a normal prose-only generation with a ranked backend move", async () => {
     generateTextMock.mockResolvedValue({ text: "I would play AT.", steps: [stepFinish(0)] });
     const fetchMock = mockBackend({

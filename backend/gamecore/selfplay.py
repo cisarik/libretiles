@@ -22,6 +22,7 @@ from .move_search import (
     find_legal_scoring_move,
     find_ranked_scoring_moves,
 )
+from .tile_tracking import LateGameContext, late_game_context_for_game
 from .tiles import TileBag, get_tile_distribution, get_tile_points
 from .types import Placement, WordFound
 from .word_authority import WordAuthority
@@ -61,6 +62,9 @@ class SelfPlayConfig:
     strict_unknown_tile: bool | None
     player_policy_ids: tuple[str, str] | None = None
     record_trace: bool = False
+    # Strategic late-game play (pre-endgame equity + exact endgame solver).
+    # Callers pinning byte-exact legacy outcomes disable it explicitly.
+    late_game_enabled: bool = True
 
 
 @dataclass(frozen=True)
@@ -133,6 +137,8 @@ class _Decision:
     placements: tuple[Placement, ...] | None
     words: tuple[str, ...]
     total_score: int
+    # Optional late-game strategy diagnostics carried into traces.
+    strategy_mode: str | None = None
 
 
 def _tile_counter(game: Game) -> Counter[str]:
@@ -179,6 +185,17 @@ def _rare_consumed(placements: Sequence[Placement], rare: frozenset[str]) -> int
     return sum(1 for item in placements if item.letter in rare)
 
 
+def _late_game_context(game: Game, config: SelfPlayConfig) -> LateGameContext | None:
+    if not config.late_game_enabled:
+        return None
+    return late_game_context_for_game(
+        game,
+        acting_index=game.current_index,
+        variant=config.variant_slug,
+        opponent_action_rules="ai_scoring",
+    )
+
+
 def _ranked_search(
     game: Game,
     rack: Sequence[str],
@@ -197,6 +214,7 @@ def _ranked_search(
         tile_points=get_tile_points(config.variant_slug),
         blank_letters=context.blank_letters,
         variant=config.variant_slug,
+        late_game_context=_late_game_context(game, config),
     )
 
 
@@ -212,6 +230,7 @@ def _from_ranked(
         placements=None if candidate is None else candidate.placements,
         words=() if candidate is None else candidate.words,
         total_score=0 if candidate is None else candidate.total_score,
+        strategy_mode=result.strategy_mode,
     )
 
 
@@ -286,7 +305,12 @@ def _choose(
     if policy_id == POLICY_RANKED_BEST:
         chosen = ranked.candidates[0]
     elif policy_id == POLICY_RANKED_RACK:
-        chosen = _select_rack_aware(ranked.candidates, context.rare_tiles)
+        # A strategic late-game ordering (exact/bounded solver or pre-endgame
+        # valuation) outranks the rare-tile bonus: honor its first candidate.
+        if ranked.strategy_mode is not None:
+            chosen = ranked.candidates[0]
+        else:
+            chosen = _select_rack_aware(ranked.candidates, context.rare_tiles)
     else:
         raise ValueError(f"unknown policy {policy_id}")
     return _from_ranked(ranked, chosen)

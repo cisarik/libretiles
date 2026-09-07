@@ -452,6 +452,20 @@ function placementKey(placements: PlacementData[]): string {
   );
 }
 
+// Backend late-game strategy markers. "exact"/"bounded" come from the endgame
+// solver (candidates ordered by proven spread), "pre_endgame" from the
+// adjusted 1..7-bag valuation. In all three cases the backend ordering is
+// strategic and must NOT be re-sorted by raw immediate score.
+const STRATEGIC_MODES = new Set(["exact", "bounded", "pre_endgame"]);
+
+function rankedPayloadIsStrategic(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.strategy_mode === "string" &&
+    STRATEGIC_MODES.has(value.strategy_mode)
+  );
+}
+
 function normalizeRankedChoices(value: unknown): PlacementChoice[] {
   if (!isRecord(value) || value.status !== "found" || !Array.isArray(value.candidates)) {
     return [];
@@ -493,6 +507,7 @@ function normalizeRankedChoices(value: unknown): PlacementChoice[] {
 function mergePlacementChoices(
   backendChoices: PlacementChoice[],
   providerCandidates: Candidate[],
+  preserveBackendOrder = false,
 ): PlacementChoice[] {
   const merged = [...backendChoices];
   const seen = new Set(backendChoices.map((choice) => placementKey(choice.placements)));
@@ -511,6 +526,26 @@ function mergePlacementChoices(
       providerOrder,
     });
   }
+  const providerTieBreak = (left: PlacementChoice, right: PlacementChoice) => {
+    const providerOrder = (left.providerOrder ?? 0) - (right.providerOrder ?? 0);
+    return providerOrder || placementKey(left.placements).localeCompare(placementKey(right.placements));
+  };
+  if (preserveBackendOrder) {
+    // Strategic late-game ordering: the backend ranked these by proven or
+    // adjusted spread, so a raw-score re-sort would discard the strategy.
+    // Backend candidates first, in backend order; deduplicated provider
+    // candidates follow.
+    const backend = merged
+      .filter((choice) => choice.backendOrder !== null)
+      .sort((left, right) => (left.backendOrder ?? 0) - (right.backendOrder ?? 0));
+    const providers = merged
+      .filter((choice) => choice.backendOrder === null)
+      .sort((left, right) => {
+        if (left.score !== right.score) return right.score - left.score;
+        return providerTieBreak(left, right);
+      });
+    return [...backend, ...providers];
+  }
   return merged.sort((left, right) => {
     if (left.score !== right.score) return right.score - left.score;
     if (left.backendOrder !== null && right.backendOrder === null) return -1;
@@ -518,8 +553,7 @@ function mergePlacementChoices(
     if (left.backendOrder !== null && right.backendOrder !== null) {
       return left.backendOrder - right.backendOrder;
     }
-    const providerOrder = (left.providerOrder ?? 0) - (right.providerOrder ?? 0);
-    return providerOrder || placementKey(left.placements).localeCompare(placementKey(right.placements));
+    return providerTieBreak(left, right);
   });
 }
 
@@ -644,6 +678,7 @@ export async function POST(req: NextRequest) {
       let recordedProviderRequests = 0;
       let runtimeTracker: ProviderRequestTracker | null = null;
       let rankedCandidatePromise: Promise<PlacementChoice[]> | null = null;
+      let rankedStrategic = false;
 
       function fetchRankedCandidatesOnce(): Promise<PlacementChoice[]> {
         if (rankedCandidatePromise === null) {
@@ -651,7 +686,10 @@ export async function POST(req: NextRequest) {
             `/api/game/${game_id}/ai-candidates/`,
             token,
           )
-            .then((payload) => normalizeRankedChoices(payload))
+            .then((payload) => {
+              rankedStrategic = rankedPayloadIsStrategic(payload);
+              return normalizeRankedChoices(payload);
+            })
             .catch(() => []);
         }
         return rankedCandidatePromise;
@@ -659,7 +697,7 @@ export async function POST(req: NextRequest) {
 
       async function rankedAndProviderChoices(): Promise<PlacementChoice[]> {
         const backendChoices = await fetchRankedCandidatesOnce();
-        return mergePlacementChoices(backendChoices, candidates);
+        return mergePlacementChoices(backendChoices, candidates, rankedStrategic);
       }
 
       function abortGeneration(reason: AbortReason) {

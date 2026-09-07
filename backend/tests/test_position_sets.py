@@ -31,6 +31,7 @@ from gamecore.move_search import (
     DEFAULT_RANKED_TOP_K,
     find_ranked_scoring_moves,
 )
+from gamecore.tile_tracking import late_game_context_for_game
 from gamecore.tiles import get_tile_distribution, get_tile_points
 
 _SMALL = PositionSetConfig(
@@ -189,6 +190,14 @@ def test_f9_mount_equivalence_from_json_roundtrip(
             tile_points=get_tile_points("english"),
             blank_letters=tuple(probe.variant.playable_letters),
             variant="english",
+            # Generation captured the late-game-enabled policy; roundtrip
+            # equivalence must re-run the SAME policy over the mounted game.
+            late_game_context=late_game_context_for_game(
+                mounted,
+                acting_index=mounted.current_index,
+                variant="english",
+                opponent_action_rules="ai_scoring",
+            ),
         )
         baseline = snapshot["engine_baseline"]
         assert isinstance(baseline, dict)

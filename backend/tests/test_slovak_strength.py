@@ -45,7 +45,12 @@ _PARITY_MAX_ELAPSED_MS = 10_000_000
 _MAX_PLIES = 200
 
 
-def _sample(seed: int, player_policy_ids: tuple[str, str]) -> SelfPlaySample:
+def _sample(
+    seed: int,
+    player_policy_ids: tuple[str, str],
+    *,
+    late_game: bool = False,
+) -> SelfPlaySample:
     return simulate_engine_game(
         SelfPlayConfig(
             variant_slug="slovak",
@@ -62,6 +67,9 @@ def _sample(seed: int, player_policy_ids: tuple[str, str]) -> SelfPlaySample:
             strict_unknown_tile=True,
             player_policy_ids=player_policy_ids,
             record_trace=True,
+            # The pre-existing Slovak evidence pins the LEGACY policy; the
+            # strategic late-game stack is exercised by its own test below.
+            late_game_enabled=late_game,
         ),
         context=SelfPlayContext(
             authority=_AUTHORITY,
@@ -93,6 +101,36 @@ def test_slovak_ranked_strategy_beats_first_witness_on_balanced_seeds() -> None:
     losses = sum(spread < 0 for spread in spreads)
     assert sum(spreads) > 0
     assert wins > losses
+
+
+def test_slovak_late_game_strategy_beats_first_witness_on_balanced_seeds() -> None:
+    spreads: list[int] = []
+    strategic_decisions = 0
+    for seed in (0, 1):
+        for strategy_slot in (0, 1):
+            policies = [POLICY_WITNESS, POLICY_WITNESS]
+            policies[strategy_slot] = POLICY_RANKED_WITNESS_SAFE
+            sample = _sample(seed, (policies[0], policies[1]), late_game=True)
+            assert sample.end_reason in _ALLOWED_END_REASONS
+            assert sample.rejected_two_letter_words == ()
+            strategic_decisions += sum(
+                1 for event in sample.trace
+                if event.decision.strategy_mode is not None
+            )
+            scores = [sample.final_scores["P0"], sample.final_scores["P1"]]
+            spread = scores[strategy_slot] - scores[1 - strategy_slot]
+            spreads.append(spread)
+            print(
+                "slovak-late-game-strength",
+                (seed, strategy_slot, spread, sample.end_reason),
+                flush=True,
+            )
+    wins = sum(spread > 0 for spread in spreads)
+    losses = sum(spread < 0 for spread in spreads)
+    assert sum(spreads) > 0
+    assert wins > losses
+    # The strategic window (bag <= 7) must actually have been entered.
+    assert strategic_decisions > 0
 
 
 def test_slovak_ranked_self_play_terminates_with_tile_conservation() -> None:

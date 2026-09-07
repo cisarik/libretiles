@@ -20,10 +20,17 @@ from dataclasses import dataclass
 from typing import Literal
 
 from .board import BOARD_SIZE, Board
-from .leave_equity import LeaveEquityProfile, leave_equity_cp, profile_for_variant
-from .legality import evaluate_scoring_move
+from .leave_equity import (
+    LeaveEquityProfile,
+    leave_equity_cp,
+    pre_endgame_equity_cp,
+    premium_exposure_penalty_cp,
+    profile_for_variant,
+)
+from .legality import REASON_NON_SCORING, evaluate_scoring_move
+from .tile_tracking import LateGameContext
 from .tiles import get_tile_points
-from .types import Direction, Placement
+from .types import Direction, Placement, Premium
 from .word_authority import WordAuthority
 
 DEFAULT_MAX_NODES = 2_000_000
@@ -35,12 +42,17 @@ DEFAULT_RANKED_MAX_ELAPSED_MS = 750
 DEFAULT_RANKED_MAX_UNIQUE_PLACEMENTS = 25_000
 CENTER = (7, 7)
 SearchStatus = Literal["found", "none", "indeterminate"]
+StrategyMode = Literal["exact", "bounded", "pre_endgame"]
+OutInTwoStatus = Literal["proven", "refuted", "unknown"]
 CanonicalPlacementKey = tuple[tuple[int, int, str, str], ...]
 _BLANK_LETTERS = string.ascii_uppercase
 _DELTA = {
     Direction.ACROSS: (0, 1),
     Direction.DOWN: (1, 0),
 }
+# Word multipliers a placement can newly expose to the opponent. Letter
+# premiums are deliberately excluded from the pre-endgame exposure heuristic.
+_WORD_PREMIUM_MULTIPLIER: dict[Premium, int] = {Premium.DW: 2, Premium.TW: 3}
 
 
 @dataclass(frozen=True)
@@ -73,6 +85,10 @@ class RankedSearchResult:
     elapsed_ms: int
     complete: bool
     unique_placements: int
+    # Late-game strategy metadata. None on the ordinary midgame path.
+    strategy_mode: StrategyMode | None = None
+    out_in_two: OutInTwoStatus | None = None
+    completed_depth: int = 0
 
 
 def find_legal_scoring_move(
@@ -111,25 +127,80 @@ def find_ranked_scoring_moves(
     tile_points: Mapping[str, int] | None = None,
     blank_letters: Sequence[str] = _BLANK_LETTERS,
     variant: object = None,
+    late_game_context: LateGameContext | None = None,
 ) -> RankedSearchResult:
     """Return the strongest re-certified moves found within fixed bounds.
 
     A capped traversal with at least one candidate is still ``found`` and safe
     to play.  With no candidate, only an exhaustive traversal returns ``none``;
     any cap returns ``indeterminate``.
+
+    A ``late_game_context`` whose ``bag_remaining`` matches ``bag_count``
+    upgrades the valuation: with an empty bag the exact endgame solver ranks
+    candidates by proven spread (``strategy_mode`` "exact"/"bounded"), and with
+    1..7 bag tiles the pre-endgame equity replaces the midgame leave equity
+    (``strategy_mode`` "pre_endgame"). An unusable context degrades silently to
+    the ordinary ranked search; it never blocks a result.
     """
+    clamped_top_k = max(1, min(int(top_k), MAX_RANKED_TOP_K))
+    context = late_game_context
+    if context is not None and context.bag_remaining != max(0, bag_count):
+        context = None
+
+    if context is not None and context.bag_remaining == 0:
+        # Local import: endgame builds on this module's enumeration seam.
+        from .endgame import ENDGAME_MAX_ELAPSED_MS, solve_endgame
+
+        opponent_rack = context.exact_opponent_rack()
+        if opponent_rack is not None:
+            # An explicit caller time budget is authoritative (node-bound tests
+            # keep their very large elapsed limit for machine-independent
+            # evidence); the ranked default upgrades to the 1,250 ms late-game
+            # quality budget.
+            solver_elapsed_ms = (
+                max_elapsed_ms
+                if max_elapsed_ms != DEFAULT_RANKED_MAX_ELAPSED_MS
+                else ENDGAME_MAX_ELAPSED_MS
+            )
+            endgame = solve_endgame(
+                board,
+                rack,
+                opponent_rack,
+                authority=authority,
+                consecutive_scoreless_turns=context.consecutive_scoreless_turns,
+                opponent_action_rules=context.opponent_action_rules,
+                tile_points=tile_points,
+                blank_letters=blank_letters,
+                variant=variant,
+                max_elapsed_ms=solver_elapsed_ms,
+            )
+            if endgame.strategy_mode != "unavailable" and endgame.candidates:
+                return RankedSearchResult(
+                    status="found",
+                    candidates=endgame.candidates[:clamped_top_k],
+                    nodes=endgame.nodes,
+                    elapsed_ms=endgame.elapsed_ms,
+                    complete=endgame.complete,
+                    unique_placements=endgame.unique_placements,
+                    strategy_mode=endgame.strategy_mode,
+                    out_in_two=endgame.out_in_two,
+                    completed_depth=endgame.completed_depth,
+                )
+        context = None
+
     searcher = _RankedSearcher(
         board=board,
         rack=rack,
         authority=authority,
         bag_count=max(0, bag_count),
-        top_k=max(1, min(int(top_k), MAX_RANKED_TOP_K)),
+        top_k=clamped_top_k,
         max_nodes=max_nodes,
         max_elapsed_ms=max_elapsed_ms,
         max_unique_placements=max_unique_placements,
         tile_points=tile_points,
         blank_letters=blank_letters,
         variant=variant,
+        late_game_context=context,
     )
     return searcher.run_ranked()
 
@@ -468,6 +539,7 @@ class _RankedSearcher(_Searcher):
         tile_points: Mapping[str, int] | None,
         blank_letters: Sequence[str] = _BLANK_LETTERS,
         variant: object = None,
+        late_game_context: LateGameContext | None = None,
     ) -> None:
         super().__init__(
             board=board,
@@ -487,6 +559,20 @@ class _RankedSearcher(_Searcher):
         self._leave_cache: dict[tuple[tuple[str, int], ...], int] = {}
         self.seen: set[CanonicalPlacementKey] = set()
         self.ranked: list[RankedMoveCandidate] = []
+        # Pre-endgame valuation activates only for 1..7 bag tiles; the empty
+        # bag is the endgame solver's territory, handled before construction.
+        if late_game_context is not None and 1 <= late_game_context.bag_remaining <= 7:
+            self.late_game_context: LateGameContext | None = late_game_context
+            self._unseen_tiles: dict[str, int] = dict(late_game_context.unseen_tiles)
+            self._open_word_premiums = self._collect_open_word_premiums()
+            self._exposure_before = self._max_open_multiplier(
+                extra_occupied=frozenset(), covered=frozenset()
+            )
+        else:
+            self.late_game_context = None
+            self._unseen_tiles = {}
+            self._open_word_premiums = []
+            self._exposure_before = 1
 
     def run_ranked(self) -> RankedSearchResult:
         if self.max_unique_placements <= 0:
@@ -537,14 +623,79 @@ class _RankedSearcher(_Searcher):
         key = tuple(sorted(remaining.items()))
         cached = self._leave_cache.get(key)
         if cached is None:
-            cached = leave_equity_cp(
-                remaining,
-                profile=self.profile,
-                bag_count=self.bag_count,
-                tile_points=self.tile_points,
-            )
+            if self.late_game_context is not None:
+                cached = pre_endgame_equity_cp(
+                    remaining,
+                    unseen_tiles=self._unseen_tiles,
+                    bag_remaining=self.late_game_context.bag_remaining,
+                    opponent_rack_size=self.late_game_context.opponent_rack_size,
+                    profile=self.profile,
+                    tile_points=self.tile_points,
+                )
+            else:
+                cached = leave_equity_cp(
+                    remaining,
+                    profile=self.profile,
+                    bag_count=self.bag_count,
+                    tile_points=self.tile_points,
+                )
             self._leave_cache[key] = cached
         return cached
+
+    def _collect_open_word_premiums(self) -> list[tuple[int, int, int]]:
+        """Empty, unconsumed DW/TW squares — the pre-endgame exposure pool."""
+        squares: list[tuple[int, int, int]] = []
+        for row_index, row in enumerate(self.board.cells):
+            for col_index, cell in enumerate(row):
+                if cell.token is not None or cell.premium_used:
+                    continue
+                multiplier = (
+                    _WORD_PREMIUM_MULTIPLIER.get(cell.premium)
+                    if cell.premium is not None
+                    else None
+                )
+                if multiplier is not None:
+                    squares.append((row_index, col_index, multiplier))
+        return squares
+
+    def _max_open_multiplier(
+        self,
+        *,
+        extra_occupied: frozenset[tuple[int, int]],
+        covered: frozenset[tuple[int, int]],
+    ) -> int:
+        """Largest open word multiplier on an empty anchor, floor 1.
+
+        An anchor is an empty square adjacent to an occupied square; the
+        placements under evaluation extend occupancy (``extra_occupied``) and
+        may cover premium squares (``covered``).
+        """
+        best = 1
+        for row, col, multiplier in self._open_word_premiums:
+            if multiplier <= best or (row, col) in covered:
+                continue
+            for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                rr, cc = row + dr, col + dc
+                if not self._inside(rr, cc):
+                    continue
+                if self.grid[rr][cc] or (rr, cc) in extra_occupied:
+                    best = multiplier
+                    break
+        return best
+
+    def _premium_exposure_cp(self, placed: Sequence[Placement]) -> int:
+        context = self.late_game_context
+        if context is None or not self._open_word_premiums:
+            return 0
+        cells = frozenset((placement.row, placement.col) for placement in placed)
+        after = self._max_open_multiplier(extra_occupied=cells, covered=cells)
+        return premium_exposure_penalty_cp(
+            before_multiplier=self._exposure_before,
+            after_multiplier=after,
+            unseen_tiles=self._unseen_tiles,
+            opponent_rack_size=context.opponent_rack_size,
+            tile_points=self.tile_points,
+        )
 
     @staticmethod
     def _rank_key(candidate: RankedMoveCandidate) -> tuple[object, ...]:
@@ -583,12 +734,13 @@ class _RankedSearcher(_Searcher):
         self.seen.add(canonical_key)
 
         tiles_used = len(placed)
+        equity_cp = self._calculate_leave_equity(placed) - self._premium_exposure_cp(placed)
         candidate = RankedMoveCandidate(
             placements=tuple(sorted(placed, key=lambda item: (item.row, item.col))),
             words=certified.words,
             total_score=certified.total_score,
             tiles_used=tiles_used,
-            leave_equity_cp=self._calculate_leave_equity(placed),
+            leave_equity_cp=equity_cp,
             rack_out=self.bag_count == 0 and tiles_used == len(self.rack_tiles),
             canonical_key=canonical_key,
         )
@@ -613,4 +765,146 @@ class _RankedSearcher(_Searcher):
             elapsed_ms=elapsed_ms,
             complete=not self.capped,
             unique_placements=len(self.seen),
+            strategy_mode="pre_endgame" if self.late_game_context is not None else None,
         )
+
+
+class _ExhaustiveSearcher(_RankedSearcher):
+    """Enumeration seam for the endgame solver: keep EVERY certified move.
+
+    No top-k pruning and no leave equity — the caller values moves itself.
+    ``include_non_scoring`` additionally retains legal zero-score placements
+    (the evaluator's ``non_scoring`` verdict), which only simulated HUMAN
+    action nodes may play.
+    """
+
+    def __init__(
+        self,
+        *,
+        include_non_scoring: bool,
+        board: Board,
+        rack: Sequence[str],
+        authority: WordAuthority,
+        max_nodes: int,
+        max_elapsed_ms: int,
+        max_unique_placements: int,
+        tile_points: Mapping[str, int] | None,
+        blank_letters: Sequence[str] = _BLANK_LETTERS,
+        variant: object = None,
+    ) -> None:
+        super().__init__(
+            board=board,
+            rack=rack,
+            authority=authority,
+            bag_count=0,
+            top_k=1,
+            max_nodes=max_nodes,
+            max_elapsed_ms=max_elapsed_ms,
+            max_unique_placements=max_unique_placements,
+            tile_points=tile_points,
+            blank_letters=blank_letters,
+            variant=variant,
+        )
+        self.include_non_scoring = include_non_scoring
+
+    def _try_complete(self, prefix: list[str], placed: list[Placement], first_move: bool) -> None:
+        if self._stop() or not placed or len(prefix) < 2:
+            return
+        if first_move and not any((p.row, p.col) == CENTER for p in placed):
+            return
+        if not self.authority.accepts_tokens(prefix):
+            return
+
+        canonical_key = self._canonical_key(placed)
+        if canonical_key in self.seen:
+            return
+        if len(self.seen) >= self.max_unique_placements:
+            self.capped = True
+            return
+
+        certified = evaluate_scoring_move(
+            self.board,
+            self.rack_tiles,
+            placed,
+            authority=self.authority,
+            letters=self.letter_set,
+            variant=self.variant,
+        )
+        if not certified.ok and not (
+            self.include_non_scoring
+            and certified.reason_code == REASON_NON_SCORING
+            and certified.total_score == 0
+        ):
+            return
+        self.seen.add(canonical_key)
+
+        tiles_used = len(placed)
+        self.ranked.append(
+            RankedMoveCandidate(
+                placements=tuple(sorted(placed, key=lambda item: (item.row, item.col))),
+                words=certified.words,
+                total_score=certified.total_score,
+                tiles_used=tiles_used,
+                leave_equity_cp=0,
+                rack_out=tiles_used == len(self.rack_tiles),
+                canonical_key=canonical_key,
+            )
+        )
+
+    def _ranked_finish(self) -> RankedSearchResult:
+        elapsed_ms = self._elapsed_ms()
+        candidates = tuple(
+            sorted(
+                self.ranked,
+                key=lambda item: (-item.total_score, -item.tiles_used, item.canonical_key),
+            )
+        )
+        if candidates:
+            status: SearchStatus = "found"
+        elif self.capped:
+            status = "indeterminate"
+        else:
+            status = "none"
+        return RankedSearchResult(
+            status=status,
+            candidates=candidates,
+            nodes=self.nodes,
+            elapsed_ms=elapsed_ms,
+            complete=not self.capped,
+            unique_placements=len(self.seen),
+        )
+
+
+def enumerate_certified_moves(
+    board: Board,
+    rack: Sequence[str],
+    *,
+    authority: WordAuthority,
+    include_non_scoring: bool = False,
+    max_nodes: int = DEFAULT_RANKED_MAX_NODES,
+    max_elapsed_ms: int = DEFAULT_RANKED_MAX_ELAPSED_MS,
+    max_unique_placements: int = DEFAULT_RANKED_MAX_UNIQUE_PLACEMENTS,
+    tile_points: Mapping[str, int] | None = None,
+    blank_letters: Sequence[str] = _BLANK_LETTERS,
+    variant: object = None,
+) -> RankedSearchResult:
+    """Enumerate ALL certified moves for one position, without ranking.
+
+    The endgame solver's move-generation authority: every retained candidate is
+    re-certified through ``evaluate_scoring_move`` and ``complete`` reports
+    whether the traversal was exhaustive. Candidates come back ordered by
+    descending score (a good alpha-beta ordering), then canonical key.
+    """
+    searcher = _ExhaustiveSearcher(
+        include_non_scoring=include_non_scoring,
+        board=board,
+        rack=rack,
+        authority=authority,
+        max_nodes=max_nodes,
+        max_elapsed_ms=max_elapsed_ms,
+        max_unique_placements=max_unique_placements,
+        tile_points=tile_points,
+        blank_letters=blank_letters,
+        variant=variant,
+    )
+    return searcher.run_ranked()

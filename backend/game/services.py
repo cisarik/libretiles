@@ -51,6 +51,7 @@ from gamecore.state import (
     build_compact_state,
     has_multigraph_tile_token,
 )
+from gamecore.tile_tracking import LateGameContext, build_late_game_context
 from gamecore.tiles import TileBag, get_tile_points
 from gamecore.types import Placement
 from gamecore.variant_store import (
@@ -782,6 +783,36 @@ def get_ai_playability(game_id: str, user_id: int) -> dict[str, Any]:
     return _playability_payload(session, ai_slot, result)
 
 
+def _late_game_context_for_session(
+    session: GameSession,
+    player_slot: PlayerSlot,
+    board: Board,
+    rack: list[str],
+) -> LateGameContext | None:
+    """Public late-game information for the acting slot, or ``None``.
+
+    The opponent's rack contributes only its SIZE. A ``None`` context degrades
+    to the ordinary ranked search; it never blocks a probe.
+    """
+    slots = list(session.slots.all().order_by("slot"))
+    if len(slots) != 2:
+        return None
+    opponent = next((slot for slot in slots if slot.slot != player_slot.slot), None)
+    if opponent is None:
+        return None
+    opponent_rack = opponent.rack if isinstance(opponent.rack, list) else []
+    return build_late_game_context(
+        board=board,
+        acting_rack=rack,
+        variant=session.variant_slug,
+        bag_remaining=_bag_remaining_count(session),
+        player_count=len(slots),
+        opponent_rack_size=len(opponent_rack),
+        consecutive_scoreless_turns=session.consecutive_scoreless_turns,
+        opponent_action_rules="ai_scoring" if opponent.is_ai else "human_open",
+    )
+
+
 def _probe_ai_ranked_candidates(
     session: GameSession,
     player_slot: PlayerSlot,
@@ -798,6 +829,9 @@ def _probe_ai_ranked_candidates(
             tile_points=get_tile_points(session.variant_slug),
             blank_letters=variant.playable_letters,
             variant=session.variant_slug,
+            late_game_context=_late_game_context_for_session(
+                session, player_slot, board, rack
+            ),
         )
     except Exception:
         return RankedSearchResult(
@@ -811,7 +845,7 @@ def _probe_ai_ranked_candidates(
 
 
 def _ranked_candidates_payload(result: RankedSearchResult) -> dict[str, Any]:
-    return {
+    payload: dict[str, Any] = {
         "ok": True,
         "status": result.status,
         "candidates": [
@@ -831,6 +865,14 @@ def _ranked_candidates_payload(result: RankedSearchResult) -> dict[str, Any]:
             "candidate_count": len(result.candidates),
         },
     }
+    # Strategy metadata appears ONLY on strategic late-game results, keeping
+    # the ordinary payload shape byte-identical to the pre-endgame contract.
+    if result.strategy_mode is not None:
+        payload["strategy_mode"] = result.strategy_mode
+        payload["search"]["strategy_mode"] = result.strategy_mode
+        payload["search"]["out_in_two"] = result.out_in_two
+        payload["search"]["completed_depth"] = result.completed_depth
+    return payload
 
 
 def get_ai_candidates(game_id: str, user_id: int) -> dict[str, Any]:

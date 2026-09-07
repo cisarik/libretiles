@@ -19,9 +19,11 @@ from gamecore.move_search import (
     DEFAULT_RANKED_MAX_UNIQUE_PLACEMENTS,
     DEFAULT_RANKED_TOP_K,
     MAX_RANKED_TOP_K,
+    enumerate_certified_moves,
     find_legal_scoring_move,
     find_ranked_scoring_moves,
 )
+from gamecore.tile_tracking import LateGameContext
 from gamecore.types import Placement
 from gamecore.word_authority import WordAuthority
 
@@ -372,6 +374,163 @@ def test_ranked_search_has_fixed_caps_and_hard_top_k_limit(
 
     assert result.status == "found"
     assert len(result.candidates) == MAX_RANKED_TOP_K
+
+
+def _late_context(
+    bag_remaining: int,
+    unseen: tuple[tuple[str, int], ...],
+    *,
+    opponent_rack_size: int,
+) -> LateGameContext:
+    return LateGameContext(
+        bag_remaining=bag_remaining,
+        unseen_tiles=unseen,
+        opponent_rack_size=opponent_rack_size,
+        consecutive_scoreless_turns=0,
+        opponent_action_rules="ai_scoring",
+    )
+
+
+def test_ranked_empty_bag_delegates_to_the_endgame_solver() -> None:
+    # Defensive-block scenario: BAT (5 points) blocks the opponent's OAT out
+    # and keeps my own ZA out; greedy ZA (11 points) concedes it. A strategic
+    # ordering therefore CANNOT be the raw-score ordering.
+    board = _board((7, 7, "A"), (7, 8, "T"))
+    mini = WordAuthority.from_words(["OAT", "BAT", "ZA"])
+    result = find_ranked_scoring_moves(
+        board,
+        ["Z", "B"],
+        authority=mini,
+        bag_count=0,
+        max_elapsed_ms=10_000_000,
+        late_game_context=_late_context(0, (("O", 1),), opponent_rack_size=1),
+    )
+
+    assert result.status == "found"
+    assert result.strategy_mode == "exact"
+    assert result.out_in_two == "proven"
+    assert result.completed_depth >= 1
+    assert result.candidates[0].words == ("BAT",)
+    scores = [candidate.total_score for candidate in result.candidates]
+    assert scores != sorted(scores, reverse=True)
+
+
+def test_ranked_empty_bag_respects_top_k_clamp() -> None:
+    board = _board((7, 7, "A"), (7, 8, "T"))
+    mini = WordAuthority.from_words(["OAT", "BAT", "ZA"])
+    result = find_ranked_scoring_moves(
+        board,
+        ["Z", "B"],
+        authority=mini,
+        bag_count=0,
+        top_k=1,
+        max_elapsed_ms=10_000_000,
+        late_game_context=_late_context(0, (("O", 1),), opponent_rack_size=1),
+    )
+    assert result.strategy_mode == "exact"
+    assert len(result.candidates) == 1
+    assert result.candidates[0].words == ("BAT",)
+
+
+def test_ranked_ignores_a_context_that_contradicts_bag_count() -> None:
+    board = _board((7, 7, "A"), (7, 8, "T"))
+    mini = WordAuthority.from_words(["OAT", "BAT", "ZA"])
+    result = find_ranked_scoring_moves(
+        board,
+        ["Z", "B"],
+        authority=mini,
+        bag_count=50,
+        max_elapsed_ms=10_000,
+        late_game_context=_late_context(0, (("O", 1),), opponent_rack_size=1),
+    )
+    assert result.strategy_mode is None
+    assert result.out_in_two is None
+    # Ordinary midgame ordering: raw score dominates again.
+    assert result.candidates[0].words == ("ZA",)
+
+
+def test_ranked_pre_endgame_window_marks_and_revalues_candidates(
+    authority: WordAuthority,
+) -> None:
+    board = _board((7, 7, "A"), (7, 8, "T"))
+    rack = list("QUIZERS")
+    kwargs = {
+        "bag_count": 3,
+        "max_nodes": 1_000_000,
+        "max_elapsed_ms": 10_000,
+    }
+    unseen = (("A", 2), ("E", 2), ("O", 2), ("Q", 1), ("X", 1), ("Z", 2))
+    strategic = find_ranked_scoring_moves(
+        board,
+        rack,
+        authority=authority,
+        late_game_context=_late_context(3, unseen, opponent_rack_size=7),
+        **kwargs,
+    )
+    plain = find_ranked_scoring_moves(board, rack, authority=authority, **kwargs)
+
+    assert strategic.status == "found"
+    assert strategic.strategy_mode == "pre_endgame"
+    assert plain.strategy_mode is None
+    # Same certified moves, re-valued: utility stays internally consistent.
+    utilities = [
+        candidate.total_score * 100 + candidate.leave_equity_cp
+        for candidate in strategic.candidates
+    ]
+    assert utilities == sorted(utilities, reverse=True)
+    for candidate in strategic.candidates:
+        certified = evaluate_scoring_move(
+            board, rack, candidate.placements, authority=authority
+        )
+        assert certified.ok
+        assert certified.total_score == candidate.total_score
+
+
+def test_enumerate_certified_moves_returns_every_certified_move() -> None:
+    board = _board((7, 7, "A"), (7, 8, "T"))
+    mini = WordAuthority.from_words(["ATS", "SAT"])
+    result = enumerate_certified_moves(
+        board, ["S"], authority=mini, max_elapsed_ms=10_000_000
+    )
+
+    assert result.status == "found"
+    assert result.complete is True
+    words = sorted(candidate.words[0] for candidate in result.candidates)
+    assert words == ["ATS", "SAT"]
+    scores = [candidate.total_score for candidate in result.candidates]
+    assert scores == sorted(scores, reverse=True)
+    for candidate in result.candidates:
+        certified = evaluate_scoring_move(
+            board, ["S"], candidate.placements, authority=mini
+        )
+        assert certified.ok
+        assert candidate.rack_out is True
+        assert candidate.leave_equity_cp == 0
+
+
+def test_enumerate_certified_moves_gates_non_scoring_on_the_flag() -> None:
+    # Two blanks over an empty board: "AA" is legal but scores zero, which is
+    # exactly the evaluator's non_scoring verdict. Only simulated HUMAN action
+    # nodes may retain it.
+    board = _board()
+    mini = WordAuthority.from_words(["AA"])
+    with_zero = enumerate_certified_moves(
+        board, ["?", "?"], authority=mini,
+        include_non_scoring=True, max_elapsed_ms=10_000_000,
+    )
+    without_zero = enumerate_certified_moves(
+        board, ["?", "?"], authority=mini,
+        include_non_scoring=False, max_elapsed_ms=10_000_000,
+    )
+
+    assert with_zero.status == "found"
+    assert all(candidate.total_score == 0 for candidate in with_zero.candidates)
+    assert any(
+        all(p.letter == "?" for p in candidate.placements)
+        for candidate in with_zero.candidates
+    )
+    assert without_zero.status == "none"
+    assert without_zero.candidates == ()
 
 
 def test_ranked_midgame_prefers_stronger_collins_move(

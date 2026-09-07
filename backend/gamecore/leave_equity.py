@@ -14,6 +14,7 @@ from __future__ import annotations
 import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from math import comb
 
 from .tiles import _resolve_variant
 from .variant_store import VariantDefinition
@@ -24,6 +25,14 @@ EQUITY_MIN_CP = -3000
 EQUITY_MAX_CP = 6000
 SYNERGY_MIN_CP = -800
 SYNERGY_MAX_CP = 800
+
+# Pre-endgame calibration (1 <= bag_remaining <= 7). Frozen by tests; any
+# retuning must re-run the fixed benchmark comparison.
+PRE_ENDGAME_RACK_CAPACITY = 7
+PRE_ENDGAME_IMBALANCE_STEP_CP = 200
+PRE_ENDGAME_IMBALANCE_CAP_CP = 1200
+PREMIUM_EXPOSURE_CAP_CP = 1500
+PREMIUM_EXPOSURE_MIN_POINTS = 8
 
 # Vowel/consonant balance penalty, indexed [non_blank_leave_size][vowel_count].
 # The optimum sits at ~40-50% vowels; all-vowel and all-consonant leaves are
@@ -283,3 +292,145 @@ def leave_equity_cp(
     total += _clamp(synergy, SYNERGY_MIN_CP, SYNERGY_MAX_CP)
 
     return _clamp(total, EQUITY_MIN_CP, EQUITY_MAX_CP)
+
+
+def _face_points(
+    tiles: Mapping[str, int],
+    tile_points: Mapping[str, int],
+) -> int:
+    return sum(tile_points.get(token, 0) * count for token, count in tiles.items())
+
+
+def pre_endgame_equity_cp(
+    leave: Mapping[str, int],
+    *,
+    unseen_tiles: Mapping[str, int],
+    bag_remaining: int,
+    opponent_rack_size: int,
+    profile: LeaveEquityProfile,
+    tile_points: Mapping[str, int],
+) -> int:
+    """Pre-endgame leave valuation for ``1 <= bag_remaining <= 7``, in cp.
+
+    Heuristic by design: a nearly empty bag does NOT make draws known, so this
+    blends the ordinary leave equity toward expected leftover burden and adds
+    an unrepairable vowel/consonant imbalance penalty. Deterministic integer
+    arithmetic only; each component is floored exactly once. Premium exposure
+    is a separate board-aware penalty (``premium_exposure_penalty_cp``).
+    """
+    equity = leave_equity_cp(
+        leave, profile=profile, bag_count=bag_remaining, tile_points=tile_points
+    )
+    if bag_remaining < 1 or bag_remaining > PRE_ENDGAME_RACK_CAPACITY:
+        return equity
+
+    pool_size = sum(unseen_tiles.values())
+    if pool_size <= 0:
+        return equity
+
+    leave_size = sum(leave.values())
+    draws = min(bag_remaining, max(PRE_ENDGAME_RACK_CAPACITY - leave_size, 0))
+    bag_after = bag_remaining - draws
+
+    # Transition burden: T = -100 * (F(L) + d * F(unseen) / N), floored once.
+    face_leave = _face_points(leave, tile_points)
+    face_unseen = _face_points(unseen_tiles, tile_points)
+    burden_cp = -(
+        CENTIPOINTS_PER_POINT * (face_leave * pool_size + draws * face_unseen)
+    ) // pool_size
+    transition_cp = (
+        bag_after * equity + (PRE_ENDGAME_RACK_CAPACITY - bag_after) * burden_cp
+    ) // PRE_ENDGAME_RACK_CAPACITY
+
+    return transition_cp - _imbalance_penalty_cp(
+        leave,
+        unseen_tiles=unseen_tiles,
+        pool_size=pool_size,
+        draws=draws,
+        profile=profile,
+    )
+
+
+def _imbalance_penalty_cp(
+    leave: Mapping[str, int],
+    *,
+    unseen_tiles: Mapping[str, int],
+    pool_size: int,
+    draws: int,
+    profile: LeaveEquityProfile,
+) -> int:
+    """Unrepairable vowel/consonant imbalance under a uniform unseen pool."""
+    blanks = leave.get("?", 0)
+    vowels = sum(
+        count for token, count in leave.items() if token != "?" and token in profile.vowels
+    )
+    consonants = sum(
+        count
+        for token, count in leave.items()
+        if token != "?" and token not in profile.vowels
+    )
+    excess = max(abs(vowels - consonants) - 1, 0)
+    if excess == 0:
+        return 0
+
+    # Helpful draws repair the scarce side; blanks repair either direction.
+    wants_vowels = consonants > vowels
+    helpful = unseen_tiles.get("?", 0) + sum(
+        count
+        for token, count in unseen_tiles.items()
+        if token != "?" and (token in profile.vowels) == wants_vowels
+    )
+
+    total_ways = comb(pool_size, draws)
+    if total_ways <= 0:
+        return 0
+    missing_ways = comb(max(pool_size - helpful, 0), draws)
+    penalty = (
+        PRE_ENDGAME_IMBALANCE_STEP_CP * excess * missing_ways
+    ) // total_ways
+    penalty = min(penalty, PRE_ENDGAME_IMBALANCE_CAP_CP)
+    return penalty // (1 << blanks)
+
+
+def premium_exposure_penalty_cp(
+    *,
+    before_multiplier: int,
+    after_multiplier: int,
+    unseen_tiles: Mapping[str, int],
+    opponent_rack_size: int,
+    tile_points: Mapping[str, int],
+) -> int:
+    """Penalty for newly opening a word-multiplier anchor, in cp.
+
+    Board scanning stays in the move search; this receives the largest unused
+    word multiplier reachable from an empty anchor before and after the
+    placement. Exposure counts only when the multiplier strictly increased,
+    and only unseen tiles worth at least eight face points matter. Each such
+    tile is weighted by the probability that at least one copy sits in an
+    opponent rack of the known size (uniform unseen-pool assumption); the
+    LARGEST weighted risk is used, capped at 1,500 cp.
+    """
+    increase = after_multiplier - before_multiplier
+    if increase <= 0 or opponent_rack_size <= 0:
+        return 0
+    pool_size = sum(unseen_tiles.values())
+    if pool_size <= 0 or opponent_rack_size > pool_size:
+        return 0
+    total_ways = comb(pool_size, opponent_rack_size)
+    if total_ways <= 0:
+        return 0
+
+    worst = 0
+    for token, count in unseen_tiles.items():
+        points = tile_points.get(token, 0)
+        if points < PREMIUM_EXPOSURE_MIN_POINTS or count <= 0:
+            continue
+        absent_ways = comb(max(pool_size - count, 0), opponent_rack_size)
+        risk = (
+            CENTIPOINTS_PER_POINT
+            * points
+            * increase
+            * (total_ways - absent_ways)
+        ) // total_ways
+        worst = max(worst, risk)
+    return min(worst, PREMIUM_EXPOSURE_CAP_CP)
