@@ -1329,7 +1329,10 @@ describe("POST /api/ai/move", () => {
     expect(opts.prompt).not.toContain("RACK: S Z D Z S ?");
     expect(opts.prompt).toContain("row 07 |.|.|.|.|.|.|.|SZ|DZS|.|.|.|.|.|.|");
     expect(opts.prompt).toContain("row 08 |.|.|.|.|.|.|.|?=CS|.|.|.|.|.|.|.|");
-    expect(opts.prompt).toContain("(6,7) (6,8) (7,6) (7,9) (8,6) (8,8) (9,7)");
+    expect(opts.prompt).toContain("(6,7)");
+    expect(opts.prompt).toContain("(6,8)");
+    expect(opts.prompt).toContain("(7,6)");
+    expect(opts.prompt).toContain("(7,9)");
     expect(opts.prompt).not.toContain("SZDZS");
     expect(opts.prompt).toContain("DZS=8");
   });
@@ -1930,5 +1933,127 @@ describe("POST /api/ai/move — S7 diagnostic target seam", () => {
     expect(fetchUrls(fetchMock).some((url) => url.endsWith("/ai-candidates/"))).toBe(false);
     expect(fetchUrls(fetchMock).some((url) => url.endsWith("/ai-move/"))).toBe(false);
     expect(fetchUrls(fetchMock).some((url) => url.endsWith("/ai-playability/"))).toBe(false);
+  });
+
+  it("executes an engine/cpu master move turn directly via candidates and commits without LLM calls", async () => {
+    const fetchMock = mockBackend({
+      catalog: {
+        body: [
+          { provider: "engine", model_id: "engine/cpu" },
+          { provider: "openrouter", model_id: MODEL_ID },
+        ],
+      },
+      context: {
+        body: {
+          ...defaultContext(),
+          ai_model_id: "engine/cpu",
+        },
+      },
+      "/ai-candidates/": {
+        body: rankedPayload(46),
+      },
+      "/ai-move/": {
+        body: {
+          ok: true,
+          action: "place",
+          points: 46,
+          words: [{ word: "AT", score: 46 }],
+        },
+      },
+    });
+
+    const req = request({
+      model_id: "engine/cpu",
+      runtime_model_id: "engine/cpu",
+    });
+
+    const { events, done } = await runRoute(req);
+
+    // Verify LLM runtime was never called
+    expect(generateTextMock).not.toHaveBeenCalled();
+    expect(getLanguageRuntimeMock).not.toHaveBeenCalled();
+
+    // Verify thinking event
+    const thinking = events.find(
+      (e) => e.type === "thinking" && e.provider_path === "engine",
+    );
+    expect(thinking).toMatchObject({
+      type: "thinking",
+      model: "engine/cpu",
+      runtime_model: "engine/cpu",
+      status: "searching",
+      provider_path: "engine",
+    });
+
+    // Verify finishMove and terminal events
+    const finishMoveEvent = events.find((e) => e.type === "finishMove");
+    expect(finishMoveEvent).toMatchObject({
+      type: "finishMove",
+      ready: true,
+      completion_source: "backend_ranked_candidate",
+      score: 46,
+      words: ["AT"],
+    });
+
+    const terminalEvent = events.find((e) => e.type === "terminal");
+    expect(terminalEvent).toMatchObject({
+      type: "terminal",
+      completion_source: "backend_ranked_candidate",
+      turn_provider_requests_used: 0,
+      score: 46,
+    });
+
+    // Verify done event
+    expect(done?.action).toBe("place");
+    expect(done?.completion_source).toBe("backend_ranked_candidate");
+
+    // Verify candidate and move endpoints were called
+    expect(
+      fetchUrls(fetchMock).some((url) => url.endsWith("/ai-candidates/")),
+    ).toBe(true);
+    expect(
+      fetchUrls(fetchMock).some((url) => url.endsWith("/ai-move/")),
+    ).toBe(true);
+  });
+
+  it("handles engine/cpu pass/exchange when no candidates are found", async () => {
+    const fetchMock = mockBackend({
+      catalog: {
+        body: [{ provider: "engine", model_id: "engine/cpu" }],
+      },
+      context: {
+        body: {
+          ...defaultContext(),
+          ai_model_id: "engine/cpu",
+        },
+      },
+      "/ai-candidates/": {
+        body: { status: "none", candidates: [] },
+      },
+      "/ai-playability/": {
+        body: {
+          status: "none",
+          exchange_allowed: true,
+          exchange_letters: ["A", "B"],
+        },
+      },
+      "/ai-exchange/": {
+        body: { ok: true, action: "exchange", exchange_count: 2 },
+      },
+    });
+
+    const req = request({
+      model_id: "engine/cpu",
+      runtime_model_id: "engine/cpu",
+    });
+
+    const { done } = await runRoute(req);
+    expect(generateTextMock).not.toHaveBeenCalled();
+    expect(getLanguageRuntimeMock).not.toHaveBeenCalled();
+    expect(done?.action).toBe("exchange");
+    expect(done?.completion_source).toBe("genuine_no_move_exchange");
+    expect(
+      fetchUrls(fetchMock).some((url) => url.endsWith("/ai-exchange/")),
+    ).toBe(true);
   });
 });

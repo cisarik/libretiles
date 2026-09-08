@@ -119,6 +119,23 @@ async function backendPatch(path: string, body: unknown, token: string) {
   return backendRequest(path, token, { method: "PATCH", body });
 }
 
+async function fetchAiCandidates(gameId: string, token: string) {
+  return backendGet(`/api/game/${gameId}/ai-candidates/`, token);
+}
+
+async function commitMove(
+  gameId: string,
+  placements: PlacementData[],
+  token: string,
+  aiMetadata?: Record<string, unknown>,
+) {
+  return backendPost(
+    `/api/game/${gameId}/ai-move/`,
+    { placements, ai_metadata: aiMetadata },
+    token,
+  );
+}
+
 /**
  * Resource bound on ONE tile token, mirroring the backend's shared
  * `gamecore.variant_store.MAX_TILE_TOKEN_CODEPOINTS`. Never a tile count.
@@ -1383,6 +1400,88 @@ export async function POST(req: NextRequest) {
           runtimeModelId = runtimePair.model_id;
           providerPath = runtimePair.provider;
           resolvedModelId = resolvedPair.model_id;
+
+          if (runtimePair.provider === "engine") {
+            emit({
+              type: "thinking",
+              model: "engine/cpu",
+              runtime_model: "engine/cpu",
+              status: "searching",
+              message: "Calculating optimal master move...",
+              provider_path: "engine",
+            });
+
+            completionSource = "backend_ranked_candidate";
+            terminalCause = "backend_ranked_candidate";
+            const candidatesResult = await fetchAiCandidates(game_id, token);
+            const topCandidate =
+              isRecord(candidatesResult) &&
+              Array.isArray(candidatesResult.candidates) &&
+              candidatesResult.candidates.length > 0
+                ? (candidatesResult.candidates[0] as Record<string, unknown>)
+                : null;
+
+            const rawPlacements =
+              topCandidate && Array.isArray(topCandidate.placements)
+                ? topCandidate.placements
+                : null;
+            const placements = rawPlacements
+              ? normalizePlacementArray(rawPlacements)
+              : [];
+
+            if (topCandidate && placements.length > 0) {
+              const score =
+                typeof topCandidate.total_score === "number"
+                  ? topCandidate.total_score
+                  : typeof topCandidate.score === "number"
+                  ? topCandidate.score
+                  : 0;
+              const words = Array.isArray(topCandidate.words)
+                ? (topCandidate.words as string[])
+                : [];
+
+              const commitResult = await commitMove(
+                game_id,
+                placements,
+                token,
+                boundedAiMetadata("backend_ranked_candidate"),
+              );
+              if (isLegalBackendTerminal(commitResult)) {
+                emit({
+                  type: "finishMove",
+                  ready: true,
+                  completion_source: "backend_ranked_candidate",
+                  score,
+                  words,
+                });
+                emit({
+                  type: "terminal",
+                  completion_source: "backend_ranked_candidate",
+                  turn_provider_requests_used: 0,
+                  score,
+                });
+                const moveRecord = commitResult as Record<string, unknown>;
+                const appliedWords = Array.isArray(moveRecord.words)
+                  ? (moveRecord.words as Array<{ word?: string; score?: number }>)
+                  : [];
+                emitDone("place", moveRecord, {
+                  best_word:
+                    appliedWords[0]?.word ??
+                    (typeof words[0] === "string" ? words[0] : ""),
+                  best_score:
+                    moveRecord.points ?? appliedWords[0]?.score ?? score,
+                });
+                closeStream();
+                return;
+              }
+            }
+
+            // If no legal moves available (pass/exchange needed)
+            await probeAndResolve("no_engine_move", { allowProviderRepair: false });
+            closeStream();
+            return;
+          }
+
           try {
             const runtime = await getLanguageRuntime(
               runtimePair.provider,

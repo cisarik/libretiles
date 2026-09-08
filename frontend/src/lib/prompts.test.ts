@@ -724,5 +724,30 @@ describe("structured candidate anchors and coordinate mapping in buildMoveUserPr
     // Anchor at (7,9) is immediately East of RATE, so West neighbor has RATE: W:(7,5..8)=[R|A|T|E]
     expect(prompt).toContain("(7,9) W:(7,5..8)=[R|A|T|E] | ACROSS W0/E5 cross=free; DOWN N7/S7 cross=[R|A|T|E|_]");
   });
+
+  it("caps formatted anchors to at most 20 prioritized entries", () => {
+    // Generate many words on the board to produce > 20 anchor squares
+    const placements: Array<[number, number, string, string | null]> = [];
+    for (let r = 2; r <= 12; r += 2) {
+      for (let c = 2; c <= 12; c += 2) {
+        placements.push([r, c, "A", null]);
+      }
+    }
+    const grid = structuredGrid(placements);
+    const context = {
+      compact_state: `grid:\n${boardRows(placements).join("\n")}\nblanks:[]\nai_rack:TESTING\nscores: H=0 AI=0\nturn:AI\n`,
+      ai_state: { grid, ai_rack: ["T", "E", "S", "T", "I", "N", "G"], human_score: 0, ai_score: 0 },
+      is_first_move: false,
+    };
+    const prompt = buildMoveUserPrompt(context);
+    const anchorLines = prompt
+      .split("ANCHORS (search context, not answers):\n")[1]
+      ?.split("\n\nCOORDINATE MAPPING & RULES:")[0]
+      ?.trim()
+      .split("\n");
+    expect(anchorLines).toBeDefined();
+    expect(anchorLines!.length).toBeLessThanOrEqual(20);
+    expect(anchorLines!.length).toBe(20);
+  });
 });
 

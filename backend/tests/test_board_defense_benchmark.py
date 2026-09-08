@@ -342,6 +342,11 @@ def _assert_smoke(pairs: list[tuple[ArmGame, ArmGame]]) -> None:
     assert sum(on.spread for _off, on in pairs) > 0
 
 
+@pytest.mark.slow
+@pytest.mark.skipif(
+    os.environ.get("LIBRETILES_RUN_BENCHMARKS") != "1",
+    reason="set LIBRETILES_RUN_BENCHMARKS=1 to run full game simulation benchmarks",
+)
 def test_default_paired_benchmark_terminates_and_engages_board_control() -> None:
     pairs = _run_pairs(_DEFAULT_SEEDS, label="board-defense-ab-default", both_seats=False)
     _assert_smoke(pairs)

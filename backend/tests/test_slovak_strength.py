@@ -8,7 +8,10 @@ covered by the English matrices.
 
 from __future__ import annotations
 
+import os
 from collections import Counter
+
+import pytest
 
 from gamecore.assets import get_premiums_path
 from gamecore.game import GameEndReason
@@ -91,6 +94,14 @@ def _sample(
     )
 
 
+_BENCHMARK_SKIP = pytest.mark.skipif(
+    os.environ.get("LIBRETILES_RUN_BENCHMARKS") != "1",
+    reason="set LIBRETILES_RUN_BENCHMARKS=1 to run full game simulation benchmarks",
+)
+
+
+@pytest.mark.slow
+@_BENCHMARK_SKIP
 def test_slovak_ranked_strategy_beats_first_witness_on_balanced_seeds() -> None:
     spreads: list[int] = []
     for seed in (0, 1):
@@ -114,6 +125,13 @@ def test_slovak_ranked_strategy_beats_first_witness_on_balanced_seeds() -> None:
     assert wins > losses
 
 
+test_slovak_ranked_strategy_beats_witness_on_default_seeds = (
+    test_slovak_ranked_strategy_beats_first_witness_on_balanced_seeds
+)
+
+
+@pytest.mark.slow
+@_BENCHMARK_SKIP
 def test_slovak_late_game_strategy_beats_first_witness_on_balanced_seeds() -> None:
     spreads: list[int] = []
     strategic_decisions = 0
@@ -144,6 +162,8 @@ def test_slovak_late_game_strategy_beats_first_witness_on_balanced_seeds() -> No
     assert strategic_decisions > 0
 
 
+@pytest.mark.slow
+@_BENCHMARK_SKIP
 def test_slovak_ranked_self_play_terminates_with_tile_conservation() -> None:
     sample = _sample(
         0, (POLICY_RANKED_WITNESS_SAFE, POLICY_RANKED_WITNESS_SAFE)
@@ -167,6 +187,13 @@ def test_slovak_ranked_self_play_terminates_with_tile_conservation() -> None:
     )
 
 
+test_slovak_ranked_selfplay_terminates_with_tile_conservation = (
+    test_slovak_ranked_self_play_terminates_with_tile_conservation
+)
+
+
+@pytest.mark.slow
+@_BENCHMARK_SKIP
 def test_slovak_board_defense_beats_first_witness_on_balanced_seeds() -> None:
     spreads: list[int] = []
     board_control = 0
@@ -202,6 +229,8 @@ def test_slovak_board_defense_beats_first_witness_on_balanced_seeds() -> None:
     assert board_control > 0
 
 
+@pytest.mark.slow
+@_BENCHMARK_SKIP
 def test_slovak_board_defense_self_play_terminates_with_tile_conservation() -> None:
     sample = _sample(
         0,

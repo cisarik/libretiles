@@ -1006,7 +1006,7 @@ function anchorsFromCells(rows: BoardCell[][]): string {
     return a.col - b.col;
   });
 
-  return candidates.map((a) => a.formatted).join("\n");
+  return candidates.slice(0, 20).map((a) => a.formatted).join("\n");
 }
 
 /**

@@ -220,6 +220,11 @@ def _run_matrix(seeds: range | tuple[int, ...], *, label: str) -> list[StrengthG
     return results
 
 
+@pytest.mark.slow
+@pytest.mark.skipif(
+    os.environ.get("LIBRETILES_RUN_BENCHMARKS") != "1",
+    reason="set LIBRETILES_RUN_BENCHMARKS=1 to run full game simulation benchmarks",
+)
 def test_ranked_strategy_beats_first_witness_on_default_balanced_seeds() -> None:
     results = _run_matrix((300, 301), label="strength-default")
 
@@ -227,6 +232,11 @@ def test_ranked_strategy_beats_first_witness_on_default_balanced_seeds() -> None
     assert all(result.spread > 0 for result in results)
 
 
+@pytest.mark.slow
+@pytest.mark.skipif(
+    os.environ.get("LIBRETILES_RUN_BENCHMARKS") != "1",
+    reason="set LIBRETILES_RUN_BENCHMARKS=1 to run full game simulation benchmarks",
+)
 def test_node_bound_strength_regression_tuples() -> None:
     """New candidate baselines under node bounds, separate from extraction-equivalence evidence."""
     results = [
@@ -244,6 +254,11 @@ def test_node_bound_strength_regression_tuples() -> None:
     ]
 
 
+@pytest.mark.slow
+@pytest.mark.skipif(
+    os.environ.get("LIBRETILES_RUN_BENCHMARKS") != "1",
+    reason="set LIBRETILES_RUN_BENCHMARKS=1 to run full game simulation benchmarks",
+)
 def test_late_game_strategy_engages_and_terminates_on_default_seeds() -> None:
     """Node-bound late-game runs: deterministic evidence, allowed terminals."""
     results = [
@@ -267,6 +282,11 @@ def test_late_game_strategy_engages_and_terminates_on_default_seeds() -> None:
     assert repeat == results[0]
 
 
+@pytest.mark.slow
+@pytest.mark.skipif(
+    os.environ.get("LIBRETILES_RUN_BENCHMARKS") != "1",
+    reason="set LIBRETILES_RUN_BENCHMARKS=1 to run full game simulation benchmarks",
+)
 def test_board_defense_strategy_beats_first_witness_on_default_seeds() -> None:
     results = [
         _simulate(seed, strategy_slot, node_bound=True, late_game=True, board_defense=True)

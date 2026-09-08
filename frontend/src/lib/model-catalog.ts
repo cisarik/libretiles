@@ -49,6 +49,7 @@ export function revalidateRuntimePair(
   modelId: string,
   catalogRows: CatalogModelRow[],
 ): boolean {
+  if (provider === "engine" && modelId === "engine/cpu") return true;
   if (!isValidRuntimePair(provider, modelId)) return false;
   return catalogRows.some(
     (row) => row.provider === provider && row.model_id === modelId,
@@ -80,6 +81,9 @@ export function findCatalogPair(
   catalogRows: CatalogModelRow[],
 ): CatalogPair | null {
   if (!modelId) return null;
+  if (modelId === "engine/cpu") {
+    return { provider: "engine", model_id: "engine/cpu" };
+  }
   return (
     playableCatalogPairs(catalogRows).find(
       (row) => row.model_id === modelId,

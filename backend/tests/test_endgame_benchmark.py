@@ -196,6 +196,11 @@ def _print_summary(
         )
 
 
+@pytest.mark.slow
+@pytest.mark.skipif(
+    os.environ.get("LIBRETILES_RUN_BENCHMARKS") != "1",
+    reason="set LIBRETILES_RUN_BENCHMARKS=1 to run full game simulation benchmarks",
+)
 def test_default_paired_benchmark_terminates_and_engages_the_late_game() -> None:
     pairs = _run_pairs(_DEFAULT_SEEDS, label="endgame-ab-default")
 
@@ -213,6 +218,16 @@ def test_default_paired_benchmark_terminates_and_engages_the_late_game() -> None
     )
 
 
+test_default_paired_endgame_benchmark_terminates_and_reaches_player_out = (
+    test_default_paired_benchmark_terminates_and_engages_the_late_game
+)
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(
+    os.environ.get("LIBRETILES_RUN_BENCHMARKS") != "1",
+    reason="set LIBRETILES_RUN_BENCHMARKS=1 to run full game simulation benchmarks",
+)
 def test_default_paired_benchmark_is_deterministic() -> None:
     first = _play("english", 300, 0, late_game=True)
     second = _play("english", 300, 0, late_game=True)

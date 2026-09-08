@@ -17,6 +17,7 @@ export const MISTRAL_PROVIDER = "mistral" as const;
 export const IBM_WATSONX_PROVIDER = "ibm-watsonx" as const;
 export const AION_PROVIDER = "aion" as const;
 export const HUGGINGFACE_PROVIDER = "huggingface" as const;
+export const ENGINE_PROVIDER = "engine" as const;
 
 export const NVIDIA_NIM_MODEL_ID =
   "nvidia/nemotron-3-super-120b-a12b" as const;
@@ -28,6 +29,7 @@ export const MISTRAL_MODEL_ID = "mistral-small-2603" as const;
 export const IBM_WATSONX_MODEL_ID = "ibm/granite-4-h-small" as const;
 export const AION_MODEL_ID = "aion-labs/aion-3.0-mini" as const;
 export const HUGGINGFACE_MODEL_ID = "openai/gpt-oss-120b:groq" as const;
+export const ENGINE_CPU_MODEL_ID = "engine/cpu" as const;
 
 export type ProviderCatalogTier = "direct" | "watchlist" | "legacy";
 export type ProviderRuntimeKind =
@@ -49,6 +51,14 @@ export type ExactProviderMetadata = Readonly<{
  * it. IBM account and IAM configuration remains server-only.
  */
 export const EXACT_PROVIDER_METADATA = [
+  {
+    provider: ENGINE_PROVIDER,
+    model_id: ENGINE_CPU_MODEL_ID,
+    provider_label: "Local Engine",
+    model_label: "CPU Master",
+    catalog_tier: "direct",
+    runtime_kind: "openai-compatible",
+  },
   {
     provider: GROQ_PROVIDER,
     model_id: GROQ_MODEL_ID,
