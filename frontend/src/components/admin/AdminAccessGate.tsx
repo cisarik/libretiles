@@ -25,7 +25,10 @@ export function AdminAccessGate({ children }: { children: React.ReactNode }) {
       if (!active) return;
       setState("checking");
       if (!useGameStore.persist.hasHydrated()) {
-        await new Promise<void>((resolve) => useGameStore.persist.onFinishHydration(() => resolve()));
+        await Promise.race([
+          new Promise<void>((resolve) => useGameStore.persist.onFinishHydration(() => resolve())),
+          new Promise<void>((resolve) => setTimeout(resolve, 300)),
+        ]);
       }
       const currentToken = useGameStore.getState().token;
       if (!active) return;
