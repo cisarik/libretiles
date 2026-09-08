@@ -19,6 +19,13 @@
 .blank::after { content: "?"; position: absolute; inset: 0; display: grid; place-items: center; z-index: 3; color: #292524; font-weight: 900; font-size: 1.35rem; pointer-events: none; }
 .studio { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(320px, .8fr); gap: 1rem; margin-top: 1rem; align-items: start; }
 .sidebar { display: grid; gap: 1rem; }
+.inspectorTrigger { width: 100%; display: flex; align-items: center; justify-content: space-between; border: 0; border-radius: 0; padding: 1rem 1.15rem; }
+.inspectorBody { border-top: 1px solid rgba(251,191,36,.18); }
+.inspectorTabs { display: flex; gap: .35rem; overflow-x: auto; padding: .75rem; border-bottom: 1px solid rgba(251,191,36,.12); }
+.inspectorTab { flex: 0 0 auto; border-radius: .65rem; padding: .55rem .7rem; color: #a8a29e; font-size: .75rem; font-weight: 900; }
+.inspectorTab[aria-selected="true"] { background: rgba(217,119,6,.22); color: #fde68a; }
+.inspectorTab:focus-visible { outline: 2px solid #fbbf24; outline-offset: 2px; }
+.inspectorPanel { max-height: 32rem; overflow: auto; padding: 1rem; }
 .controls { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
 .button { border: 1px solid rgba(251,191,36,.3); border-radius: .75rem; background: #181512; padding: .55rem .8rem; color: #fde68a; font-weight: 800; }
 .button:disabled { opacity: .35; }

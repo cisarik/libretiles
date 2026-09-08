@@ -40,6 +40,10 @@ import {
   movePromptSpecFromContext,
 } from "@/lib/prompts";
 import { recordProviderFailure } from "@/lib/provider-logging";
+import {
+  createInspectionTraceCollector,
+  sanitizeInspectionTrace,
+} from "@/lib/ai-inspection-trace";
 
 const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8000";
 const DEFAULT_TIMEOUT_S = 120;
@@ -372,6 +376,8 @@ const ALLOWED_BODY_KEYS = new Set([
   "max_steps",
   "no_provider_progress_deadline",
   "diagnostic_target_id",
+  "attempt_index",
+  "inspection_trace",
 ]);
 const FORBIDDEN_BODY_FRAGMENTS = [
   "base_url",
@@ -599,6 +605,8 @@ export async function POST(req: NextRequest) {
     timeout?: number;
     max_steps?: number;
     no_provider_progress_deadline?: number;
+    attempt_index?: number;
+    inspection_trace?: unknown;
   };
 
   const requestedTimeout =
@@ -625,6 +633,11 @@ export async function POST(req: NextRequest) {
   );
   const searchStepCap = maxSteps - REPAIR_RESERVE_STEPS;
   const startTime = Date.now();
+  const attemptIndex =
+    typeof body.attempt_index === "number" && Number.isInteger(body.attempt_index)
+      ? clampNumber(body.attempt_index, 0, 2)
+      : 0;
+  const carriedInspectionTrace = sanitizeInspectionTrace(body.inspection_trace);
   const requestedModelId = typeof model_id === "string" && model_id ? model_id : null;
   const requestedRuntimeModelId =
     typeof runtime_model_id === "string" && runtime_model_id
@@ -698,6 +711,20 @@ export async function POST(req: NextRequest) {
       let runtimeTracker: ProviderRequestTracker | null = null;
       let rankedCandidatePromise: Promise<PlacementChoice[]> | null = null;
       let rankedStrategic = false;
+      const inspection = createInspectionTraceCollector({
+        attemptIndex,
+        previous: carriedInspectionTrace,
+        startedAt: startTime,
+      });
+
+      function inspectionTrace(outcome: string) {
+        return inspection.snapshot({
+          provider: providerPath,
+          modelId: runtimeModelId,
+          outcome,
+          providerRequestsUsed: attemptProviderRequests(),
+        });
+      }
 
       function fetchRankedCandidatesOnce(): Promise<PlacementChoice[]> {
         if (rankedCandidatePromise === null) {
@@ -898,6 +925,7 @@ export async function POST(req: NextRequest) {
           provider_requests_used: used,
           turn_provider_requests: used,
           valid_candidate_count: candidates.filter((c) => c.valid).length,
+          inspection_trace: inspectionTrace("done"),
         };
         Object.assign(meta, retryAfterFields());
         if (typeof promptContext?.ai_prompt_id === "number") {
@@ -940,6 +968,7 @@ export async function POST(req: NextRequest) {
           repair_attempted: repairAttempted,
           terminal_cause: terminalCause,
           ...runtimeFields(),
+          inspection_trace: inspectionTrace("done"),
           ...extra,
         });
       }
@@ -957,6 +986,7 @@ export async function POST(req: NextRequest) {
           repair_attempted: repairAttempted,
           terminal_cause: terminalCause || "error",
           ...runtimeFields(),
+          inspection_trace: inspectionTrace("error"),
           ...extra,
         });
       }
@@ -1021,6 +1051,7 @@ export async function POST(req: NextRequest) {
         const repairValidate = forceValidateMoveConfig;
         const repairGenerate = runGenerationImpl;
         repairAttempted = true;
+        inspection.startRepair();
         const repairAbort = new AbortController();
         const repairMs = Math.max(remainingSeconds() * 1000, 0);
         const repairTimer = setTimeout(() => repairAbort.abort(), repairMs);
@@ -1551,6 +1582,7 @@ export async function POST(req: NextRequest) {
                 .describe("Tiles to place on the board"),
             }),
             execute: async ({ placements }) => {
+              const completeInspection = inspection.beginValidate(placements);
               emit({
                 type: "tool_use",
                 tool: "validateMove",
@@ -1562,6 +1594,7 @@ export async function POST(req: NextRequest) {
                 { placements, rack_owner: "ai" },
                 token,
               );
+              completeInspection(result);
 
               emit({
                 type: "tool_result",
@@ -1585,6 +1618,7 @@ export async function POST(req: NextRequest) {
               ready: z.literal(true).describe("Must be true to finalize"),
             }),
             execute: async () => {
+              inspection.finishMove();
               emit({
                 type: "tool_use",
                 tool: "finishMove",
@@ -1743,6 +1777,7 @@ export async function POST(req: NextRequest) {
             runtime_model: runtimeModelId,
             provider_requests_used: attemptProviderRequests(),
             turn_provider_requests_used: attemptProviderRequests(),
+            inspection_trace: inspectionTrace("provider_error"),
             ...retryAfterFields(),
             repair_attempted: repairAttempted,
             probe_status: probeStatus,

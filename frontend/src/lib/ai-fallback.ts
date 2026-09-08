@@ -1,5 +1,9 @@
 import type { AiMoveStreamTerminal } from "./ai-move-stream";
 import {
+  inspectionTraceFromTerminal,
+  type InspectionTrace,
+} from "./ai-inspection-trace";
+import {
   NVIDIA_NIM_MODEL_ID,
   NVIDIA_NIM_PROVIDER,
   OPENROUTER_PROVIDER,
@@ -46,7 +50,13 @@ export type FallbackAttemptRequest = {
   timeoutSeconds: number;
   /** Provider/IAM request budget granted to this attempt. */
   maxStepsRemaining: number;
+  previousInspectionTrace?: InspectionTrace;
 };
+
+const activeRequestContext = new Map<
+  string,
+  { attemptIndex: number; inspectionTrace?: InspectionTrace }
+>();
 
 function pairKey(pair: CatalogPair): string {
   return `${pair.provider}\0${pair.model_id}`;
@@ -63,6 +73,8 @@ export function aiMoveRequestBody(input: {
   runtimeModelId: string;
   timeout: number;
   maxSteps: number;
+  attemptIndex?: number;
+  inspectionTrace?: InspectionTrace;
 }): {
   game_id: string;
   token: string;
@@ -70,7 +82,12 @@ export function aiMoveRequestBody(input: {
   runtime_model_id: string;
   timeout: number;
   max_steps: number;
+  attempt_index?: number;
+  inspection_trace?: InspectionTrace;
 } {
+  const active = activeRequestContext.get(input.gameId);
+  const attemptIndex = input.attemptIndex ?? active?.attemptIndex;
+  const inspectionTrace = input.inspectionTrace ?? active?.inspectionTrace;
   return {
     game_id: input.gameId,
     token: input.token,
@@ -78,6 +95,8 @@ export function aiMoveRequestBody(input: {
     runtime_model_id: input.runtimeModelId,
     timeout: input.timeout,
     max_steps: input.maxSteps,
+    ...(attemptIndex === undefined ? {} : { attempt_index: attemptIndex }),
+    ...(inspectionTrace ? { inspection_trace: inspectionTrace } : {}),
   };
 }
 
@@ -332,6 +351,7 @@ export async function orchestrateFallbackTurn(opts: {
   let providerRequestsUsed = 0;
   let retryAfterSeconds: number | undefined;
   let remainingSteps = Math.max(Math.floor(opts.maxStepsTotal), 0);
+  let inspectionTrace: InspectionTrace | null = null;
 
   if (queue.length === 0) {
     return {
@@ -397,12 +417,20 @@ export async function orchestrateFallbackTurn(opts: {
       attemptIndex,
       timeoutSeconds: decision.timeoutSeconds,
       maxStepsRemaining: stepGrant,
+      ...(inspectionTrace ? { previousInspectionTrace: inspectionTrace } : {}),
     };
     posts.push(request);
 
     try {
-      lastTerminal = await opts.runStream(request);
+      activeRequestContext.set(opts.anchor.gameId, {
+        attemptIndex,
+        ...(inspectionTrace ? { inspectionTrace } : {}),
+      });
+      const streamPromise = opts.runStream(request);
+      activeRequestContext.delete(opts.anchor.gameId);
+      lastTerminal = await streamPromise;
     } catch (error) {
+      activeRequestContext.delete(opts.anchor.gameId);
       lastTerminal = {
         kind: "generic_error",
         message: error instanceof Error ? error.message : "AI move failed",
@@ -416,6 +444,7 @@ export async function orchestrateFallbackTurn(opts: {
     );
     remainingSteps = charged.remainingSteps;
     providerRequestsUsed = charged.providerRequestsUsed;
+    inspectionTrace = inspectionTraceFromTerminal(lastTerminal) ?? inspectionTrace;
     const attemptRetryAfter = retryAfterSecondsFromTerminal(lastTerminal);
     if (attemptRetryAfter !== undefined) {
       retryAfterSeconds = Math.max(retryAfterSeconds ?? 0, attemptRetryAfter);

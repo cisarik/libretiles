@@ -62,12 +62,26 @@ class WordFound:
 
 
 @dataclass
+class ScoreCellBreakdown:
+    row: int
+    col: int
+    token: TileToken
+    blank_as: TileToken | None
+    base_points: int
+    is_new: bool
+    premium: str | None
+    premium_applied: bool
+    letter_multiplier: int
+
+
+@dataclass
 class ScoreBreakdown:
     word: str
     base_points: int
     letter_bonus_points: int
     word_multiplier: int
     total: int
+    physical_cells: list[ScoreCellBreakdown] | None = None
 
 
 class Premium(Enum):

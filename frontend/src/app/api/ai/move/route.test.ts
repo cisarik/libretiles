@@ -344,6 +344,20 @@ describe("POST /api/ai/move", () => {
     );
   });
 
+  it("persists and emits sanitized tool-call inspection telemetry", async () => {
+    const fetchMock = mockBackend({
+      "/validate-move/": { body: { valid: true, total_score: 2, words: [{ word: "A", valid: true }] } },
+      "/ai-move/": { body: { ok: true, action: "place", points: 2, words: [{ word: "A", score: 2 }] } },
+    });
+    const { done } = await runRoute(request({ attempt_index: 1, inspection_trace: { version: 1, attempts: [{ attempt_index: 0, provider: "prior", events: [] }] } }));
+    expect(done?.inspection_trace).toMatchObject({ version: 1, attempts: [{ attempt_index: 0 }, { attempt_index: 1 }] });
+    const moveCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/ai-move/"));
+    const saved = JSON.parse(String(moveCall?.[1]?.body));
+    expect(saved.ai_metadata.inspection_trace.attempts[1].events[0]).toMatchObject({
+      tool: "validateMove", placements: PLACE_A, valid: true, words: ["A"], score: 2,
+    });
+  });
+
   it("ignores free-form action:pass when a valid tracked candidate exists", async () => {
     const fetchMock = mockBackend({
       "/validate-move/": {

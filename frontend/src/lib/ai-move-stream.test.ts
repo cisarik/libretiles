@@ -103,6 +103,18 @@ describe("consumeAIStream terminals", () => {
     }
   });
 
+  it("retains only a sanitized inspection trace on provider errors", async () => {
+    const { terminal } = await collect(sseResponse([eventLine({
+      type: "error", code: "provider_rate_limited", error: "rate limited",
+      inspection_trace: { version: 1, attempts: [{ attempt_index: 0, events: [], prompt: "secret" }] },
+    })]));
+    expect(terminal).toMatchObject({
+      kind: "coded_provider_error",
+      inspectionTrace: { version: 1, attempts: [{ attempt_index: 0, events: [] }] },
+    });
+    expect(JSON.stringify(terminal)).not.toContain("secret");
+  });
+
   it("does not carry legacy credit fields into an error terminal", async () => {
     const { terminal } = await collect(
       sseResponse([

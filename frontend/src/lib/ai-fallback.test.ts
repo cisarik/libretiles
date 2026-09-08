@@ -16,6 +16,7 @@ import {
   remainingTimeoutSeconds,
   retryAfterSecondsFromTerminal,
   type CatalogPair,
+  type FallbackAttemptRequest,
   type ReconciliationView,
   type TurnAnchor,
 } from "./ai-fallback";
@@ -228,6 +229,15 @@ describe("catalog failure and timeout helpers", () => {
     expect(first.runtime_model_id).toBe(NVIDIA_NIM_NEMOTRON);
     expect(second.runtime_model_id).toBe(OPENROUTER_NEMOTRON);
   });
+
+  it("carries the previous bounded inspection trace in an attempt body", () => {
+    const trace = { version: 1 as const, attempts: [{ attempt_index: 0, events: [] }] };
+    expect(aiMoveRequestBody({
+      gameId: "game-1", token: "t", preferenceModelId: OPENROUTER_GEMMA,
+      runtimeModelId: NVIDIA_NIM_NEMOTRON, timeout: 40, maxSteps: 30,
+      attemptIndex: 1, inspectionTrace: trace,
+    })).toMatchObject({ attempt_index: 1, inspection_trace: trace });
+  });
 });
 
 describe("gameStateAllowsRetry", () => {
@@ -345,6 +355,22 @@ describe("orchestrateFallbackTurn", () => {
     expect(result.posts[0]?.pair.model_id).toBe(NVIDIA_NIM_NEMOTRON);
     expect(result.posts[0]?.maxStepsRemaining).toBe(40);
     expect(result.stopReason).toBe("done");
+  });
+
+  it("passes earlier attempt traces to the next fallback lane", async () => {
+    const requests: FallbackAttemptRequest[] = [];
+    const trace = { version: 1 as const, attempts: [{ attempt_index: 0, events: [] }] };
+    await orchestrateFallbackTurn({
+      ...baseOpts,
+      fetchGameState: async () => activeState(),
+      runStream: async (request) => {
+        requests.push(request);
+        return request.attemptIndex === 0
+          ? { ...CODED_429, inspectionTrace: trace }
+          : doneWith();
+      },
+    });
+    expect(requests[1].previousInspectionTrace).toEqual(trace);
   });
 
   it("shares one whole-turn budget across fallback attempts", async () => {

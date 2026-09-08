@@ -1,3 +1,4 @@
+import json
 import unicodedata
 from typing import Any
 
@@ -40,6 +41,7 @@ ALLOWED_AI_METADATA_KEYS = frozenset(
         "turn_provider_requests",
         "provider_requests_used",
         "usage",
+        "inspection_trace",
     }
 )
 FORBIDDEN_AI_METADATA_KEYS = frozenset(
@@ -67,6 +69,10 @@ FORBIDDEN_AI_METADATA_KEYS = frozenset(
 )
 _IDENT_MAX = 200
 _USAGE_KEYS = ("inputTokens", "outputTokens", "totalTokens")
+_TRACE_MAX_EVENTS = 64
+_TRACE_MAX_BYTES = 96 * 1024
+_TRACE_PHASES = frozenset({"search", "repair", "finishMove"})
+_TRACE_TOOLS = frozenset({"validateMove", "finishMove", "phase"})
 
 
 def _bounded_ident(value: object) -> str | int | None:
@@ -121,6 +127,118 @@ def _sanitize_attempts(value: object) -> list[dict[str, object]]:
     return records
 
 
+def _sanitize_trace_placement(value: object) -> dict[str, object] | None:
+    if not isinstance(value, dict):
+        return None
+    row = _bounded_int(value.get("row"))
+    col = _bounded_int(value.get("col"))
+    letter = value.get("letter")
+    blank_as = value.get("blank_as")
+    if row is None or col is None or not 0 <= row < 15 or not 0 <= col < 15:
+        return None
+    if not isinstance(letter, str) or not _is_tile_token_shape(letter) and letter != "?":
+        return None
+    result: dict[str, object] = {"row": row, "col": col, "letter": letter}
+    if letter == "?":
+        if not isinstance(blank_as, str) or not _is_tile_token_shape(blank_as):
+            return None
+        result["blank_as"] = blank_as
+    return result
+
+
+def _sanitize_trace_event(value: object) -> dict[str, object] | None:
+    if not isinstance(value, dict):
+        return None
+    ordinal = _bounded_int(value.get("ordinal"))
+    elapsed_ms = _bounded_int(value.get("elapsed_ms"))
+    phase = value.get("phase")
+    tool = value.get("tool")
+    if (
+        ordinal is None
+        or ordinal < 0
+        or elapsed_ms is None
+        or elapsed_ms < 0
+        or phase not in _TRACE_PHASES
+        or tool not in _TRACE_TOOLS
+    ):
+        return None
+    event: dict[str, object] = {
+        "ordinal": ordinal,
+        "elapsed_ms": elapsed_ms,
+        "phase": phase,
+        "tool": tool,
+    }
+    if tool == "validateMove":
+        raw_placements = value.get("placements")
+        placements = (
+            [_sanitize_trace_placement(item) for item in raw_placements[:7]]
+            if isinstance(raw_placements, list)
+            else []
+        )
+        event["placements"] = [item for item in placements if item is not None]
+        valid = value.get("valid")
+        if isinstance(valid, bool):
+            event["valid"] = valid
+        words = value.get("words")
+        if isinstance(words, list):
+            event["words"] = [word[:80] for word in words[:8] if isinstance(word, str)]
+        rejection_code = _bounded_text(value.get("rejection_code"))
+        if rejection_code is not None:
+            event["rejection_code"] = rejection_code
+        score = _bounded_int(value.get("score"))
+        if score is not None:
+            event["score"] = score
+    elif tool == "finishMove":
+        event["ready"] = value.get("ready") is True
+    marker = _bounded_text(value.get("marker"))
+    if marker is not None:
+        event["marker"] = marker
+    if value.get("incomplete") is True:
+        event["incomplete"] = True
+    return event
+
+
+def _sanitize_inspection_trace(value: object) -> dict[str, object] | None:
+    if not isinstance(value, dict) or value.get("version") != 1:
+        return None
+    raw_attempts = value.get("attempts")
+    if not isinstance(raw_attempts, list):
+        return None
+    attempts: list[dict[str, object]] = []
+    for raw in raw_attempts[:3]:
+        if not isinstance(raw, dict):
+            continue
+        index = _bounded_int(raw.get("attempt_index"))
+        if index is None or not 0 <= index < 3:
+            continue
+        attempt: dict[str, object] = {"attempt_index": index}
+        for key in ("provider", "model_id", "outcome"):
+            text = _bounded_text(raw.get(key), max_len=_IDENT_MAX)
+            if text is not None:
+                attempt[key] = text
+        for key in ("latency_ms", "provider_requests_used"):
+            number = _bounded_int(raw.get(key))
+            if number is not None and number >= 0:
+                attempt[key] = number
+        raw_events = raw.get("events")
+        events = (
+            [_sanitize_trace_event(event) for event in raw_events[:_TRACE_MAX_EVENTS]]
+            if isinstance(raw_events, list)
+            else []
+        )
+        attempt["events"] = [event for event in events if event is not None]
+        if isinstance(raw_events, list) and len(raw_events) > _TRACE_MAX_EVENTS:
+            attempt["truncated"] = True
+            attempt["omitted_event_count"] = len(raw_events) - _TRACE_MAX_EVENTS
+        attempts.append(attempt)
+    trace: dict[str, object] = {"version": 1, "attempts": attempts}
+    if value.get("truncated") is True:
+        trace["truncated"] = True
+    if len(json.dumps(trace, ensure_ascii=False).encode("utf-8")) > _TRACE_MAX_BYTES:
+        return None
+    return trace
+
+
 def sanitize_ai_metadata(value: object) -> dict[str, Any]:
     """Keep allowlisted diagnostic keys; drop unknown and forbidden keys."""
     if not isinstance(value, dict):
@@ -165,6 +283,10 @@ def sanitize_ai_metadata(value: object) -> dict[str, Any]:
             usage = _sanitize_usage(raw)
             if usage is not None:
                 out[key] = usage
+        elif key == "inspection_trace":
+            trace = _sanitize_inspection_trace(raw)
+            if trace is not None:
+                out[key] = trace
     return out
 
 

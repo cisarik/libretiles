@@ -4,6 +4,7 @@ import {
   type AICandidate,
   type AiTurnTelemetry,
 } from "./types";
+import { sanitizeInspectionTrace, type InspectionTrace } from "./ai-inspection-trace";
 
 export const CODED_PROVIDER_ERROR_CODES = [
   "provider_auth_failed",
@@ -24,6 +25,7 @@ export type AiMoveStreamTerminal =
       /** Sanitized delay hint only; raw headers and bodies are never retained. */
       retryAfterSeconds?: number;
       telemetry?: AiTurnTelemetry;
+      inspectionTrace?: InspectionTrace;
     }
   | {
       kind: "generic_error";
@@ -32,6 +34,7 @@ export type AiMoveStreamTerminal =
       providerRequestsUsed?: number;
       retryAfterSeconds?: number;
       telemetry?: AiTurnTelemetry;
+      inspectionTrace?: InspectionTrace;
     }
   | { kind: "no_terminal"; telemetry?: AiTurnTelemetry };
 
@@ -112,6 +115,7 @@ function recordErrorEvent(
       ? Math.floor(json.retry_after_seconds)
       : undefined;
   const telemetry = telemetryFromSsePayload(json) ?? lastTelemetry;
+  const inspectionTrace = sanitizeInspectionTrace(json.inspection_trace);
   if (code && isCodedProviderErrorCode(code)) {
     return attachTelemetry(
       {
@@ -120,6 +124,7 @@ function recordErrorEvent(
         message,
         ...(providerRequestsUsed !== undefined ? { providerRequestsUsed } : {}),
         ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
+        ...(inspectionTrace ? { inspectionTrace } : {}),
       },
       telemetry,
     );
@@ -131,6 +136,7 @@ function recordErrorEvent(
       code,
       ...(providerRequestsUsed !== undefined ? { providerRequestsUsed } : {}),
       ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
+      ...(inspectionTrace ? { inspectionTrace } : {}),
     },
     telemetry,
   );

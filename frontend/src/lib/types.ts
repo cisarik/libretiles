@@ -10,6 +10,37 @@ export interface WordResult {
   score: number;
   multiplier?: number;
   coords?: Array<{ row: number; col: number }>;
+  inspection?: AdminWordInspection;
+}
+
+export interface AdminScoreCellInspection {
+  row: number;
+  col: number;
+  token: string;
+  blank_as: string | null;
+  base_points: number;
+  is_new: boolean;
+  premium: "DL" | "TL" | "DW" | "TW" | null;
+  premium_applied: boolean;
+  letter_multiplier: number;
+}
+
+export interface AdminWordInspection {
+  version: 1;
+  physical_cells: AdminScoreCellInspection[];
+  base_points: number;
+  letter_bonus_points: number;
+  word_multiplier: number;
+  word_total: number;
+  authority: {
+    name: "WordAuthority";
+    valid: true;
+    physical_tile_count: number;
+    route: "main" | "two_tile" | "forbidden";
+    main_lexicon_id: string;
+    two_tile_lexicon_id: string | null;
+    lexicon_source: string;
+  };
 }
 
 export interface SlotInfo {

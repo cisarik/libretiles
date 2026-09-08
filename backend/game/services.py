@@ -72,6 +72,7 @@ from .models import (
     PlayerSlot,
     default_structured_board,
 )
+from .inspection import capture_move_inspection
 from .replay import build_snapshot
 from . import realtime
 
@@ -982,8 +983,13 @@ def _submit_move_locked(
             "invalid_words": invalid_words,
         }
 
+    variant = _session_variant(session)
     total, breakdowns = score_words(
-        board, placements, words_coords, variant=session.variant_slug
+        board,
+        placements,
+        words_coords,
+        variant=variant,
+        include_inspection=True,
     )
     bingo = len(placements) == 7
     if bingo:
@@ -1011,15 +1017,12 @@ def _submit_move_locked(
         player_slot=player_slot,
         kind="place",
         placements=placements_data,
-        words_formed=[
-            {
-                "word": breakdown.word,
-                "score": breakdown.total,
-                "multiplier": breakdown.word_multiplier,
-                "coords": [{"row": row, "col": col} for row, col in word.letters],
-            }
-            for breakdown, word in zip(breakdowns, words_found, strict=False)
-        ],
+        words_formed=capture_move_inspection(
+            breakdowns=breakdowns,
+            words=words_found,
+            authority=authority,
+            variant=variant,
+        ),
         points=total,
         ai_metadata=_stored_ai_metadata(player_slot, ai_metadata),
     )

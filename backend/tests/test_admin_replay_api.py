@@ -135,6 +135,11 @@ class AdminReplayAPITests(TestCase):
             {"row": 7, "col": 6, "token": "A", "blank_as": None},
             {"row": 7, "col": 7, "token": "T", "blank_as": None},
         ]
+        inspection = payload["plies"][0]["words_formed"][0]["inspection"]
+        assert inspection["word_total"] == 4
+        assert inspection["authority"]["name"] == "WordAuthority"
+        assert inspection["authority"]["main_lexicon_id"] == "collins2019"
+        assert len(inspection["physical_cells"]) == 2
         assert payload["plies"][1]["exchanged_tiles"] == ["H"]
         assert len(payload["plies"][1]["racks"]) == 2
         assert payload["plies"][2]["cumulative_scores"] == [4, 0]

@@ -17,11 +17,24 @@ const board = z.array(z.array(boardCell).length(BOARD_SIZE)).length(BOARD_SIZE);
 const rackPair = z.tuple([z.array(token).nullable(), z.array(token).nullable()]);
 const scorePair = z.tuple([z.number().nullable(), z.number().nullable()]);
 const placement = z.object({ row: coordinate, col: coordinate, letter: token, blank_as: token.nullable().optional() });
+const wordInspection = z.object({
+  version: z.literal(1),
+  physical_cells: z.array(z.object({
+    row: coordinate, col: coordinate, token, blank_as: token.nullable(), base_points: z.number().int().min(0),
+    is_new: z.boolean(), premium: z.enum(["DL", "TL", "DW", "TW"]).nullable(), premium_applied: z.boolean(), letter_multiplier: z.number().int().min(1).max(3),
+  })),
+  base_points: z.number().int().min(0), letter_bonus_points: z.number().int().min(0), word_multiplier: z.number().int().min(1), word_total: z.number().int().min(0),
+  authority: z.object({
+    name: z.literal("WordAuthority"), valid: z.literal(true), physical_tile_count: z.number().int().min(1), route: z.enum(["main", "two_tile", "forbidden"]),
+    main_lexicon_id: z.string(), two_tile_lexicon_id: z.string().nullable(), lexicon_source: z.string(),
+  }),
+});
 const word = z.object({
   word: token,
   score: z.number(),
   multiplier: z.number().optional(),
   coords: z.array(z.object({ row: coordinate, col: coordinate })).optional(),
+  inspection: wordInspection.optional(),
 });
 const delta = z.object({ row: coordinate, col: coordinate, token, blank_as: token.nullable() }).superRefine((cell, context) => {
   if ((cell.token === "?") !== (cell.blank_as !== null)) {
