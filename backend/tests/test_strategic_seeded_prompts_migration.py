@@ -7,17 +7,17 @@ from django.test import TestCase, TransactionTestCase
 from catalog.models import AIPrompt
 from tests._migration_restore import restore_apps_to_leaf
 
-_migration = importlib.import_module("catalog.migrations.0011_playable_seeded_prompts")
-refresh = _migration.refresh_playable_seeded_prompts
-restore = _migration.restore_0010_prompts
+_migration = importlib.import_module("catalog.migrations.0014_strategic_seeded_prompts")
+refresh = _migration.refresh_strategic_seeded_prompts
+restore = _migration.restore_0011_prompts
 NEW_PROMPTS = _migration.NEW_PROMPTS
 PRIOR_PROMPTS = _migration.PRIOR_PROMPTS
 
 _CUSTOM_FAST_SEARCH = "Admin customized this preset long ago."
-_MUTATED_AFTER_0010 = "Mutated after 0010 so the hash gate must skip this row."
+_MUTATED_AFTER_0011 = "Mutated after 0011 so the hash gate must skip this row."
 
 
-def _reset_rows_to_0010() -> None:
+def _reset_rows_to_0011() -> None:
     for name, prior_text in PRIOR_PROMPTS.items():
         AIPrompt.objects.update_or_create(name=name, defaults={"prompt": prior_text})
 
@@ -26,9 +26,9 @@ def _customize_one_row() -> None:
     AIPrompt.objects.filter(name="Fast Search").update(prompt=_CUSTOM_FAST_SEARCH)
 
 
-class PlayableSeededPromptsForwardTests(TestCase):
-    def test_forward_updates_only_hash_matched_0010_rows(self) -> None:
-        _reset_rows_to_0010()
+class StrategicSeededPromptsForwardTests(TestCase):
+    def test_forward_updates_only_hash_matched_0011_rows(self) -> None:
+        _reset_rows_to_0011()
         _customize_one_row()
         house = AIPrompt.objects.create(
             name="House Rule", prompt="Custom house text.", sort_order=90
@@ -44,7 +44,7 @@ class PlayableSeededPromptsForwardTests(TestCase):
         self.assertEqual(house.prompt, "Custom house text.")
 
     def test_forward_is_idempotent(self) -> None:
-        _reset_rows_to_0010()
+        _reset_rows_to_0011()
 
         refresh(apps, None)
         first = list(AIPrompt.objects.order_by("name").values_list("name", "prompt"))
@@ -55,23 +55,23 @@ class PlayableSeededPromptsForwardTests(TestCase):
         for name, new_text in NEW_PROMPTS.items():
             self.assertEqual(AIPrompt.objects.get(name=name).prompt, new_text)
 
-    def test_hash_gate_skips_row_mutated_after_0010(self) -> None:
-        _reset_rows_to_0010()
-        AIPrompt.objects.filter(name="Grandmaster").update(prompt=_MUTATED_AFTER_0010)
+    def test_hash_gate_skips_row_mutated_after_0011(self) -> None:
+        _reset_rows_to_0011()
+        AIPrompt.objects.filter(name="Grandmaster").update(prompt=_MUTATED_AFTER_0011)
 
         refresh(apps, None)
 
         self.assertEqual(
-            AIPrompt.objects.get(name="Grandmaster").prompt, _MUTATED_AFTER_0010
+            AIPrompt.objects.get(name="Grandmaster").prompt, _MUTATED_AFTER_0011
         )
         self.assertEqual(
             AIPrompt.objects.get(name="Initial").prompt, NEW_PROMPTS["Initial"]
         )
 
 
-class PlayableSeededPromptsRoundTripTests(TestCase):
-    def test_reverse_restores_0010_text_only_for_updated_rows(self) -> None:
-        _reset_rows_to_0010()
+class StrategicSeededPromptsRoundTripTests(TestCase):
+    def test_reverse_restores_0011_text_only_for_updated_rows(self) -> None:
+        _reset_rows_to_0011()
         _customize_one_row()
 
         refresh(apps, None)
@@ -85,7 +85,7 @@ class PlayableSeededPromptsRoundTripTests(TestCase):
                 self.assertEqual(row.prompt, PRIOR_PROMPTS[name])
 
     def test_customized_row_survives_round_trip(self) -> None:
-        _reset_rows_to_0010()
+        _reset_rows_to_0011()
         _customize_one_row()
         ids_before = set(AIPrompt.objects.values_list("id", flat=True))
 
@@ -98,30 +98,31 @@ class PlayableSeededPromptsRoundTripTests(TestCase):
         )
 
 
-class PlayableSeededPromptLiveContentTests(TestCase):
-    """0011 NEW_PROMPTS hold playable search profiles.
-
-    Live HEAD rows are owned by later prompt-refresh migrations; these
-    assertions pin the 0011 constants themselves, not the latest catalog.
-    """
-
-    def test_0011_prompt_constants_hold_search_profiles(self) -> None:
+class StrategicSeededPromptLiveContentTests(TestCase):
+    def test_post_migrate_rows_hold_strategic_search_profiles(self) -> None:
         for name, text in NEW_PROMPTS.items():
             self.assertTrue(text.startswith("SEARCH PROFILE —"))
-            self.assertNotIn('"action"', text)
-            self.assertNotIn("OUTPUT FORMAT", text)
+            if name == "Initial":
+                self.assertIn("play tighter defense when leading (+30)", text)
+            elif name == "Fast Search":
+                self.assertIn("target an anchor with an open span toward a premium square", text)
+            elif name == "Short Hooks":
+                self.assertIn("Inspect words already on the board", text)
+            elif name == "Grandmaster":
+                self.assertIn("Master board control and leave equity", text)
+                self.assertIn("close down open Triple Word (TW) lanes", text)
 
 
-class PlayableSeededPromptsMigrateCommandTests(TransactionTestCase):
+class StrategicSeededPromptsMigrateCommandTests(TransactionTestCase):
     def test_backward_then_forward_via_migrate_is_reversible(self) -> None:
-        _reset_rows_to_0010()
+        _reset_rows_to_0011()
         refresh(apps, None)
         for name, text in NEW_PROMPTS.items():
             self.assertEqual(AIPrompt.objects.get(name=name).prompt, text)
         AIPrompt.objects.filter(name="Short Hooks").update(prompt="Admin edited Short Hooks.")
 
         try:
-            call_command("migrate", "catalog", "0010_refresh_seeded_prompts", verbosity=0)
+            call_command("migrate", "catalog", "0013_admin_provider_model_console", verbosity=0)
             for name in NEW_PROMPTS:
                 row = AIPrompt.objects.get(name=name)
                 if name == "Short Hooks":
@@ -129,7 +130,7 @@ class PlayableSeededPromptsMigrateCommandTests(TransactionTestCase):
                 else:
                     self.assertEqual(row.prompt, PRIOR_PROMPTS[name])
 
-            call_command("migrate", "catalog", "0011_playable_seeded_prompts", verbosity=0)
+            call_command("migrate", "catalog", verbosity=0)
             for name, text in NEW_PROMPTS.items():
                 row = AIPrompt.objects.get(name=name)
                 if name == "Short Hooks":

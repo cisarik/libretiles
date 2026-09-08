@@ -254,8 +254,10 @@ def _validated_request(options: dict[str, Any]) -> TurnCliRequest:
         raise DiagnosticInputError("--seed must be in 0..4294967295")
     else:
         seed = seed_raw
-    if (fixture_id is None) == (seed is None):
-        raise DiagnosticInputError("exactly one of --fixture-id or --seed is required")
+    if fixture_id is None and seed is None:
+        seed = 0
+    elif fixture_id is not None and seed is not None:
+        raise DiagnosticInputError("both --fixture-id and --seed cannot be provided together")
     turn_raw = options.get("turn_count", DEFAULT_TURN_COUNT)
     if isinstance(turn_raw, bool) or not isinstance(turn_raw, int):
         raise DiagnosticInputError("--turn-count must be an integer")

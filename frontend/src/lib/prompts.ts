@@ -10,6 +10,7 @@
  */
 
 import { boardCellLetter, type BoardCell } from "./types";
+import { PREMIUM_BOARD } from "./constants";
 
 export const MOVE_PROMPT_VERSION = "pfr-s2-core-1";
 
@@ -696,19 +697,38 @@ function occupantTokens(rows: BoardCell[][]): string[] {
   return tokens;
 }
 
-/** Empty squares beside an occupied one, by COORDINATE. Opening returns center. */
+interface ReachablePremium {
+  type: "TW" | "TL" | "DW";
+  row: number;
+  col: number;
+}
+
+interface AnchorCandidate {
+  row: number;
+  col: number;
+  bestPremiumScore: number;
+  totalSpan: number;
+  formatted: string;
+}
+
+/**
+ * Structured candidate anchors with rich hook context:
+ * adjacent letters, direction, open spans, cross-check indicators, and reachable premiums.
+ * Opening returns center (7,7).
+ */
 function anchorsFromCells(rows: BoardCell[][]): string {
   if (rows.length !== BOARD_SIZE) {
     return "(7,7)";
   }
   let occupied = 0;
-  const anchors = new Set<string>();
+  const anchorCoords = new Set<string>();
   const dirs: Array<[number, number]> = [
     [-1, 0],
     [1, 0],
     [0, -1],
     [0, 1],
   ];
+
   for (let row = 0; row < BOARD_SIZE; row += 1) {
     for (let col = 0; col < BOARD_SIZE; col += 1) {
       if (!boardCellLetter(rows[row][col] ?? null)) continue;
@@ -716,17 +736,277 @@ function anchorsFromCells(rows: BoardCell[][]): string {
       for (const [dRow, dCol] of dirs) {
         const nextRow = row + dRow;
         const nextCol = col + dCol;
-        if (nextRow < 0 || nextRow > 14 || nextCol < 0 || nextCol > 14) continue;
+        if (nextRow < 0 || nextRow >= BOARD_SIZE || nextCol < 0 || nextCol >= BOARD_SIZE) continue;
         if (!boardCellLetter(rows[nextRow][nextCol] ?? null)) {
-          anchors.add(`(${nextRow},${nextCol})`);
+          anchorCoords.add(`${nextRow},${nextCol}`);
         }
       }
     }
   }
+
   if (occupied === 0) {
-    return "(7,7) — center; first move must cover this square";
+    return "(7,7) — CENTER; opening move must cover center (7,7)";
   }
-  return [...anchors].sort().join(" ");
+
+  const premiumWeight: Record<string, number> = { TW: 3, TL: 2, DW: 1 };
+  const candidates: AnchorCandidate[] = [];
+
+  for (const coord of anchorCoords) {
+    const [rStr, cStr] = coord.split(",");
+    const r = parseInt(rStr, 10);
+    const c = parseInt(cStr, 10);
+
+    // 1. Adjacent runs of letters
+    const runs: string[] = [];
+
+    // East neighbor
+    if (c < 14 && boardCellLetter(rows[r][c + 1])) {
+      let endCol = c + 1;
+      while (endCol + 1 < BOARD_SIZE && boardCellLetter(rows[r][endCol + 1])) {
+        endCol += 1;
+      }
+      const letters: string[] = [];
+      for (let col = c + 1; col <= endCol; col += 1) {
+        const letter = boardCellLetter(rows[r][col]);
+        if (letter) letters.push(letter);
+      }
+      runs.push(`E:(${r},${c + 1}..${endCol})=[${letters.join("|")}]`);
+    }
+
+    // West neighbor
+    if (c > 0 && boardCellLetter(rows[r][c - 1])) {
+      let startCol = c - 1;
+      while (startCol - 1 >= 0 && boardCellLetter(rows[r][startCol - 1])) {
+        startCol -= 1;
+      }
+      const letters: string[] = [];
+      for (let col = startCol; col <= c - 1; col += 1) {
+        const letter = boardCellLetter(rows[r][col]);
+        if (letter) letters.push(letter);
+      }
+      runs.push(`W:(${r},${startCol}..${c - 1})=[${letters.join("|")}]`);
+    }
+
+    // North neighbor
+    if (r > 0 && boardCellLetter(rows[r - 1][c])) {
+      let startRow = r - 1;
+      while (startRow - 1 >= 0 && boardCellLetter(rows[startRow - 1][c])) {
+        startRow -= 1;
+      }
+      const letters: string[] = [];
+      for (let row = startRow; row <= r - 1; row += 1) {
+        const letter = boardCellLetter(rows[row][c]);
+        if (letter) letters.push(letter);
+      }
+      runs.push(`N:(${startRow}..${r - 1},${c})=[${letters.join("|")}]`);
+    }
+
+    // South neighbor
+    if (r < 14 && boardCellLetter(rows[r + 1][c])) {
+      let endRow = r + 1;
+      while (endRow + 1 < BOARD_SIZE && boardCellLetter(rows[endRow + 1][c])) {
+        endRow += 1;
+      }
+      const letters: string[] = [];
+      for (let row = r + 1; row <= endRow; row += 1) {
+        const letter = boardCellLetter(rows[row][c]);
+        if (letter) letters.push(letter);
+      }
+      runs.push(`S:(${r + 1}..${endRow},${c})=[${letters.join("|")}]`);
+    }
+
+    // 2. Open spans in each orthogonal direction
+    let wSpan = 0;
+    for (let col = c - 1; col >= 0; col -= 1) {
+      if (boardCellLetter(rows[r][col])) break;
+      wSpan += 1;
+    }
+
+    let eSpan = 0;
+    for (let col = c + 1; col < BOARD_SIZE; col += 1) {
+      if (boardCellLetter(rows[r][col])) break;
+      eSpan += 1;
+    }
+
+    let nSpan = 0;
+    for (let row = r - 1; row >= 0; row -= 1) {
+      if (boardCellLetter(rows[row][c])) break;
+      nSpan += 1;
+    }
+
+    let sSpan = 0;
+    for (let row = r + 1; row < BOARD_SIZE; row += 1) {
+      if (boardCellLetter(rows[row][c])) break;
+      sSpan += 1;
+    }
+
+    // 3. Cross-check indicators
+    // ACROSS cross check (perpendicular is North/South)
+    const northOccupied = r > 0 && !!boardCellLetter(rows[r - 1][c]);
+    const southOccupied = r < 14 && !!boardCellLetter(rows[r + 1][c]);
+    let acrossCross = "free";
+    if (northOccupied || southOccupied) {
+      const nLetters: string[] = [];
+      if (northOccupied) {
+        let startRow = r - 1;
+        while (startRow - 1 >= 0 && boardCellLetter(rows[startRow - 1][c])) startRow -= 1;
+        for (let row = startRow; row <= r - 1; row += 1) {
+          const letter = boardCellLetter(rows[row][c]);
+          if (letter) nLetters.push(letter);
+        }
+      }
+      const sLetters: string[] = [];
+      if (southOccupied) {
+        let endRow = r + 1;
+        while (endRow + 1 < BOARD_SIZE && boardCellLetter(rows[endRow + 1][c])) endRow += 1;
+        for (let row = r + 1; row <= endRow; row += 1) {
+          const letter = boardCellLetter(rows[row][c]);
+          if (letter) sLetters.push(letter);
+        }
+      }
+      const parts: string[] = [];
+      if (nLetters.length > 0) parts.push(nLetters.join("|"));
+      parts.push("_");
+      if (sLetters.length > 0) parts.push(sLetters.join("|"));
+      acrossCross = `[${parts.join("|")}]`;
+    }
+
+    // DOWN cross check (perpendicular is West/East)
+    const westOccupied = c > 0 && !!boardCellLetter(rows[r][c - 1]);
+    const eastOccupied = c < 14 && !!boardCellLetter(rows[r][c + 1]);
+    let downCross = "free";
+    if (westOccupied || eastOccupied) {
+      const wLetters: string[] = [];
+      if (westOccupied) {
+        let startCol = c - 1;
+        while (startCol - 1 >= 0 && boardCellLetter(rows[r][startCol - 1])) startCol -= 1;
+        for (let col = startCol; col <= c - 1; col += 1) {
+          const letter = boardCellLetter(rows[r][col]);
+          if (letter) wLetters.push(letter);
+        }
+      }
+      const eLetters: string[] = [];
+      if (eastOccupied) {
+        let endCol = c + 1;
+        while (endCol + 1 < BOARD_SIZE && boardCellLetter(rows[r][endCol + 1])) endCol += 1;
+        for (let col = c + 1; col <= endCol; col += 1) {
+          const letter = boardCellLetter(rows[r][col]);
+          if (letter) eLetters.push(letter);
+        }
+      }
+      const parts: string[] = [];
+      if (wLetters.length > 0) parts.push(wLetters.join("|"));
+      parts.push("_");
+      if (eLetters.length > 0) parts.push(eLetters.join("|"));
+      downCross = `[${parts.join("|")}]`;
+    }
+
+    // 4. Reachable premiums: straight-line reach within physical rack capacity <= 7 tiles
+    const reachable: ReachablePremium[] = [];
+    const seenPremium = new Set<string>();
+
+    const checkSquare = (row: number, col: number) => {
+      const premium = PREMIUM_BOARD[row]?.[col];
+      if (premium === "TW" || premium === "TL" || premium === "DW") {
+        if (!boardCellLetter(rows[row][col])) {
+          const key = `${row},${col}`;
+          if (!seenPremium.has(key)) {
+            seenPremium.add(key);
+            reachable.push({ type: premium, row, col });
+          }
+        }
+      }
+    };
+
+    // Check anchor square itself
+    checkSquare(r, c);
+
+    // West
+    let tilesUsed = 1;
+    for (let col = c - 1; col >= 0; col -= 1) {
+      if (!boardCellLetter(rows[r][col])) {
+        tilesUsed += 1;
+        if (tilesUsed > 7) break;
+        checkSquare(r, col);
+      }
+    }
+
+    // East
+    tilesUsed = 1;
+    for (let col = c + 1; col < BOARD_SIZE; col += 1) {
+      if (!boardCellLetter(rows[r][col])) {
+        tilesUsed += 1;
+        if (tilesUsed > 7) break;
+        checkSquare(r, col);
+      }
+    }
+
+    // North
+    tilesUsed = 1;
+    for (let row = r - 1; row >= 0; row -= 1) {
+      if (!boardCellLetter(rows[row][c])) {
+        tilesUsed += 1;
+        if (tilesUsed > 7) break;
+        checkSquare(row, c);
+      }
+    }
+
+    // South
+    tilesUsed = 1;
+    for (let row = r + 1; row < BOARD_SIZE; row += 1) {
+      if (!boardCellLetter(rows[row][c])) {
+        tilesUsed += 1;
+        if (tilesUsed > 7) break;
+        checkSquare(row, c);
+      }
+    }
+
+    // Sort reachable premiums: TW first, then TL, then DW, then coordinates
+    reachable.sort((a, b) => {
+      const diff = premiumWeight[b.type] - premiumWeight[a.type];
+      if (diff !== 0) return diff;
+      if (a.row !== b.row) return a.row - b.row;
+      return a.col - b.col;
+    });
+
+    let bestPremiumScore = 0;
+    for (const p of reachable) {
+      const score = premiumWeight[p.type] ?? 0;
+      if (score > bestPremiumScore) bestPremiumScore = score;
+    }
+
+    const reachesStr = reachable.length > 0
+      ? ` | reaches ${reachable.map((p) => `${p.type} at (${p.row},${p.col})`).join(", ")}`
+      : "";
+
+    const runsStr = runs.join(" ");
+    const formatted = `(${r},${c}) ${runsStr} | ACROSS W${wSpan}/E${eSpan} cross=${acrossCross}; DOWN N${nSpan}/S${sSpan} cross=${downCross}${reachesStr}`;
+
+    candidates.push({
+      row: r,
+      col: c,
+      bestPremiumScore,
+      totalSpan: wSpan + eSpan + nSpan + sSpan,
+      formatted,
+    });
+  }
+
+  // Deterministic ordering:
+  // (1) reaching TW/TL/DW premiums first
+  // (2) largest open spans
+  // (3) coordinates (row, col)
+  candidates.sort((a, b) => {
+    if (b.bestPremiumScore !== a.bestPremiumScore) {
+      return b.bestPremiumScore - a.bestPremiumScore;
+    }
+    if (b.totalSpan !== a.totalSpan) {
+      return b.totalSpan - a.totalSpan;
+    }
+    if (a.row !== b.row) return a.row - b.row;
+    return a.col - b.col;
+  });
+
+  return candidates.map((a) => a.formatted).join("\n");
 }
 
 /**
@@ -870,6 +1150,12 @@ ${boardRendered}
 
 ANCHORS (search context, not answers):
 ${anchors}
+
+COORDINATE MAPPING & RULES:
+- ACROSS: row stays constant, col increases (e.g. (7,4), (7,5), (7,6)...)
+- DOWN: col stays constant, row increases (e.g. (4,7), (5,7), (6,7)...)
+- REUSE EXISTING TILES: only list NEW tiles in your placements array! Do NOT re-place existing tiles.
+- CONTINUOUS LINE: placements must connect to an anchor and form one valid word.
 
 SEARCH:
 - Call validateMove first with your best legal placement.

@@ -153,12 +153,15 @@ describe("buildMoveUserPrompt over a structured multigraph context", () => {
 
   it("computes anchors from COORDINATES around the real tiles", () => {
     const prompt = buildMoveUserPrompt(context);
-    const anchors = prompt
+    const anchorsBlock = prompt
       .split("ANCHORS (search context, not answers):\n")[1]
-      .split("\n")[0];
-    expect(anchors).toBe("(6,7) (6,8) (7,6) (7,9) (8,6) (8,8) (9,7)");
+      .split("\n\nCOORDINATE MAPPING & RULES:")[0];
+    expect(anchorsBlock).toContain("(6,7)");
+    expect(anchorsBlock).toContain("ACROSS");
+    expect(anchorsBlock).toContain("DOWN");
+    expect(anchorsBlock).toContain("cross=");
     // The old degraded output was the bare literal below, with no board context.
-    expect(anchors).not.toBe("(7,7)");
+    expect(anchorsBlock.trim()).not.toBe("(7,7)");
   });
 
   it("keeps the token-grid format when the board holds only single tiles", () => {
@@ -176,7 +179,7 @@ describe("buildMoveUserPrompt over a structured multigraph context", () => {
       structuredContext(emptyGrid(), ["SZ", "A"], { is_first_move: true }),
     );
     expect(prompt).toContain("row 07 |.|.|.|.|.|.|.|.|.|.|.|.|.|.|.|");
-    expect(prompt).toContain("(7,7) — center; first move must cover this square");
+    expect(prompt).toContain("(7,7) — CENTER; opening move must cover center (7,7)");
     expect(prompt).toContain("THIS IS THE FIRST MOVE — must cover center (7,7).");
   });
 });

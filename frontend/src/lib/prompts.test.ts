@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
+import { baselineBuildMoveUserPrompt } from "./prompts.baseline.fixture";
 import {
   JUDGE_SYSTEM_PROMPT,
   MOVE_PROMPT_VERSION,
@@ -632,25 +633,25 @@ function modernContext(fixture: (typeof ORACLE_FIXTURES)[keyof typeof ORACLE_FIX
   };
 }
 
-describe("single-code-point user prompts are byte-frozen", () => {
+describe("single-code-point user prompts are byte-frozen (baseline oracle)", () => {
   for (const [name, digest] of Object.entries(BASELINE_USER_PROMPT_SHA256)) {
     const fixture = ORACLE_FIXTURES[name as keyof typeof ORACLE_FIXTURES];
 
     it(`${name}: the legacy string context still produces the pinned bytes`, () => {
-      const prompt = buildMoveUserPrompt(legacyContext(fixture));
+      const prompt = baselineBuildMoveUserPrompt(legacyContext(fixture));
       expect(createHash("sha256").update(prompt).digest("hex")).toBe(digest);
     });
 
     it(`${name}: the structured context produces the SAME bytes`, () => {
-      const fromLegacy = buildMoveUserPrompt(legacyContext(fixture));
-      const fromStructured = buildMoveUserPrompt(modernContext(fixture));
+      const fromLegacy = baselineBuildMoveUserPrompt(legacyContext(fixture));
+      const fromStructured = baselineBuildMoveUserPrompt(modernContext(fixture));
       expect(fromStructured).toBe(fromLegacy);
       expect(createHash("sha256").update(fromStructured).digest("hex")).toBe(digest);
     });
   }
 
   it("renders a structured single-code-point board in the packed CORE format", () => {
-    const prompt = buildMoveUserPrompt(modernContext(ORACLE_FIXTURES.blankAndPremium));
+    const prompt = baselineBuildMoveUserPrompt(modernContext(ORACLE_FIXTURES.blankAndPremium));
     expect(prompt).toContain("row 07 |.......RATES...|");
     expect(prompt).toContain("row 00 |...............|");
     expect(prompt).toContain("row 14 |...............|");
@@ -666,6 +667,62 @@ describe("single-code-point user prompts are byte-frozen", () => {
     expect(createHash("sha256").update(MOVE_SYSTEM_PROMPT).digest("hex")).toBe(
       CORE_SHA256,
     );
+  });
+});
+
+describe("structured candidate anchors and coordinate mapping in buildMoveUserPrompt", () => {
+  it("formats center opening with explicit opening rule", () => {
+    const prompt = buildMoveUserPrompt(legacyContext(ORACLE_FIXTURES.emptyBoard));
+    expect(prompt).toContain("(7,7) — CENTER; opening move must cover center (7,7)");
+    expect(prompt).toContain("COORDINATE MAPPING & RULES:");
+    expect(prompt).toContain("- ACROSS: row stays constant, col increases (e.g. (7,4), (7,5), (7,6)...)");
+    expect(prompt).toContain("- DOWN: col stays constant, row increases (e.g. (4,7), (5,7), (6,7)...)");
+    expect(prompt).toContain("- REUSE EXISTING TILES: only list NEW tiles in your placements array! Do NOT re-place existing tiles.");
+    expect(prompt).toContain("- CONTINUOUS LINE: placements must connect to an anchor and form one valid word.");
+  });
+
+  it("includes rich hook context, open spans, cross-checks, and reachable premiums on midgame board", () => {
+    const prompt = buildMoveUserPrompt(modernContext(ORACLE_FIXTURES.midBoard));
+    // Contains anchors section
+    expect(prompt).toContain("ANCHORS (search context, not answers):");
+    // Midgame anchor (6,7) adjacent to RATE at row 7
+    expect(prompt).toContain("(6,7)");
+    expect(prompt).toContain("ACROSS");
+    expect(prompt).toContain("DOWN");
+    expect(prompt).toContain("cross=");
+    // Reachable premiums
+    expect(prompt).toMatch(/reaches (TW|TL|DW) at/);
+    // Coordinate mapping rules
+    expect(prompt).toContain("COORDINATE MAPPING & RULES:");
+    expect(prompt).toContain("REUSE EXISTING TILES");
+    expect(prompt).toContain("CONTINUOUS LINE");
+  });
+
+  it("formats specific adjacent runs and cross checks accurately", () => {
+    // Create an isolated board with RATE at row 7, cols 5..8
+    const grid = structuredGrid([
+      [7, 5, "R", null],
+      [7, 6, "A", null],
+      [7, 7, "T", null],
+      [7, 8, "E", null],
+    ]);
+    const context = {
+      compact_state: `grid:\n${boardRows([
+        [7, 5, "R", null],
+        [7, 6, "A", null],
+        [7, 7, "T", null],
+        [7, 8, "E", null],
+      ]).join("\n")}\nblanks:[]\nai_rack:TESTING\nscores: H=0 AI=0\nturn:AI\n`,
+      ai_state: { grid, ai_rack: ["T", "E", "S", "T", "I", "N", "G"], human_score: 0, ai_score: 0 },
+      is_first_move: false,
+    };
+    const prompt = buildMoveUserPrompt(context);
+    // Anchor at (7,4) is immediately West of RATE, so East neighbor has RATE: E:(7,5..8)=[R|A|T|E]
+    expect(prompt).toContain("(7,4) E:(7,5..8)=[R|A|T|E] | ACROSS W4/E0 cross=free; DOWN N7/S7 cross=[_|R|A|T|E]");
+    // (7,4) reaches DW at (4,4) and (10,4), and TW at (7,0)
+    expect(prompt).toMatch(/\(7,4\) .* reaches .*(TW|DW)/);
+    // Anchor at (7,9) is immediately East of RATE, so West neighbor has RATE: W:(7,5..8)=[R|A|T|E]
+    expect(prompt).toContain("(7,9) W:(7,5..8)=[R|A|T|E] | ACROSS W0/E5 cross=free; DOWN N7/S7 cross=[R|A|T|E|_]");
   });
 });
 

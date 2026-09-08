@@ -164,16 +164,18 @@ def test_invalid_arguments_exit_two_before_any_server_or_worker(
 
     monkeypatch.setattr("game.management.commands.diagnose_ai_play.subprocess.run", forbidden)
     stdout = StringIO()
-    with pytest.raises(CommandError) as missing:
+    with pytest.raises(CommandError) as conflict:
         call_command(
             "diagnose_ai_play",
             variant_slug="slovak",
             provider="nvidia-nim",
             model_id=_NIM,
+            fixture_id="slovak-empty-autolin",
+            seed=0,
             stdout=stdout,
             stderr=StringIO(),
         )
-    assert missing.value.returncode == 2
+    assert conflict.value.returncode == 2
     assert stdout.getvalue() == ""
 
     with pytest.raises(CommandError) as unknown:
