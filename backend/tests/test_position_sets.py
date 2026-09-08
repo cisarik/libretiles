@@ -24,6 +24,7 @@ from game.position_sets import (
     dump_position_set_json,
     game_from_snapshot,
     generate_position_set,
+    _selfplay_config,
 )
 from gamecore.move_search import (
     DEFAULT_RANKED_MAX_ELAPSED_MS as PRODUCTION_ELAPSED_MS,
@@ -64,6 +65,7 @@ def test_f3_same_config_is_byte_identical(
     assert first["set_digest"] == second["set_digest"]
     assert isinstance(first["set_digest"], str)
     assert len(first["set_digest"]) == 64
+    assert _selfplay_config(_SMALL, 300).board_defense_enabled is False
 
 
 def test_f4_structured_cells_and_conservation(
@@ -198,6 +200,8 @@ def test_f9_mount_equivalence_from_json_roundtrip(
                 variant="english",
                 opponent_action_rules="ai_scoring",
             ),
+            board_defense_enabled=False,
+            score_differential=0,
         )
         baseline = snapshot["engine_baseline"]
         assert isinstance(baseline, dict)

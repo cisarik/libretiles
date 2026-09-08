@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from .board import BOARD_SIZE, Board
+from .board_defense import BoardDefenseEvaluator
 from .leave_equity import (
     LeaveEquityProfile,
     leave_equity_cp,
@@ -42,7 +43,9 @@ DEFAULT_RANKED_MAX_ELAPSED_MS = 750
 DEFAULT_RANKED_MAX_UNIQUE_PLACEMENTS = 25_000
 CENTER = (7, 7)
 SearchStatus = Literal["found", "none", "indeterminate"]
-StrategyMode = Literal["exact", "bounded", "pre_endgame"]
+StrategyMode = Literal["exact", "bounded", "pre_endgame", "board_control"]
+DEFENSE_PRUNE_SLACK_CP = 800
+DEFENSE_FINISH_RESERVE_MS = 10
 OutInTwoStatus = Literal["proven", "refuted", "unknown"]
 CanonicalPlacementKey = tuple[tuple[int, int, str, str], ...]
 _BLANK_LETTERS = string.ascii_uppercase
@@ -75,6 +78,11 @@ class RankedMoveCandidate:
     leave_equity_cp: int
     rack_out: bool
     canonical_key: CanonicalPlacementKey
+    defense_penalty_cp: int = 0
+
+    @property
+    def evaluation_cp(self) -> int:
+        return self.total_score * 100 + self.leave_equity_cp - self.defense_penalty_cp
 
 
 @dataclass(frozen=True)
@@ -85,7 +93,7 @@ class RankedSearchResult:
     elapsed_ms: int
     complete: bool
     unique_placements: int
-    # Late-game strategy metadata. None on the ordinary midgame path.
+    # Strategic metadata. None on the ordinary undefended midgame path.
     strategy_mode: StrategyMode | None = None
     out_in_two: OutInTwoStatus | None = None
     completed_depth: int = 0
@@ -128,6 +136,8 @@ def find_ranked_scoring_moves(
     blank_letters: Sequence[str] = _BLANK_LETTERS,
     variant: object = None,
     late_game_context: LateGameContext | None = None,
+    score_differential: int = 0,
+    board_defense_enabled: bool = False,
 ) -> RankedSearchResult:
     """Return the strongest re-certified moves found within fixed bounds.
 
@@ -141,6 +151,10 @@ def find_ranked_scoring_moves(
     1..7 bag tiles the pre-endgame equity replaces the midgame leave equity
     (``strategy_mode`` "pre_endgame"). An unusable context degrades silently to
     the ordinary ranked search; it never blocks a result.
+
+    Midgame board defense (``board_defense_enabled`` and bag count above 7)
+    emits ``strategy_mode`` "board_control". It never overrides the late-game
+    paths.
     """
     clamped_top_k = max(1, min(int(top_k), MAX_RANKED_TOP_K))
     context = late_game_context
@@ -201,6 +215,8 @@ def find_ranked_scoring_moves(
         blank_letters=blank_letters,
         variant=variant,
         late_game_context=context,
+        score_differential=score_differential,
+        board_defense_enabled=board_defense_enabled,
     )
     return searcher.run_ranked()
 
@@ -540,6 +556,8 @@ class _RankedSearcher(_Searcher):
         blank_letters: Sequence[str] = _BLANK_LETTERS,
         variant: object = None,
         late_game_context: LateGameContext | None = None,
+        score_differential: int = 0,
+        board_defense_enabled: bool = False,
     ) -> None:
         super().__init__(
             board=board,
@@ -573,6 +591,10 @@ class _RankedSearcher(_Searcher):
             self._unseen_tiles = {}
             self._open_word_premiums = []
             self._exposure_before = 1
+        self.score_differential = score_differential
+        self.board_defense_enabled = board_defense_enabled
+        self._defense: BoardDefenseEvaluator | None = None
+        self._search_deadline_ms = self.max_elapsed_ms
 
     def run_ranked(self) -> RankedSearchResult:
         if self.max_unique_placements <= 0:
@@ -582,11 +604,34 @@ class _RankedSearcher(_Searcher):
             if self.max_nodes <= 0:
                 self.capped = True
             return self._ranked_finish()
+        if self._prepare_board_defense():
+            return self._ranked_finish()
         if self._board_empty():
             self._search_first_move()
         else:
             self._search_connected()
         return self._ranked_finish()
+
+    def _prepare_board_defense(self) -> bool:
+        """Construct the midgame evaluator; True means the search is already capped."""
+        if not self.board_defense_enabled or self.bag_count <= 7:
+            return False
+        reserve = min(DEFENSE_FINISH_RESERVE_MS, self.max_elapsed_ms // 10)
+        self._search_deadline_ms = max(0, self.max_elapsed_ms - reserve)
+        if self._elapsed_ms() >= self._search_deadline_ms:
+            self.capped = True
+            return True
+        self._defense = BoardDefenseEvaluator(
+            self.board,
+            self.score_differential,
+            self.authority,
+            self.variant,
+            tile_points=self.tile_points,
+        )
+        if self._elapsed_ms() >= self._search_deadline_ms:
+            self.capped = True
+            return True
+        return False
 
     def _stop(self) -> bool:
         if self.capped:
@@ -594,7 +639,7 @@ class _RankedSearcher(_Searcher):
         if self.nodes >= self.max_nodes:
             self.capped = True
             return True
-        if self._elapsed_ms() >= self.max_elapsed_ms:
+        if self._elapsed_ms() >= self._search_deadline_ms:
             self.capped = True
             return True
         return False
@@ -700,7 +745,7 @@ class _RankedSearcher(_Searcher):
     @staticmethod
     def _rank_key(candidate: RankedMoveCandidate) -> tuple[object, ...]:
         return (
-            -(candidate.total_score * 100 + candidate.leave_equity_cp),
+            -candidate.evaluation_cp,
             -(1 if candidate.rack_out else 0),
             -candidate.tiles_used,
             candidate.canonical_key,
@@ -735,6 +780,16 @@ class _RankedSearcher(_Searcher):
 
         tiles_used = len(placed)
         equity_cp = self._calculate_leave_equity(placed) - self._premium_exposure_cp(placed)
+        defense_penalty_cp = 0
+        defense = self._defense
+        if defense is not None:
+            raw_utility = certified.total_score * 100 + equity_cp
+            if (
+                len(self.ranked) >= self.top_k
+                and raw_utility + DEFENSE_PRUNE_SLACK_CP < self.ranked[-1].evaluation_cp
+            ):
+                return
+            defense_penalty_cp = defense.defense_penalty_cp(placed)
         candidate = RankedMoveCandidate(
             placements=tuple(sorted(placed, key=lambda item: (item.row, item.col))),
             words=certified.words,
@@ -743,6 +798,7 @@ class _RankedSearcher(_Searcher):
             leave_equity_cp=equity_cp,
             rack_out=self.bag_count == 0 and tiles_used == len(self.rack_tiles),
             canonical_key=canonical_key,
+            defense_penalty_cp=defense_penalty_cp,
         )
         self.ranked.append(candidate)
         self.ranked.sort(key=self._rank_key)
@@ -765,8 +821,15 @@ class _RankedSearcher(_Searcher):
             elapsed_ms=elapsed_ms,
             complete=not self.capped,
             unique_placements=len(self.seen),
-            strategy_mode="pre_endgame" if self.late_game_context is not None else None,
+            strategy_mode=self._strategy_mode(),
         )
+
+    def _strategy_mode(self) -> StrategyMode | None:
+        if self.late_game_context is not None:
+            return "pre_endgame"
+        if self._defense is not None:
+            return "board_control"
+        return None
 
 
 class _ExhaustiveSearcher(_RankedSearcher):

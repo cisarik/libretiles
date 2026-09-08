@@ -813,6 +813,15 @@ def _late_game_context_for_session(
     )
 
 
+def _score_differential_for_slot(session: GameSession, player_slot: PlayerSlot) -> int:
+    opponents = [
+        slot for slot in session.slots.all() if slot.slot != player_slot.slot
+    ]
+    if len(opponents) != 1:
+        return 0
+    return int(player_slot.score) - int(opponents[0].score)
+
+
 def _probe_ai_ranked_candidates(
     session: GameSession,
     player_slot: PlayerSlot,
@@ -832,6 +841,8 @@ def _probe_ai_ranked_candidates(
             late_game_context=_late_game_context_for_session(
                 session, player_slot, board, rack
             ),
+            score_differential=_score_differential_for_slot(session, player_slot),
+            board_defense_enabled=True,
         )
     except Exception:
         return RankedSearchResult(
@@ -865,13 +876,16 @@ def _ranked_candidates_payload(result: RankedSearchResult) -> dict[str, Any]:
             "candidate_count": len(result.candidates),
         },
     }
-    # Strategy metadata appears ONLY on strategic late-game results, keeping
-    # the ordinary payload shape byte-identical to the pre-endgame contract.
+    # Strategy metadata appears when a strategic search ran. Late-game
+    # markers keep their extra search fields; board-control keeps the
+    # midgame search object shape and relies on the top-level marker that
+    # the SSE route already reads.
     if result.strategy_mode is not None:
         payload["strategy_mode"] = result.strategy_mode
-        payload["search"]["strategy_mode"] = result.strategy_mode
-        payload["search"]["out_in_two"] = result.out_in_two
-        payload["search"]["completed_depth"] = result.completed_depth
+        if result.strategy_mode != "board_control":
+            payload["search"]["strategy_mode"] = result.strategy_mode
+            payload["search"]["out_in_two"] = result.out_in_two
+            payload["search"]["completed_depth"] = result.completed_depth
     return payload
 
 

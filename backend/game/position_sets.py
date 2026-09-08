@@ -320,6 +320,8 @@ def _selfplay_config(config: PositionSetConfig, seed: int) -> SelfPlayConfig:
         # Explicit: reconstruction (_ranked_on_game) builds the SAME context,
         # otherwise mount equivalence would compare different policies.
         late_game_enabled=True,
+        # Historical diagnostic assets pin ranked traces without board defense.
+        board_defense_enabled=False,
     )
 
 
@@ -599,6 +601,10 @@ def _ranked_on_game(
             variant=config.variant_slug,
             opponent_action_rules="ai_scoring",
         ),
+        # Explicit: a default differential of zero still changes ranking
+        # under the enabled evaluator. Generation and remount stay off.
+        board_defense_enabled=False,
+        score_differential=0,
     )
 
 

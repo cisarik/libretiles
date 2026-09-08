@@ -562,3 +562,31 @@ def test_ranked_midgame_prefers_stronger_collins_move(
         for candidate in ranked.candidates
     ]
     assert utilities == sorted(utilities, reverse=True)
+
+
+def test_ranked_midgame_board_control_marker_and_evaluation_order(
+    authority: WordAuthority,
+) -> None:
+    board = _board((7, 7, "A"), (7, 8, "T"))
+    result = find_ranked_scoring_moves(
+        board,
+        list("QUIZERS"),
+        authority=authority,
+        bag_count=50,
+        max_nodes=1_000_000,
+        max_elapsed_ms=10_000,
+        board_defense_enabled=True,
+        score_differential=40,
+    )
+    assert result.status == "found"
+    assert result.strategy_mode == "board_control"
+    assert result.out_in_two is None
+    assert result.completed_depth == 0
+    utilities = [candidate.evaluation_cp for candidate in result.candidates]
+    assert utilities == sorted(utilities, reverse=True)
+    for candidate in result.candidates:
+        assert candidate.evaluation_cp == (
+            candidate.total_score * 100
+            + candidate.leave_equity_cp
+            - candidate.defense_penalty_cp
+        )

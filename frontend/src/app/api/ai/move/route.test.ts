@@ -475,7 +475,7 @@ describe("POST /api/ai/move", () => {
     };
   }
 
-  it.each(["exact", "bounded", "pre_endgame"])(
+  it.each(["exact", "bounded", "pre_endgame", "board_control"])(
     "preserves strategic backend order for strategy_mode %s instead of re-sorting by score",
     async (strategyMode) => {
       // The backend ranked the 18-point blocking move ABOVE the 46-point

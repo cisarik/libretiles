@@ -70,7 +70,12 @@ class StrengthGameResult:
 
 
 def _simulate(
-    seed: int, strategy_slot: int, *, node_bound: bool = False, late_game: bool = False,
+    seed: int,
+    strategy_slot: int,
+    *,
+    node_bound: bool = False,
+    late_game: bool = False,
+    board_defense: bool = False,
 ) -> StrengthGameResult:
     assert strategy_slot in {0, 1}
     policies = [POLICY_WITNESS, POLICY_WITNESS]
@@ -95,6 +100,10 @@ def _simulate(
             # Pinned tuples below freeze the LEGACY policy; the strategic
             # late-game stack has its own enabled matrices.
             late_game_enabled=late_game,
+            board_defense_enabled=False,
+            player_board_defense_enabled=(
+                (strategy_slot == 0, strategy_slot == 1) if board_defense else None
+            ),
         ),
         context=SelfPlayContext(
             authority=_AUTHORITY, letters=frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZ"),
@@ -106,12 +115,15 @@ def _simulate(
         assert all(event.decision.elapsed_ms < _PARITY_MAX_ELAPSED_MS for event in sample.trace)
         # Strategic endgame decisions carry solver node accounting, not the
         # ranked traversal cap; the parity pin applies to the ranked path.
+        # Board-control midgame also emits a strategy marker, so it is not
+        # part of the legacy unmarked-cap pin.
         capped = [
             event for event in sample.trace
             if not event.decision.complete and event.decision.strategy_mode is None
         ]
-        assert all(event.decision.nodes == _PARITY_RANKED_MAX_NODES for event in capped)
-        assert capped, "ranked parity must exercise the node bound"
+        if not board_defense:
+            assert all(event.decision.nodes == _PARITY_RANKED_MAX_NODES for event in capped)
+            assert capped, "ranked parity must exercise the node bound"
     game = sample.initial_state
     assert game is not None
     players = game.players
@@ -253,6 +265,30 @@ def test_late_game_strategy_engages_and_terminates_on_default_seeds() -> None:
     )
     repeat = _simulate(300, 0, node_bound=True, late_game=True)
     assert repeat == results[0]
+
+
+def test_board_defense_strategy_beats_first_witness_on_default_seeds() -> None:
+    results = [
+        _simulate(seed, strategy_slot, node_bound=True, late_game=True, board_defense=True)
+        for seed in (300, 301) for strategy_slot in (0, 1)
+    ]
+    for result in results:
+        assert result.end_reason in _ALLOWED_END_REASONS
+        assert 0 < result.plies <= _MAX_PLIES
+    total = sum(result.spread for result in results)
+    wins = sum(result.spread > 0 for result in results)
+    losses = sum(result.spread < 0 for result in results)
+    print(
+        "strength-board-defense "
+        + " ".join(
+            f"(seed={r.seed},slot={r.strategy_slot},spread={r.spread:+d},{r.end_reason.name})"
+            for r in results
+        )
+        + f" total={total:+d}",
+        flush=True,
+    )
+    assert total > 0
+    assert wins > losses
 
 
 @pytest.mark.slow

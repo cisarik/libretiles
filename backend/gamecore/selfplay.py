@@ -65,6 +65,9 @@ class SelfPlayConfig:
     # Strategic late-game play (pre-endgame equity + exact endgame solver).
     # Callers pinning byte-exact legacy outcomes disable it explicitly.
     late_game_enabled: bool = True
+    # Midgame board defense. The per-seat tuple overrides the global flag.
+    board_defense_enabled: bool = False
+    player_board_defense_enabled: tuple[bool, bool] | None = None
 
 
 @dataclass(frozen=True)
@@ -137,8 +140,9 @@ class _Decision:
     placements: tuple[Placement, ...] | None
     words: tuple[str, ...]
     total_score: int
-    # Optional late-game strategy diagnostics carried into traces.
+    # Optional late-game / board-control diagnostics carried into traces.
     strategy_mode: str | None = None
+    defense_penalty_cp: int = 0
 
 
 def _tile_counter(game: Game) -> Counter[str]:
@@ -196,6 +200,20 @@ def _late_game_context(game: Game, config: SelfPlayConfig) -> LateGameContext | 
     )
 
 
+def _seat_board_defense_enabled(config: SelfPlayConfig, acting_index: int) -> bool:
+    if config.player_board_defense_enabled is not None:
+        return config.player_board_defense_enabled[acting_index]
+    return config.board_defense_enabled
+
+
+def _score_differential(game: Game) -> int:
+    players = game.players
+    if len(players) != 2:
+        return 0
+    acting = game.current_index
+    return players[acting].score - players[1 - acting].score
+
+
 def _ranked_search(
     game: Game,
     rack: Sequence[str],
@@ -215,6 +233,8 @@ def _ranked_search(
         blank_letters=context.blank_letters,
         variant=config.variant_slug,
         late_game_context=_late_game_context(game, config),
+        score_differential=_score_differential(game),
+        board_defense_enabled=_seat_board_defense_enabled(config, game.current_index),
     )
 
 
@@ -231,6 +251,7 @@ def _from_ranked(
         words=() if candidate is None else candidate.words,
         total_score=0 if candidate is None else candidate.total_score,
         strategy_mode=result.strategy_mode,
+        defense_penalty_cp=0 if candidate is None else candidate.defense_penalty_cp,
     )
 
 

@@ -452,11 +452,12 @@ function placementKey(placements: PlacementData[]): string {
   );
 }
 
-// Backend late-game strategy markers. "exact"/"bounded" come from the endgame
+// Backend strategic markers. "exact"/"bounded" come from the endgame
 // solver (candidates ordered by proven spread), "pre_endgame" from the
-// adjusted 1..7-bag valuation. In all three cases the backend ordering is
-// strategic and must NOT be re-sorted by raw immediate score.
-const STRATEGIC_MODES = new Set(["exact", "bounded", "pre_endgame"]);
+// adjusted 1..7-bag valuation, and "board_control" from midgame defensive
+// ranking. In all four cases the backend ordering is strategic and must
+// NOT be re-sorted by raw immediate score.
+const STRATEGIC_MODES = new Set(["exact", "bounded", "pre_endgame", "board_control"]);
 
 function rankedPayloadIsStrategic(value: unknown): boolean {
   return (
@@ -531,8 +532,9 @@ function mergePlacementChoices(
     return providerOrder || placementKey(left.placements).localeCompare(placementKey(right.placements));
   };
   if (preserveBackendOrder) {
-    // Strategic late-game ordering: the backend ranked these by proven or
-    // adjusted spread, so a raw-score re-sort would discard the strategy.
+    // Strategic ordering: the backend ranked these by proven spread,
+    // adjusted late-game equity, or board-control utility, so a raw-score
+    // re-sort would discard the strategy.
     // Backend candidates first, in backend order; deduplicated provider
     // candidates follow.
     const backend = merged

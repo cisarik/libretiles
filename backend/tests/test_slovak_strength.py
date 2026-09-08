@@ -50,7 +50,16 @@ def _sample(
     player_policy_ids: tuple[str, str],
     *,
     late_game: bool = False,
+    board_defense_seat: int | None = None,
+    both_defense: bool = False,
 ) -> SelfPlaySample:
+    defense_flags: tuple[bool, bool] | None
+    if both_defense:
+        defense_flags = (True, True)
+    elif board_defense_seat is None:
+        defense_flags = None
+    else:
+        defense_flags = (board_defense_seat == 0, board_defense_seat == 1)
     return simulate_engine_game(
         SelfPlayConfig(
             variant_slug="slovak",
@@ -70,6 +79,8 @@ def _sample(
             # The pre-existing Slovak evidence pins the LEGACY policy; the
             # strategic late-game stack is exercised by its own test below.
             late_game_enabled=late_game,
+            board_defense_enabled=False,
+            player_board_defense_enabled=defense_flags,
         ),
         context=SelfPlayContext(
             authority=_AUTHORITY,
@@ -153,4 +164,58 @@ def test_slovak_ranked_self_play_terminates_with_tile_conservation() -> None:
          (sample.final_scores["P0"], sample.final_scores["P1"]),
          sample.exchanges, sample.passes, sample.stranded_total),
         flush=True,
+    )
+
+
+def test_slovak_board_defense_beats_first_witness_on_balanced_seeds() -> None:
+    spreads: list[int] = []
+    board_control = 0
+    for seed in (0, 1):
+        for strategy_slot in (0, 1):
+            policies = [POLICY_WITNESS, POLICY_WITNESS]
+            policies[strategy_slot] = POLICY_RANKED_WITNESS_SAFE
+            sample = _sample(
+                seed,
+                (policies[0], policies[1]),
+                late_game=True,
+                board_defense_seat=strategy_slot,
+            )
+            assert sample.end_reason in _ALLOWED_END_REASONS
+            assert sample.rejected_two_letter_words == ()
+            board_control += sum(
+                1
+                for event in sample.trace
+                if event.decision.strategy_mode == "board_control"
+            )
+            scores = [sample.final_scores["P0"], sample.final_scores["P1"]]
+            spread = scores[strategy_slot] - scores[1 - strategy_slot]
+            spreads.append(spread)
+            print(
+                "slovak-board-defense-strength",
+                (seed, strategy_slot, spread, sample.end_reason),
+                flush=True,
+            )
+    wins = sum(spread > 0 for spread in spreads)
+    losses = sum(spread < 0 for spread in spreads)
+    assert sum(spreads) > 0
+    assert wins > losses
+    assert board_control > 0
+
+
+def test_slovak_board_defense_self_play_terminates_with_tile_conservation() -> None:
+    sample = _sample(
+        0,
+        (POLICY_RANKED_WITNESS_SAFE, POLICY_RANKED_WITNESS_SAFE),
+        late_game=True,
+        both_defense=True,
+    )
+    assert sample.end_reason in _ALLOWED_END_REASONS
+    assert 0 < sample.plies <= _MAX_PLIES
+    assert sample.trace
+    final_game = sample.trace[-1].after
+    assert final_game.ended
+    assert _tile_counter(final_game) == _EXPECTED_TILES
+    assert sample.rejected_two_letter_words == ()
+    assert any(
+        event.decision.strategy_mode == "board_control" for event in sample.trace
     )
