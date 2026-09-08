@@ -529,9 +529,13 @@ class _DiagnosticMatchRunner:
         *,
         ply_index: int,
         position_index: int | None,
+        move: Any | None,
     ) -> None:
         DiagnosticPly.objects.create(
             run=run,
+            move=move,
+            replay_before=move.replay_before if move is not None else None,
+            replay_after=move.replay_after if move is not None else None,
             ply_index=ply_index,
             position_index=position_index,
             seat_index=record.seat_index,
@@ -694,7 +698,9 @@ class _DiagnosticMatchRunner:
             if not alive and observation is None:
                 record = _record_with_cause(record, "worker_died")
             self.state.records.append(record)
-            self._persist_ply(run, record, ply_index=ply_index, position_index=None)
+            self._persist_ply(
+                run, record, ply_index=ply_index, position_index=None, move=move
+            )
             ply_index += 1
             self._plies_since_heartbeat += 1
             used = record.provider_requests_used or 0
@@ -763,7 +769,9 @@ class _DiagnosticMatchRunner:
             if not alive and observation is None:
                 record = _record_with_cause(record, "worker_died")
             self.state.records.append(record)
-            self._persist_ply(run, record, ply_index=ply_index, position_index=index)
+            self._persist_ply(
+                run, record, ply_index=ply_index, position_index=index, move=move
+            )
             ply_index += 1
             self._plies_since_heartbeat += 1
             used = record.provider_requests_used or 0

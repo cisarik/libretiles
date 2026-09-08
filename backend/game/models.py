@@ -40,6 +40,15 @@ class GameSession(models.Model):
     premium_used = models.JSONField(default=list, help_text="List of {row, col} for used premiums")
     bag_tiles = models.JSONField(default=list, help_text="Ordered remaining tile tokens")
     bag_seed = models.IntegerField(default=0)
+    replay_initial_state = models.JSONField(
+        null=True,
+        blank=True,
+        editable=False,
+        help_text=(
+            "Initial state snapshot {board, premium_used, racks, bag_remaining, "
+            "scores, turn_slot}"
+        ),
+    )
 
     current_turn_slot = models.IntegerField(null=True, blank=True, default=None)
     consecutive_scoreless_turns = models.IntegerField(default=0)
@@ -268,6 +277,24 @@ class Move(models.Model):
         blank=True,
         help_text="Raw AI response metadata for debugging",
     )
+    replay_before = models.JSONField(
+        null=True,
+        blank=True,
+        editable=False,
+        help_text="State snapshot before move",
+    )
+    replay_after = models.JSONField(
+        null=True,
+        blank=True,
+        editable=False,
+        help_text="State snapshot after move",
+    )
+    exchanged_tiles = models.JSONField(
+        null=True,
+        blank=True,
+        editable=False,
+        help_text="Exact list of tile tokens exchanged",
+    )
 
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -416,6 +443,17 @@ class DiagnosticPly(models.Model):
         on_delete=models.CASCADE,
         related_name="plies",
     )
+    move = models.ForeignKey(
+        "Move",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="diagnostic_plies",
+        editable=False,
+    )
+    replay_before = models.JSONField(null=True, blank=True, editable=False)
+    replay_after = models.JSONField(null=True, blank=True, editable=False)
+    ai_trace = models.JSONField(null=True, blank=True, editable=False)
     ply_index = models.IntegerField(help_text="0-based ply ordinal within the run")
     position_index = models.IntegerField(
         null=True,

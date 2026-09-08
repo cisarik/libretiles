@@ -72,6 +72,7 @@ from .models import (
     PlayerSlot,
     default_structured_board,
 )
+from .replay import build_snapshot
 from . import realtime
 
 CHAT_HISTORY_LIMIT = 50
@@ -573,6 +574,7 @@ def _initialize_session(
     session.winner_slot = None
     session.started_at = timezone.now()
     session.finished_at = None
+    session.replay_initial_state = build_snapshot(session)
     session.save(
         update_fields=[
             "board_state",
@@ -587,6 +589,7 @@ def _initialize_session(
             "winner_slot",
             "started_at",
             "finished_at",
+            "replay_initial_state",
             "updated_at",
         ]
     )
@@ -913,6 +916,7 @@ def _submit_move_locked(
     if error:
         return {"ok": False, "error": error}
 
+    before = build_snapshot(session)
     board = _board_from_session(session)
     rack = list(player_slot.rack) if isinstance(player_slot.rack, list) else []
     placements = _placements_from_data(placements_data)
@@ -1002,7 +1006,7 @@ def _submit_move_locked(
     _persist_bag(session, bag)
     session.consecutive_scoreless_turns = 0
 
-    _create_move(
+    move = _create_move(
         session=session,
         player_slot=player_slot,
         kind="place",
@@ -1024,6 +1028,10 @@ def _submit_move_locked(
     if not session.game_over:
         session.current_turn_slot = _next_turn_for(player_slot.slot)
     session.save()
+    move.replay_before = before
+    move.replay_after = build_snapshot(session)
+    move.exchanged_tiles = []
+    move.save(update_fields=["replay_before", "replay_after", "exchanged_tiles"])
 
     realtime.publish_game_state_refresh(session, event_name="game_state")
     return {
@@ -1059,6 +1067,8 @@ def _submit_exchange_locked(
         if blocked is not None:
             return blocked
 
+    before = build_snapshot(session)
+
     bag = _bag_from_session(session)
     if bag.remaining() < 7:
         return {"ok": False, "error": "Not enough tiles in bag (need at least 7)"}
@@ -1078,7 +1088,7 @@ def _submit_exchange_locked(
 
     _persist_bag(session, bag)
     session.consecutive_scoreless_turns += 1
-    _create_move(
+    move = _create_move(
         session=session,
         player_slot=player_slot,
         kind="exchange",
@@ -1090,6 +1100,10 @@ def _submit_exchange_locked(
     if not session.game_over:
         session.current_turn_slot = _next_turn_for(player_slot.slot)
     session.save()
+    move.replay_before = before
+    move.replay_after = build_snapshot(session)
+    move.exchanged_tiles = list(letters_to_exchange)
+    move.save(update_fields=["replay_before", "replay_after", "exchanged_tiles"])
 
     realtime.publish_game_state_refresh(session, event_name="game_state")
     return {
@@ -1118,10 +1132,11 @@ def _submit_pass_locked(
         if blocked is not None:
             return blocked
 
+    before = build_snapshot(session)
     player_slot.pass_streak += 1
     player_slot.save(update_fields=["pass_streak"])
     session.consecutive_scoreless_turns += 1
-    _create_move(
+    move = _create_move(
         session=session,
         player_slot=player_slot,
         kind="pass",
@@ -1132,6 +1147,10 @@ def _submit_pass_locked(
     if not session.game_over:
         session.current_turn_slot = _next_turn_for(player_slot.slot)
     session.save()
+    move.replay_before = before
+    move.replay_after = build_snapshot(session)
+    move.exchanged_tiles = []
+    move.save(update_fields=["replay_before", "replay_after", "exchanged_tiles"])
 
     realtime.publish_game_state_refresh(session, event_name="game_state")
     return {"ok": True, "game_over": session.game_over, **end_info}
@@ -1160,6 +1179,7 @@ def _reject_service_account_user(user_id: int) -> None:
         )
 
 
+@transaction.atomic
 def create_game(
     *,
     user_id: int,
@@ -2108,8 +2128,9 @@ def submit_give_up_for_user(*, game_id: str, user_id: int) -> dict[str, Any]:
         if session.game_over:
             return {"ok": False, "error": "Game is already over"}
 
+        before = build_snapshot(session)
         winner_slot = _next_turn_for(player_slot.slot)
-        _create_move(session=session, player_slot=player_slot, kind="give_up")
+        move = _create_move(session=session, player_slot=player_slot, kind="give_up")
         session.game_over = True
         session.status = "abandoned"
         session.game_end_reason = "give_up"
@@ -2125,6 +2146,10 @@ def submit_give_up_for_user(*, game_id: str, user_id: int) -> dict[str, Any]:
                 "updated_at",
             ]
         )
+        move.replay_before = before
+        move.replay_after = build_snapshot(session)
+        move.exchanged_tiles = []
+        move.save(update_fields=["replay_before", "replay_after", "exchanged_tiles"])
         realtime.publish_game_state_refresh(session, event_name="game_state")
         return {
             "ok": True,

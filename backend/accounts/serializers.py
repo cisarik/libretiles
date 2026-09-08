@@ -46,8 +46,9 @@ class UserSerializer(serializers.ModelSerializer[User]):
             "email",
             "preferred_ai_model_id",
             "date_joined",
+            "is_staff",
         )
-        read_only_fields = ("id", "date_joined")
+        read_only_fields = ("id", "date_joined", "is_staff")
 
     def validate_username(self, value: str) -> str:
         if (
