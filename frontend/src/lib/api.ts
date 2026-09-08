@@ -4,6 +4,9 @@ import { isLocale, LOCALE_COOKIE_NAME, type Locale } from "@/lib/i18n/locales";
 import type {
   AIModel,
   AIPrompt,
+  AdminGameListParams,
+  AdminGameListResponse,
+  AdminReplayPayload,
   AiTurnTelemetry,
   GameHistoryFilter,
   GameHistoryResponse,
@@ -357,6 +360,19 @@ export const api = {
 
   getVariants: (token: string) =>
     request<VariantSummary[]>("/api/game/variants/", { token }),
+
+  admin: {
+    listGames: (token: string, params: AdminGameListParams = {}) => {
+      const query = new URLSearchParams();
+      for (const [key, value] of Object.entries(params)) {
+        if (value !== undefined && value !== "") query.set(key, String(value));
+      }
+      const suffix = query.size ? `?${query.toString()}` : "";
+      return request<AdminGameListResponse>(`/api/admin/games/${suffix}`, { token });
+    },
+    getReplay: (token: string, gameId: string) =>
+      request<AdminReplayPayload>(`/api/admin/games/${encodeURIComponent(gameId)}/replay/`, { token }),
+  },
 
   // Game
   createGame: (

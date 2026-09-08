@@ -240,6 +240,147 @@ export interface UserProfile {
   email: string;
   preferred_ai_model_id: string;
   date_joined: string;
+  is_staff?: boolean;
+}
+
+export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+
+export interface AdminReplayPlayer {
+  slot: number;
+  username: string | null;
+  score: number;
+  is_ai: boolean;
+  model_id: string | null;
+  model_display_name: string | null;
+}
+
+export interface AdminDiagnosticSummary {
+  run_id: string;
+  status: string;
+  assist_mode: string;
+  instrument: string;
+  model_ids: [string | null, string | null];
+}
+
+export interface AdminGameSummary {
+  game_id: string;
+  game_mode: "vs_ai" | "vs_human";
+  variant_slug: string;
+  status: "waiting" | "active" | "finished" | "abandoned";
+  is_diagnostic: boolean;
+  created_at: string;
+  finished_at: string | null;
+  move_count: number;
+  winner_slot: number | null;
+  game_end_reason: string;
+  slots: AdminReplayPlayer[];
+  diagnostic: AdminDiagnosticSummary | null;
+  diagnostic_run_count: number;
+}
+
+export interface AdminGameListResponse {
+  count: number;
+  page: number;
+  total_pages: number;
+  page_size: number;
+  results: AdminGameSummary[];
+}
+
+export interface AdminGameListParams {
+  page?: number;
+  page_size?: number;
+  game_mode?: "all" | "vs_ai" | "vs_human";
+  status?: "all" | "waiting" | "active" | "finished" | "abandoned";
+  variant_slug?: string;
+  search?: string;
+  is_diagnostic?: "all" | "true" | "false";
+}
+
+export interface AdminReplayBoardDelta {
+  row: number;
+  col: number;
+  token: string;
+  blank_as: string | null;
+}
+
+export interface AdminDiagnosticPly {
+  id: number;
+  run_id: string;
+  ply_index: number;
+  position_index: number | null;
+  seat_index: number;
+  model_id: string;
+  assist_mode: string;
+  score_authority: string;
+  model_authored: boolean | null;
+  first_validate_valid: boolean | null;
+  valid_candidate_count: number | null;
+  model_legal_score: number | null;
+  ranked_best_score: number | null;
+  ranked_search_complete: boolean | null;
+  give_up_while_legal: boolean | null;
+  playability_status: string | null;
+  completion_source: string | null;
+  terminal_cause: string | null;
+  provider_requests_used: number | null;
+  steps_consumed: number | null;
+  wall_clock_ms: number | null;
+  malformed_or_non_tool: boolean | null;
+  fallback_attempt_index: number | null;
+  earlier_attempt_failures: JsonValue;
+  executed_runtime_mode: string | null;
+  ai_trace: JsonValue;
+  created_at: string;
+}
+
+export interface AdminReplayInitialState {
+  initial_board: BoardCell[][] | null;
+  initial_racks: [string[] | null, string[] | null];
+  initial_scores: [number | null, number | null];
+  starting_turn_slot: number | null;
+  bag_seed: number;
+}
+
+export interface AdminReplayPly {
+  seq: number;
+  player_slot: number;
+  kind: "place" | "exchange" | "pass" | "give_up";
+  created_at: string;
+  placements: Placement[];
+  words_formed: WordResult[];
+  points: number;
+  tiles_exchanged: number;
+  exchanged_tiles: string[] | null;
+  cumulative_scores: [number | null, number | null];
+  racks: [string[] | null, string[] | null];
+  board_delta: AdminReplayBoardDelta[];
+  ai_metadata: Record<string, JsonValue>;
+  diagnostic_ply: AdminDiagnosticPly | null;
+}
+
+export interface AdminReplayFinalState {
+  board: BoardCell[][];
+  racks: [string[], string[]];
+  scores: [number, number];
+}
+
+export interface AdminReplayPayload {
+  replay_schema_version: 1;
+  game_id: string;
+  variant_slug: string;
+  game_mode: "vs_ai" | "vs_human";
+  status: "waiting" | "active" | "finished" | "abandoned";
+  winner_slot: number | null;
+  game_end_reason: string;
+  created_at: string;
+  finished_at: string | null;
+  tile_points: Record<string, number>;
+  alphabet: string[];
+  players: AdminReplayPlayer[];
+  initial_state: AdminReplayInitialState;
+  plies: AdminReplayPly[];
+  final_state: AdminReplayFinalState;
+  replay_status: "complete" | "partial";
 }
 
 export type PremiumType = "TW" | "DW" | "TL" | "DL" | "";
