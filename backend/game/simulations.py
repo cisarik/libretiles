@@ -77,9 +77,9 @@ def create_playground_simulation(
     slot0: dict[str, Any],
     slot1: dict[str, Any],
     variant_slug: str,
-    seed: int | None,
-    ai_timeout: int,
-    ai_max_steps: int,
+    seed: int | None = None,
+    ai_timeout: int = 120,
+    ai_max_steps: int = 50,
 ) -> PlaygroundSimulation:
     existing = (
         PlaygroundSimulation.objects.select_related("game")
