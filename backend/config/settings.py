@@ -333,6 +333,8 @@ REST_FRAMEWORK = {
         "auth_change_password": "5/hour",
         "auth_me": "200/hour",
         "ai_context": "200/hour",
+        "admin_simulation_create": "10/hour",
+        "admin_simulation_step": "120/minute",
     },
     # See _num_proxies: 0 binds get_ident to REMOTE_ADDR; override via
     # DJANGO_NUM_PROXIES when a trusted proxy count is known.

@@ -39,6 +39,12 @@ def _model_for_slot(session: GameSession, slot: PlayerSlot) -> tuple[str | None,
     if slot.diagnostic_target_id and slot.diagnostic_target is not None:
         model_id = slot.diagnostic_target.model_id
         return model_id, model_id
+    simulation = getattr(session, "playground_simulation", None)
+    if simulation is not None:
+        configs = simulation.config_json.get("slots", [])
+        if slot.slot < len(configs):
+            config = configs[slot.slot]
+            return config.get("model_id"), config.get("display_name")
     model = slot.ai_model or session.ai_model
     if model is None:
         return None, None

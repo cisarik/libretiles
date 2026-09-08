@@ -5,9 +5,9 @@ import { boardCellLetter, type AdminReplayBoardDelta, type BoardCell } from "@/l
 import { Tile } from "@/components/tiles/Tile";
 import styles from "./admin.module.css";
 
-export function ReplayBoard({ board, highlighted, tilePoints, frameKey = 0 }: { board: BoardCell[][]; highlighted: AdminReplayBoardDelta[]; tilePoints: Record<string, number>; frameKey?: number }) {
+export function ReplayBoard({ board, highlighted, tilePoints, frameKey = 0, ariaLabel = "Replay board" }: { board: BoardCell[][]; highlighted: AdminReplayBoardDelta[]; tilePoints: Record<string, number>; frameKey?: number; ariaLabel?: string }) {
   const highlight = new Set(highlighted.map((cell) => `${cell.row}-${cell.col}`));
-  return <div className={styles.board} aria-label="Replay board">{Array.from({ length: BOARD_SIZE }, (_, row) => Array.from({ length: BOARD_SIZE }, (_, col) => {
+  return <div className={styles.board} aria-label={ariaLabel}>{Array.from({ length: BOARD_SIZE }, (_, row) => Array.from({ length: BOARD_SIZE }, (_, col) => {
     const cell = board[row]?.[col] ?? null;
     const letter = boardCellLetter(cell);
     const premium = PREMIUM_BOARD[row][col];

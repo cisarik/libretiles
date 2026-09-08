@@ -29,6 +29,8 @@ def _group_send(group: str, message: dict[str, Any]) -> None:
 
 
 def publish_game_state_refresh(session: GameSession, *, event_name: str) -> None:
+    if hasattr(session, "playground_simulation"):
+        return
     game_id = str(session.public_id)
 
     def send() -> None:

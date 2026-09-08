@@ -245,3 +245,24 @@ class AdminReplayAPITests(TestCase):
         )
         assert response.status_code == 201
         assert User.objects.get(username="cannot-escalate").is_staff is False
+
+    def test_playground_replay_uses_snapshot_cpu_identity(self) -> None:
+        from game.simulations import create_playground_simulation
+
+        simulation = create_playground_simulation(
+            created_by_id=self.staff.id,
+            slot0={"kind": "cpu"},
+            slot1={"kind": "cpu"},
+            variant_slug="english",
+            seed=0,
+            ai_timeout=30,
+            ai_max_steps=10,
+        )
+        self._authenticate(self.staff)
+        payload = self.client.get(
+            f"/api/admin/games/{simulation.game.public_id}/replay/"
+        ).json()
+        assert [player["model_display_name"] for player in payload["players"]] == [
+            "CPU Master",
+            "CPU Master",
+        ]

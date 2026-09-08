@@ -18,6 +18,11 @@ import type {
   WSTicketResponse,
 } from "@/lib/types";
 import { telemetryFromSsePayload } from "./ai-move-stream";
+import {
+  parseSimulationState,
+  type SimulationConfig,
+  type SimulationState,
+} from "./admin-simulation";
 
 const DEFAULT_API_BASE = "http://localhost:8000";
 
@@ -372,6 +377,41 @@ export const api = {
     },
     getReplay: (token: string, gameId: string) =>
       request<AdminReplayPayload>(`/api/admin/games/${encodeURIComponent(gameId)}/replay/`, { token }),
+    createSimulation: async (token: string, data: SimulationConfig) =>
+      parseSimulationState(
+        await request<SimulationState>("/api/admin/simulate/", {
+          method: "POST",
+          body: data,
+          token,
+        }),
+      ),
+    getSimulation: async (token: string, gameId: string) =>
+      parseSimulationState(
+        await request<SimulationState>(
+          `/api/admin/simulate/${encodeURIComponent(gameId)}/`,
+          { token },
+        ),
+      ),
+    stepSimulation: (
+      token: string,
+      gameId: string,
+      expectedMoveCount: number,
+    ) =>
+      request<Record<string, unknown>>(
+        `/api/admin/simulate/${encodeURIComponent(gameId)}/step/`,
+        {
+          method: "POST",
+          body: { expected_move_count: expectedMoveCount },
+          token,
+        },
+      ),
+    stopSimulation: async (token: string, gameId: string) =>
+      parseSimulationState(
+        await request<SimulationState>(
+          `/api/admin/simulate/${encodeURIComponent(gameId)}/stop/`,
+          { method: "POST", body: {}, token },
+        ),
+      ),
   },
 
   // Game

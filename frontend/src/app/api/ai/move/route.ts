@@ -44,6 +44,10 @@ import {
   createInspectionTraceCollector,
   sanitizeInspectionTrace,
 } from "@/lib/ai-inspection-trace";
+import {
+  currentAiMoveBackendTransport,
+  executeAiMoveRequest,
+} from "@/lib/ai-move-execution";
 
 const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8000";
 const DEFAULT_TIMEOUT_S = 120;
@@ -99,6 +103,11 @@ async function backendRequest(
   token: string,
   init?: { method?: "GET" | "POST" | "PATCH"; body?: unknown },
 ) {
+  const transport = currentAiMoveBackendTransport();
+  if (transport) {
+    const transported = await transport(path, init);
+    if (transported !== null) return transported;
+  }
   const res = await fetch(`${BACKEND_URL}${path}`, {
     method: init?.method ?? "GET",
     cache: "no-store",
@@ -595,7 +604,7 @@ function usageForMetadata(usage: ReturnType<typeof normalizeUsage>) {
   };
 }
 
-export async function POST(req: NextRequest) {
+async function executeMove(req: NextRequest) {
   const body = await req.json();
   const { game_id, token, model_id, runtime_model_id, timeout } = body as {
     game_id: string;
@@ -1830,4 +1839,8 @@ export async function POST(req: NextRequest) {
       Connection: "keep-alive",
     },
   });
+}
+
+export async function POST(req: NextRequest) {
+  return executeAiMoveRequest(req, executeMove);
 }

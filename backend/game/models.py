@@ -87,6 +87,40 @@ class GameSession(models.Model):
         return f"Game {self.public_id.hex[:8]} ({self.status})"
 
 
+class PlaygroundSimulation(models.Model):
+    """Admin-launched, browser-stepped two-AI match."""
+
+    game = models.OneToOneField(
+        GameSession,
+        on_delete=models.CASCADE,
+        related_name="playground_simulation",
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="playground_simulations",
+    )
+    config_json = models.JSONField(help_text="Immutable match configuration snapshot")
+    lease_id = models.UUIDField(null=True, blank=True)
+    leased_move_count = models.IntegerField(null=True, blank=True)
+    lease_expires_at = models.DateTimeField(null=True, blank=True)
+    ended_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "game_playground_simulation"
+        constraints = [
+            UniqueConstraint(
+                fields=["created_by"],
+                condition=Q(ended_at__isnull=True),
+                name="unique_unfinished_playground_simulation",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"PlaygroundSimulation {self.game.public_id.hex[:8]}"
+
+
 class DiagnosticAllowedHost(models.Model):
     """Hostname allowlist row for diagnostic-only OpenAI-compatible targets.
 
