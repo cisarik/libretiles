@@ -16,3 +16,10 @@ it("labels legacy score records", () => {
   const markup = renderToStaticMarkup(createElement(ReplayScoreBreakdown, { move }));
   expect(markup).toContain("Per-tile breakdown was not recorded.");
 });
+
+it("renders the AI judge inspection trigger for judged moves", () => {
+  const move = adminReplayFixture().plies[0];
+  move.ai_metadata.judge_mode = "ai";
+  const markup = renderToStaticMarkup(createElement(ReplayScoreBreakdown, { move }));
+  expect(markup).toContain("⚖️ AI Judge verdict");
+});

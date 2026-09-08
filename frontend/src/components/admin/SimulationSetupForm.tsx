@@ -8,6 +8,14 @@ import { api } from "@/lib/api";
 import type { SimulationConfig, SimulationSlotConfig } from "@/lib/admin-simulation";
 import type { AIModel, AIPrompt, VariantSummary } from "@/lib/types";
 import styles from "./admin.module.css";
+import { PromptPreviewModal } from "./PromptPreviewModal";
+
+const DIFFICULTIES = [
+  { name: "Initial", description: "Balanced beginner baseline" },
+  { name: "Fast Search", description: "Speed & anchor mobility" },
+  { name: "Short Hooks", description: "Defensive hooks & leave balance" },
+  { name: "Grandmaster", description: "Deep minimax, endgame tracking & rack equity" },
+] as const;
 
 const ENDONYMS: Record<string, string> = {
   english: "English",
@@ -59,12 +67,14 @@ function SlotEditor({
   models,
   prompts,
   onChange,
+  onPreview,
 }: {
   slot: number;
   value: DraftSlot;
   models: AIModel[];
   prompts: AIPrompt[];
   onChange: (value: DraftSlot) => void;
+  onPreview: (prompt: AIPrompt) => void;
 }) {
   return (
     <section className={`${styles.panel} p-5`}>
@@ -90,11 +100,8 @@ function SlotEditor({
             </select>
           </div>
           <div className={styles.field}>
-            <label htmlFor={`slot-${slot}-prompt`}>Prompt Preset</label>
-            <select id={`slot-${slot}-prompt`} className={styles.select} value={value.promptId} onChange={(event) => onChange({ ...value, promptId: event.target.value })}>
-              <option value="">TypeScript CORE only</option>
-              {prompts.map((prompt) => <option key={prompt.id} value={prompt.id}>{prompt.name}</option>)}
-            </select>
+            <label htmlFor={`slot-${slot}-difficulty`}>Difficulty / Strength</label>
+            {(() => { const selected = prompts.find((prompt) => String(prompt.id) === value.promptId); const level = Math.max(1, DIFFICULTIES.findIndex((item) => item.name === selected?.name) + 1); const difficulty = DIFFICULTIES[level - 1]; return <><input id={`slot-${slot}-difficulty`} aria-label={`Player ${slot} difficulty`} className={styles.range} type="range" min={1} max={4} step={1} value={level} onChange={(event) => { const target = prompts.find((prompt) => prompt.name === DIFFICULTIES[Number(event.target.value) - 1]?.name); if (target) onChange({ ...value, promptId: String(target.id) }); }} /><div className="flex items-center justify-between gap-3"><div><strong className="text-amber-100">Level {level}: {difficulty?.name}</strong><p className="text-xs text-stone-400">{difficulty?.description}</p></div><button className={styles.button} type="button" disabled={!selected} onClick={() => { if (selected) onPreview(selected); }}>👁 Preview Prompt</button></div></>; })()}
           </div>
         </div>
       )}
@@ -114,6 +121,9 @@ export function SimulationSetupForm({ token, disabled, onStart }: { token: strin
   const [seed, setSeed] = useState("");
   const [timeout, setTimeoutValue] = useState(aiTimeout);
   const [steps, setSteps] = useState(aiMaxSteps);
+  const [judgeMode, setJudgeMode] = useState<"dictionary" | "ai">("dictionary");
+  const [judgeModelId, setJudgeModelId] = useState("");
+  const [preview, setPreview] = useState<AIPrompt | null>(null);
 
   useEffect(() => {
     void api.getModels().then(setModels).catch(() => setModels([]));
@@ -148,18 +158,21 @@ export function SimulationSetupForm({ token, disabled, onStart }: { token: strin
   return (
     <form className="mt-6 grid gap-5" onSubmit={(event) => {
       event.preventDefault();
-      onStart({
+      const config: SimulationConfig & { judge_mode: "dictionary" | "ai"; judge_model_id: string | null } = {
         slot0: llmSlot(slot0),
         slot1: llmSlot(slot1),
         variant_slug: variant,
         ...(seed === "" ? {} : { seed: Number(seed) }),
         ai_timeout: timeout,
         ai_max_steps: steps,
-      });
+        judge_mode: judgeMode,
+        judge_model_id: judgeMode === "ai" ? (judgeModelId || models[0]?.model_id || "") : null,
+      };
+      onStart(config);
     }}>
       <div className={styles.setupGrid}>
-        <SlotEditor slot={0} value={slot0} models={models} prompts={prompts} onChange={setSlot0} />
-        <SlotEditor slot={1} value={slot1} models={models} prompts={prompts} onChange={setSlot1} />
+        <SlotEditor slot={0} value={slot0} models={models} prompts={prompts} onChange={setSlot0} onPreview={setPreview} />
+        <SlotEditor slot={1} value={slot1} models={models} prompts={prompts} onChange={setSlot1} onPreview={setPreview} />
       </div>
       <section className={`${styles.panel} p-5`}>
         <div className="flex flex-wrap gap-2">
@@ -179,8 +192,10 @@ export function SimulationSetupForm({ token, disabled, onStart }: { token: strin
           <div className={styles.field}><label htmlFor="simulation-timeout">Turn timeout</label><input id="simulation-timeout" className={styles.input} type="number" min={1} max={600} value={timeout} onChange={(event) => setTimeoutValue(Number(event.target.value))} /></div>
           <div className={styles.field}><label htmlFor="simulation-steps">Provider-call budget</label><input id="simulation-steps" className={styles.input} type="number" min={5} max={100} value={steps} onChange={(event) => setSteps(Number(event.target.value))} /></div>
         </div>
+        <fieldset className="mt-6 border-t border-amber-300/15 pt-5"><legend className="text-xs font-black uppercase tracking-[.16em] text-amber-400">Game Judge</legend><div className="mt-3 flex flex-wrap gap-3"><label className={styles.judgeOption} data-selected={judgeMode === "dictionary"}><input type="radio" name="judge" checked={judgeMode === "dictionary"} onChange={() => setJudgeMode("dictionary")} />📖 Dictionary <small>Authoritative WordAuthority</small></label><label className={styles.judgeOption} data-selected={judgeMode === "ai"}><input type="radio" name="judge" checked={judgeMode === "ai"} onChange={() => setJudgeMode("ai")} />⚖️ AI Judge <small>Live model API · advisory</small></label></div>{judgeMode === "ai" ? <div className={`${styles.field} mt-4 max-w-xl`}><label htmlFor="judge-model">AI Judge Model</label><select id="judge-model" className={styles.select} value={judgeModelId || models[0]?.model_id || ""} onChange={(event) => setJudgeModelId(event.target.value)}>{models.map((model) => <option key={`${model.provider}-${model.model_id}`} value={model.model_id}>{model.display_name} · {model.provider}</option>)}</select></div> : null}</fieldset>
       </section>
-      <button type="submit" disabled={disabled || variants.length === 0} className="rounded-xl bg-amber-300 px-6 py-4 text-lg font-black text-stone-950 transition hover:bg-amber-200 disabled:opacity-40">Start Simulation</button>
+      <button type="submit" disabled={disabled || variants.length === 0 || (judgeMode === "ai" && models.length === 0)} className="rounded-xl bg-amber-300 px-6 py-4 text-lg font-black text-stone-950 transition hover:bg-amber-200 disabled:opacity-40">Start Simulation</button>
+      {preview ? <PromptPreviewModal prompt={preview} onClose={() => setPreview(null)} /> : null}
     </form>
   );
 }

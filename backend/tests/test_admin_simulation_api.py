@@ -25,6 +25,8 @@ class AdminSimulationAPITests(TestCase):
             "seed": 0,
             "ai_timeout": 30,
             "ai_max_steps": 10,
+            "judge_mode": "dictionary",
+            "judge_model_id": None,
         }
 
     def test_create_requires_staff_and_returns_complete_initial_state(self) -> None:
@@ -39,6 +41,7 @@ class AdminSimulationAPITests(TestCase):
         assert len(data["board"]) == 15
         assert [len(rack) for rack in data["racks"]] == [7, 7]
         assert data["config"]["seed"] == 0
+        assert data["config"]["judge_mode"] == "dictionary"
         assert response["Cache-Control"] == "private, no-store"
 
     def test_strict_payload_and_conflict_return_no_partial_second_game(self) -> None:
@@ -75,3 +78,10 @@ class AdminSimulationAPITests(TestCase):
         assert response.status_code == 200
         assert response.json()["game_end_reason"] == "simulation_stopped"
         assert response.json()["replay_url"].endswith(created["game_id"])
+
+    def test_ai_judge_requires_selectable_model(self) -> None:
+        self.client.force_authenticate(self.staff)
+        payload = {**self.payload(), "judge_mode": "ai", "judge_model_id": "missing/model"}
+        response = self.client.post("/api/admin/simulate/", payload, format="json")
+        assert response.status_code == 400
+        assert "judge_model_id" in response.json()

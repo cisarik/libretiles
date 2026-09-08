@@ -1,5 +1,6 @@
 from django.urls import path
 
+from .analytics_views import AdminAnalyticsView
 from .admin_views import AdminGameListView, AdminGameReplayView
 from .simulation_views import (
     SimulationActionView,
@@ -12,6 +13,7 @@ from .simulation_views import (
 app_name = "game_admin"
 
 urlpatterns = [
+    path("analytics/", AdminAnalyticsView.as_view(), name="admin-analytics"),
     path("simulate/", SimulationCreateView.as_view(), name="admin-simulation-create"),
     path(
         "simulate/<str:game_id>/",

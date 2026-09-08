@@ -60,6 +60,17 @@ class SimulationCreateSerializer(StrictSerializer):
     seed = serializers.IntegerField(min_value=0, max_value=2_147_483_647, required=False)
     ai_timeout = serializers.IntegerField(min_value=1, max_value=600, default=120)
     ai_max_steps = serializers.IntegerField(min_value=5, max_value=100, default=50)
+    judge_mode = serializers.ChoiceField(choices=["dictionary", "ai"], default="dictionary")
+    judge_model_id = serializers.CharField(max_length=200, required=False, allow_null=True)
+
+    def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
+        if attrs["judge_mode"] == "ai":
+            model_id = attrs.get("judge_model_id")
+            if not model_id or not any(item.model_id == model_id for item in get_selectable_models()):
+                raise serializers.ValidationError({"judge_model_id": "Select an available AI judge model."})
+        else:
+            attrs["judge_model_id"] = None
+        return attrs
 
     def validate_variant_slug(self, value: str) -> str:
         playable = {item.slug for item in list_installed_variants()}

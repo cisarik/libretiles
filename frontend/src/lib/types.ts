@@ -327,6 +327,94 @@ export interface AdminGameListParams {
   is_diagnostic?: "all" | "true" | "false";
 }
 
+export type AdminAnalyticsSource = "all" | "gameplay" | "playground" | "diagnostic";
+
+export interface AdminAnalyticsModel {
+  key: string;
+  provider: string;
+  model_id: string;
+  display_name: string;
+  source: string;
+  runtime_mode: string;
+  is_selectable: boolean;
+  is_current_flagship: boolean;
+  catalog_order: number;
+  games_played: number;
+  seat_appearances: number;
+  completed_seats: number;
+  wins: number;
+  losses: number;
+  draws: number;
+  win_rate_pct: number | null;
+  avg_score: number | null;
+  avg_spread: number | null;
+  total_moves: number;
+  known_completion_source_moves: number;
+  provider_candidate_pct: number | null;
+  avg_attempt_latency_ms: number | null;
+  measured_attempts: number;
+  avg_provider_requests_per_turn: number | null;
+  request_measured_turns: number;
+}
+
+export interface AdminAnalyticsPreset {
+  prompt_id: number | null;
+  name: string;
+  games_played: number;
+  seat_appearances: number;
+  completed_seats: number;
+  wins: number;
+  losses: number;
+  draws: number;
+  win_rate_pct: number | null;
+  avg_score: number | null;
+  content_version_verified: false;
+}
+
+export interface AdminAnalyticsRecommendation {
+  status: "catalog_default" | "observed_leader" | "available" | "insufficient_evidence";
+  provider: string | null;
+  model_id: string | null;
+  display_name: string | null;
+  prompt_id: number | null;
+  prompt_name: string | null;
+  reason_codes: string[];
+  evidence: { completed_seats: number; measured_attempts: number; variant_slug: string | null };
+}
+
+export interface AdminAnalyticsResponse {
+  analytics_schema_version: 1;
+  as_of: string;
+  filters: { days: number; source: AdminAnalyticsSource; variant_slug: string };
+  summary: {
+    total_games: number;
+    finished_games: number;
+    total_plies: number;
+    variants_played: number;
+    variants: Array<{ variant_slug: string; total_games: number; finished_games: number; total_plies: number }>;
+    abandoned_games: number;
+    diagnostic_runs: number;
+  };
+  models: AdminAnalyticsModel[];
+  presets: AdminAnalyticsPreset[];
+  recommendations: {
+    current_flagship: AdminAnalyticsRecommendation;
+    primary_flagship: AdminAnalyticsRecommendation;
+    high_throughput_rival: AdminAnalyticsRecommendation;
+    offline_cpu: AdminAnalyticsRecommendation;
+    strategic_preset: AdminAnalyticsRecommendation;
+    reliability_notes: string[];
+    changes_catalog: false;
+  };
+  coverage: { unknown_runtime_moves: number; unknown_completion_source_moves: number; limitations: string[] };
+}
+
+export interface AdminAnalyticsParams {
+  days?: number;
+  source?: AdminAnalyticsSource;
+  variant_slug?: string;
+}
+
 export interface AdminReplayBoardDelta {
   row: number;
   col: number;

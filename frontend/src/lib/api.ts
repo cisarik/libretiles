@@ -6,6 +6,8 @@ import type {
   AIPrompt,
   AdminGameListParams,
   AdminGameListResponse,
+  AdminAnalyticsParams,
+  AdminAnalyticsResponse,
   AdminReplayPayload,
   AiTurnTelemetry,
   GameHistoryFilter,
@@ -17,6 +19,7 @@ import type {
   VariantSummary,
   WSTicketResponse,
 } from "@/lib/types";
+import { parseAdminAnalytics } from "./admin-analytics";
 import { telemetryFromSsePayload } from "./ai-move-stream";
 import {
   parseSimulationState,
@@ -377,6 +380,14 @@ export const api = {
     },
     getReplay: (token: string, gameId: string) =>
       request<AdminReplayPayload>(`/api/admin/games/${encodeURIComponent(gameId)}/replay/`, { token }),
+    getAnalytics: async (token: string, params: AdminAnalyticsParams = {}) => {
+      const query = new URLSearchParams();
+      for (const [key, value] of Object.entries(params)) {
+        if (value !== undefined && value !== "") query.set(key, String(value));
+      }
+      const suffix = query.size ? `?${query.toString()}` : "";
+      return parseAdminAnalytics(await request<AdminAnalyticsResponse>(`/api/admin/analytics/${suffix}`, { token }));
+    },
     createSimulation: async (token: string, data: SimulationConfig) =>
       parseSimulationState(
         await request<SimulationState>("/api/admin/simulate/", {

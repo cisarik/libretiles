@@ -80,6 +80,8 @@ def create_playground_simulation(
     seed: int | None = None,
     ai_timeout: int = 120,
     ai_max_steps: int = 50,
+    judge_mode: str = "dictionary",
+    judge_model_id: str | None = None,
 ) -> PlaygroundSimulation:
     existing = (
         PlaygroundSimulation.objects.select_related("game")
@@ -120,6 +122,8 @@ def create_playground_simulation(
                 "seed": resolved_seed,
                 "ai_timeout": ai_timeout,
                 "ai_max_steps": ai_max_steps,
+                "judge_mode": judge_mode,
+                "judge_model_id": judge_model_id,
                 "slots": [snapshot0, snapshot1],
             },
         )
