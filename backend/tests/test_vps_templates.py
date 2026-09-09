@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import os
 import re
+import shlex
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -118,6 +121,9 @@ def test_public_nginx_route_ownership() -> None:
         ("/admin", "next"),
         ("/admin/replay/example", "next"),
         ("/static/admin/css/base.css", "deny"),
+        ("/de.png", "next"),
+        ("/drevo.jpeg", "next"),
+        ("/_next/static/chunks/example.js", "next"),
         ("/settings", "next"),
     )
     for path, expected in cases:
@@ -235,7 +241,50 @@ def test_systemd_units_are_non_root_and_loopback_only() -> None:
     assert "config.asgi:application" in backend
     assert "--proxy-headers" not in backend
     assert "gunicorn" not in backend.lower()
-    assert "next start --hostname 127.0.0.1 --port 3000" in frontend
+    assert "WorkingDirectory=PROJECT_ROOT/frontend/.next/standalone" in frontend
+    assert "EnvironmentFile=PROJECT_ROOT/frontend/.env.local" in frontend
+    assert "Environment=NODE_ENV=production" in frontend
+    assert "Environment=HOSTNAME=127.0.0.1" in frontend
+    assert "Environment=PORT=3000" in frontend
+    assert (
+        "ExecStart=/usr/bin/env HOSTNAME=127.0.0.1 PORT=3000 /usr/bin/node "
+        "PROJECT_ROOT/frontend/.next/standalone/server.js"
+    ) in frontend
+    assert "next start" not in frontend
+    assert "0.0.0.0" not in frontend
+
+
+def test_frontend_launch_prefix_overrides_environment_file_values() -> None:
+    frontend = FRONTEND_UNIT.read_text()
+    match = re.search(r"^ExecStart=(.+)$", frontend, re.MULTILINE)
+    assert match is not None
+    command = shlex.split(match.group(1))
+    assert command[:3] == [
+        "/usr/bin/env",
+        "HOSTNAME=127.0.0.1",
+        "PORT=3000",
+    ]
+
+    child_environment = os.environ.copy()
+    child_environment.update(
+        HOSTNAME="0.0.0.0",
+        PORT="3999",
+        LIBRETILES_LAUNCH_SENTINEL="preserved",
+    )
+    assertion = (
+        "import os; "
+        "assert os.environ['HOSTNAME'] == '127.0.0.1'; "
+        "assert os.environ['PORT'] == '3000'; "
+        "assert os.environ['LIBRETILES_LAUNCH_SENTINEL'] == 'preserved'"
+    )
+    result = subprocess.run(
+        [*command[:3], sys.executable, "-c", assertion],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=child_environment,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_deployment_script_guards_and_boundaries() -> None:
@@ -252,6 +301,28 @@ def test_deployment_script_guards_and_boundaries() -> None:
     assert "poetry install --only main --no-root" in deploy
     assert "npm ci --include=dev" in deploy
     assert deploy.index("npm ci --include=dev") < deploy.index("npm run build")
+    build_index = deploy.index("npm run build")
+    server_guard = (
+        'run_in_dir "$PROJECT_ROOT/frontend" test -f '
+        ".next/standalone/server.js"
+    )
+    public_guard = 'run_in_dir "$PROJECT_ROOT/frontend" test -d public'
+    static_guard = 'run_in_dir "$PROJECT_ROOT/frontend" test -d .next/static'
+    public_copy = (
+        'run_in_dir "$PROJECT_ROOT/frontend" cp -a -- \\\n'
+        "    public/. .next/standalone/public/"
+    )
+    static_copy = (
+        'run_in_dir "$PROJECT_ROOT/frontend" cp -a -- \\\n'
+        "    .next/static/. .next/standalone/.next/static/"
+    )
+    backend_check_index = deploy.index("manage.py check")
+    assert build_index < deploy.index(server_guard)
+    assert deploy.index(server_guard) < deploy.index(public_guard)
+    assert deploy.index(public_guard) < deploy.index(static_guard)
+    assert deploy.index(static_guard) < deploy.index(public_copy)
+    assert deploy.index(public_copy) < deploy.index(static_copy)
+    assert deploy.index(static_copy) < backend_check_index
     assert deploy.index("manage.py check") < deploy.index("manage.py migrate --noinput")
     assert deploy.index("manage.py migrate --noinput") < deploy.index("manage.py seed_models")
     assert deploy.index("manage.py seed_models") < deploy.index("manage.py collectstatic --noinput")
@@ -299,6 +370,7 @@ def test_scripts_parse_as_bash_without_execution() -> None:
         assert result.returncode == 0, result.stderr
 
 
-def test_next_standalone_output_remains_deferred() -> None:
+def test_next_standalone_output_preserves_allowed_dev_origins() -> None:
     next_config = (ROOT / "frontend/next.config.ts").read_text()
-    assert not re.search(r"\boutput\s*:\s*['\"]standalone['\"]", next_config)
+    assert re.search(r'\boutput\s*:\s*"standalone"', next_config)
+    assert "allowedDevOrigins: getAllowedDevOrigins()," in next_config

@@ -174,6 +174,19 @@ run_in_dir "$PROJECT_ROOT/backend" /usr/bin/env \
     poetry install --only main --no-root
 run_in_dir "$PROJECT_ROOT/frontend" npm ci --include=dev
 run_in_dir "$PROJECT_ROOT/frontend" npm run build
+if ! run_in_dir "$PROJECT_ROOT/frontend" test -f .next/standalone/server.js; then
+    printf '%s\n' 'Standalone frontend server is missing; deployment stopped.' >&2
+    exit 1
+fi
+
+run_in_dir "$PROJECT_ROOT/frontend" test -d public
+run_in_dir "$PROJECT_ROOT/frontend" test -d .next/static
+run_in_dir "$PROJECT_ROOT/frontend" mkdir -p \
+    .next/standalone/public .next/standalone/.next/static
+run_in_dir "$PROJECT_ROOT/frontend" cp -a -- \
+    public/. .next/standalone/public/
+run_in_dir "$PROJECT_ROOT/frontend" cp -a -- \
+    .next/static/. .next/standalone/.next/static/
 
 run_in_dir "$PROJECT_ROOT/backend" "$VENV/bin/python" manage.py check
 run_in_dir "$PROJECT_ROOT/backend" "$VENV/bin/python" manage.py migrate --noinput

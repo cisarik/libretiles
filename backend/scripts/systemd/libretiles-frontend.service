@@ -8,10 +8,12 @@ Requires=libretiles-backend.service
 Type=simple
 User=libretiles
 Group=libretiles
-WorkingDirectory=PROJECT_ROOT/frontend
+WorkingDirectory=PROJECT_ROOT/frontend/.next/standalone
 EnvironmentFile=PROJECT_ROOT/frontend/.env.local
 Environment=NODE_ENV=production
-ExecStart=/usr/bin/node PROJECT_ROOT/frontend/node_modules/next/dist/bin/next start --hostname 127.0.0.1 --port 3000
+Environment=HOSTNAME=127.0.0.1
+Environment=PORT=3000
+ExecStart=/usr/bin/env HOSTNAME=127.0.0.1 PORT=3000 /usr/bin/node PROJECT_ROOT/frontend/.next/standalone/server.js
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=30

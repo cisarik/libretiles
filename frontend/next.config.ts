@@ -24,6 +24,7 @@ function getAllowedDevOrigins(): string[] {
 }
 
 const nextConfig: NextConfig = {
+  output: "standalone",
   allowedDevOrigins: getAllowedDevOrigins(),
 };
 

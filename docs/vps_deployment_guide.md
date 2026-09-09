@@ -19,7 +19,7 @@ Prepare DNS, certificates, host packages, firewall policy, the service account, 
 
 ## Recovery Preparation
 
-Before deployment, create and verify a PostgreSQL backup and retain recoverable copies of the previous application commit, dependency state, frontend build, rendered nginx site, systemd units, and environment files. Test the restoration process independently. A code revert does not automatically reverse a database schema change; review every migration before choosing a schema rollback.
+Before deployment, create and verify a PostgreSQL backup and retain recoverable copies of the previous application commit, dependency state, frontend build, rendered nginx site, systemd units, and environment files. Restore the matching frontend build and frontend unit together during rollback; the standalone layout and launch command are one deployment contract. Test the restoration process independently. A code revert does not automatically reverse a database schema change; review every migration before choosing a schema rollback.
 
 The deployment script leaves application services stopped after a failed deployment. Restore the known-good code, dependencies, build, and configuration only after assessing whether migrations committed durable changes. Do not blindly restart old code against a partially migrated database.
 
@@ -48,7 +48,9 @@ The stripping proxy is a security prerequisite for proxy SSL trust. Its proxy lo
 
 `backend/scripts/nginx/libretiles.conf` is an nginx `http`-context snippet, not a replacement for `/etc/nginx/nginx.conf`. Render `YOUR_DOMAIN`, `PROJECT_ROOT`, `CERTIFICATE_PATH`, and `CERTIFICATE_KEY_PATH` outside Git. Obtain certificates separately. Review that 80/443 are public and that 8001/8443 contain explicit `127.0.0.1` binds before installing the site. Test the complete nginx configuration before reload. Only after this stripping proxy is installed and validated should the operator enable `DJANGO_SECURE_PROXY_SSL_HEADER=true` and restart Django.
 
-Render `PROJECT_ROOT` in both files under `backend/scripts/systemd/`, install them as `libretiles-backend.service` and `libretiles-frontend.service`, then reload the systemd manager. The units require their environment files and run as `libretiles`; they do not migrate, seed, install, or build. Enable the units for future boots only after rendering and review, without prematurely starting unbuilt services.
+Render `PROJECT_ROOT` in both files under `backend/scripts/systemd/`, install them as `libretiles-backend.service` and `libretiles-frontend.service`, then reload the systemd manager. Before deploying this revision, the updated frontend unit must be re-rendered, reviewed, installed, and loaded by systemd under separate host authority. The units require their environment files and run as `libretiles`; they do not migrate, seed, install, or build. Enable the units for future boots only after rendering and review, without prematurely starting unbuilt services.
+
+The production frontend runs `frontend/.next/standalone/server.js` with `frontend/.next/standalone` as its working directory and requires `frontend/.env.local` at its original path. Its command is `/usr/bin/env HOSTNAME=127.0.0.1 PORT=3000 /usr/bin/node PROJECT_ROOT/frontend/.next/standalone/server.js`; the command prefix enforces loopback even if the environment file defines conflicting `HOSTNAME` or `PORT` values. Local development remains unchanged and continues to use `npm run dev`.
 
 The repository commands below illustrate the intended later host sequence; adjust only paths already rendered for that host:
 
@@ -57,7 +59,7 @@ PROJECT_ROOT/backend/scripts/vps_preflight.sh
 PROJECT_ROOT/backend/scripts/vps_deploy.sh --confirm-vps
 ```
 
-Preflight is read-only and fails when requirements or service/UFW status cannot be verified. Deployment acquires a host lock, verifies existing nginx and required files, stops frontend then backend, performs locked dependency installs and the frontend build as `libretiles`, checks and migrates Django, seeds catalog rows without changing existing activation, collects static files, and starts backend then frontend.
+Preflight is read-only and fails when requirements or service/UFW status cannot be verified. Deployment acquires a host lock, verifies existing nginx and required files, stops frontend then backend, performs locked dependency installs and the frontend build as `libretiles`, and verifies `.next/standalone/server.js`. It then copies the contents of `public/` to `.next/standalone/public/` and `.next/static/` to `.next/standalone/.next/static/` as `libretiles`, before checking and migrating Django, seeding catalog rows without changing existing activation, collecting static files, and starting backend then frontend. Environment files are not copied into the standalone tree by this sequence.
 
 To replace the nginx site as part of that deployment, supply an absolute path to an operator-rendered candidate:
 
@@ -75,6 +77,7 @@ Perform these checks after deployment under host authority; this repository impl
 - Confirm port 80 redirects to canonical `https://YOUR_DOMAIN`, the landing page works, and catalog, `/api/models`, and `/api/prompts` return through their intended upstreams.
 - Request `/api/auth/me/` without credentials and confirm an authentication failure rather than an HTTP-to-HTTPS callback redirect.
 - Confirm public `/admin` shows the Next staff console and no public path reaches Django contrib admin.
+- Confirm a locale flag such as `/de.png`, `/drevo.jpeg`, and page-referenced `/_next/static/` assets are served through Next.
 - Confirm unauthenticated staff API requests fail before any provider activity.
 - Start a separately authorized multiplayer session and inspect a fresh-ticket `wss://YOUR_DOMAIN/ws/game/...` request for a 101 upgrade.
 - During a separately authorized game or simulation, confirm SSE events arrive incrementally rather than at response completion.

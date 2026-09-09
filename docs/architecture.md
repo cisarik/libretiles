@@ -306,7 +306,7 @@ The complete-game harness drives the real board, bag, Collins prefix search, leg
 ### Production
 
 - **Edge**: nginx terminates TLS and explicitly splits Next.js routes from Django APIs; private callback and Django contrib-admin listeners bind only to loopback
-- **Frontend**: Next.js runs on the VPS under systemd, bound to `127.0.0.1:3000`
+- **Frontend**: Next.js standalone `frontend/.next/standalone/server.js` runs under systemd on `127.0.0.1:3000`; deployment copies `public/` and `.next/static` into the standalone tree.
 - **Backend**: Daphne/Django runs under systemd on `127.0.0.1:8000`, with local PostgreSQL and Redis services
 - **AI**: provider-diverse free rivals with all credentials on the Next.js server; no provider secret or base URL is client-visible
 - **Operations**: render and install the repository templates using [the VPS deployment guide](vps_deployment_guide.md); repository scripts do not configure a host automatically
