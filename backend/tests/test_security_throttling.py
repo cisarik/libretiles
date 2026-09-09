@@ -7,14 +7,21 @@ results do not depend on collection order.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from contextlib import contextmanager
+from unittest.mock import patch
+from uuid import UUID
 
 import pytest
 from django.core.cache import cache
+from rest_framework.throttling import SimpleRateThrottle
 from rest_framework.test import APIClient
 
 from accounts.models import User
 from catalog.models import AIModel
 from catalog.selection import DEFAULT_FREE_MODEL_ID, OPENROUTER_PROVIDER
+from game.admin_views import AdminGameListView, AdminGameReplayView
+from game.analytics_views import AdminAnalyticsView
+from game.simulation_views import SimulationStateView, SimulationStopView
 
 # Must match backend/config/settings.py REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"].
 REGISTER_LIMIT = 20
@@ -38,6 +45,7 @@ DEMO_LOGIN_ATTEMPTS = 16
 # retry, plus a couple of extra validation retries: 12 < REGISTER_LIMIT=20.
 DEMO_REGISTER_ATTEMPTS = 12
 STRONG_PASSWORD = "testpass123"
+_MISSING_SIMULATION_ID = UUID(int=0)
 
 
 @pytest.fixture(autouse=True)
@@ -68,6 +76,25 @@ def _auth_client(username: str) -> APIClient:
     client = APIClient()
     client.force_authenticate(user=user)
     return client
+
+
+def _staff_client(username: str) -> APIClient:
+    user = User.objects.create_user(
+        username=username, password=STRONG_PASSWORD, is_staff=True
+    )
+    client = APIClient()
+    client.force_authenticate(user=user)
+    return client
+
+
+@contextmanager
+def _override_throttle_rates(**rates: str) -> Iterator[None]:
+    with patch.object(
+        SimpleRateThrottle,
+        "THROTTLE_RATES",
+        {**SimpleRateThrottle.THROTTLE_RATES, **rates},
+    ):
+        yield
 
 
 def _create_vs_ai_game(client: APIClient) -> str:
@@ -320,6 +347,53 @@ def test_throttle_state_does_not_leak_across_users() -> None:
     other = client_b.get("/api/auth/me/")
     assert exhausted.status_code == 429
     assert other.status_code == 200
+
+
+@pytest.mark.django_db
+def test_admin_simulation_create_throttled_after_limit() -> None:
+    client = _staff_client("simulation_create_throttle")
+    with _override_throttle_rates(admin_simulation_create="2/hour"):
+        responses = [
+            client.post("/api/admin/simulate/", {}, format="json") for _ in range(3)
+        ]
+    assert [response.status_code for response in responses] == [400, 400, 429]
+    assert responses[-1]["Retry-After"].isdigit()
+
+
+@pytest.mark.django_db
+def test_admin_simulation_step_throttled_after_limit() -> None:
+    client = _staff_client("simulation_step_throttle")
+    url = f"/api/admin/simulate/{_MISSING_SIMULATION_ID}/step/"
+    with _override_throttle_rates(admin_simulation_step="2/minute"):
+        responses = [client.post(url, {}, format="json") for _ in range(3)]
+    assert [response.status_code for response in responses] == [400, 400, 429]
+    assert responses[-1]["Retry-After"].isdigit()
+
+
+@pytest.mark.django_db
+def test_admin_simulation_action_shares_step_throttle_bucket() -> None:
+    client = _staff_client("simulation_action_throttle")
+    step_url = f"/api/admin/simulate/{_MISSING_SIMULATION_ID}/step/"
+    action_url = f"/api/admin/simulate/{_MISSING_SIMULATION_ID}/action/"
+    with _override_throttle_rates(admin_simulation_step="2/minute"):
+        step_responses = [
+            client.post(step_url, {}, format="json") for _ in range(2)
+        ]
+        action_response = client.post(action_url, {}, format="json")
+    assert [response.status_code for response in step_responses] == [400, 400]
+    assert action_response.status_code == 429
+    assert action_response["Retry-After"].isdigit()
+
+
+def test_admin_simulation_unbound_endpoints_exempt() -> None:
+    unbound_views = (
+        SimulationStateView,
+        SimulationStopView,
+        AdminGameListView,
+        AdminGameReplayView,
+        AdminAnalyticsView,
+    )
+    assert all(getattr(view, "throttle_scope", None) is None for view in unbound_views)
 
 
 @pytest.mark.django_db

@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 from django.conf import settings
 from django.core.management import call_command
+from django.test import RequestFactory, override_settings
 from rest_framework.test import APIClient
 
 _BACKEND_DIR = Path(__file__).resolve().parents[1]
@@ -88,6 +89,8 @@ payload = {
     "cors_allow_all_origins": bool(
         getattr(settings_mod, "CORS_ALLOW_ALL_ORIGINS", False)
     ),
+    "csrf_trusted_origins": list(settings_mod.CSRF_TRUSTED_ORIGINS),
+    "proxy_ssl_header_enabled": settings_mod.SECURE_PROXY_SSL_HEADER is not None,
     "session_cookie_secure": bool(
         getattr(settings_mod, "SESSION_COOKIE_SECURE", False)
     ),
@@ -287,6 +290,195 @@ def test_cors_allow_all_origins_false_when_debug_false() -> None:
     )
     assert payload["status"] == "ok"
     assert payload["cors_allow_all_origins"] is False
+
+
+def test_csrf_trusted_origins_derived_from_cors_allowed_origins() -> None:
+    payload = _run_settings_probe(
+        secret=_SYNTHETIC_TEST_SECRET_KEY,
+        debug="false",
+        allowed_hosts="example.test",
+        throttle_cache_url=_SYNTHETIC_REDIS_URL,
+        extra_env={
+            "CORS_ALLOWED_ORIGINS": "https://app.example.test,http://admin.example.test:8080"
+        },
+    )
+    assert payload["status"] == "ok"
+    assert payload["csrf_trusted_origins"] == [
+        "https://app.example.test",
+        "http://admin.example.test:8080",
+    ]
+
+
+def test_csrf_trusted_origins_explicit_env_override() -> None:
+    payload = _run_settings_probe(
+        secret=_SYNTHETIC_TEST_SECRET_KEY,
+        debug="false",
+        allowed_hosts="example.test",
+        throttle_cache_url=_SYNTHETIC_REDIS_URL,
+        extra_env={
+            "CORS_ALLOWED_ORIGINS": "https://app.example.test",
+            "DJANGO_CSRF_TRUSTED_ORIGINS": "https://forms.example.test",
+        },
+    )
+    assert payload["status"] == "ok"
+    assert payload["csrf_trusted_origins"] == ["https://forms.example.test"]
+
+
+@pytest.mark.parametrize(
+    "origin",
+    ["example.test", "//example.test"],
+)
+def test_csrf_trusted_origins_rejects_missing_scheme(origin: str) -> None:
+    payload = _run_settings_probe(
+        secret=_SYNTHETIC_TEST_SECRET_KEY,
+        debug="false",
+        allowed_hosts="example.test",
+        throttle_cache_url=_SYNTHETIC_REDIS_URL,
+        extra_env={"DJANGO_CSRF_TRUSTED_ORIGINS": origin},
+    )
+    assert payload["status"] == "improperly_configured"
+    assert origin in payload.get("message", "")
+
+
+def test_csrf_trusted_origins_rejects_wildcard() -> None:
+    origin = "https://*.example.test"
+    payload = _run_settings_probe(
+        secret=_SYNTHETIC_TEST_SECRET_KEY,
+        debug="false",
+        allowed_hosts="example.test",
+        throttle_cache_url=_SYNTHETIC_REDIS_URL,
+        extra_env={"DJANGO_CSRF_TRUSTED_ORIGINS": origin},
+    )
+    assert payload["status"] == "improperly_configured"
+    assert origin in payload.get("message", "")
+
+
+def test_csrf_trusted_origins_rejects_path() -> None:
+    origin = "https://example.test/api"
+    payload = _run_settings_probe(
+        secret=_SYNTHETIC_TEST_SECRET_KEY,
+        debug="false",
+        allowed_hosts="example.test",
+        throttle_cache_url=_SYNTHETIC_REDIS_URL,
+        extra_env={"DJANGO_CSRF_TRUSTED_ORIGINS": origin},
+    )
+    assert payload["status"] == "improperly_configured"
+    assert origin in payload.get("message", "")
+
+
+def test_csrf_trusted_origins_rejects_userinfo() -> None:
+    origin = "https://user:password@example.test"
+    payload = _run_settings_probe(
+        secret=_SYNTHETIC_TEST_SECRET_KEY,
+        debug="false",
+        allowed_hosts="example.test",
+        throttle_cache_url=_SYNTHETIC_REDIS_URL,
+        extra_env={"DJANGO_CSRF_TRUSTED_ORIGINS": origin},
+    )
+    assert payload["status"] == "improperly_configured"
+    assert origin in payload.get("message", "")
+
+
+@pytest.mark.parametrize(
+    "origin",
+    ["https://example.test?next=elsewhere", "https://example.test#fragment"],
+)
+def test_csrf_trusted_origins_rejects_query_or_fragment(origin: str) -> None:
+    payload = _run_settings_probe(
+        secret=_SYNTHETIC_TEST_SECRET_KEY,
+        debug="false",
+        allowed_hosts="example.test",
+        throttle_cache_url=_SYNTHETIC_REDIS_URL,
+        extra_env={"DJANGO_CSRF_TRUSTED_ORIGINS": origin},
+    )
+    assert payload["status"] == "improperly_configured"
+    assert origin in payload.get("message", "")
+
+
+def test_csrf_trusted_origins_normalizes_and_skips_empty() -> None:
+    payload = _run_settings_probe(
+        secret=_SYNTHETIC_TEST_SECRET_KEY,
+        debug="false",
+        allowed_hosts="example.test",
+        throttle_cache_url=_SYNTHETIC_REDIS_URL,
+        extra_env={
+            "DJANGO_CSRF_TRUSTED_ORIGINS": " , https://example.test/,, http://localhost:3000 , "
+        },
+    )
+    assert payload["status"] == "ok"
+    assert payload["csrf_trusted_origins"] == [
+        "https://example.test",
+        "http://localhost:3000",
+    ]
+
+
+def test_debug_true_keeps_local_csrf_trusted_origins() -> None:
+    payload = _run_settings_probe(
+        secret=_SYNTHETIC_TEST_SECRET_KEY,
+        debug="true",
+        allowed_hosts="localhost",
+    )
+    assert payload["status"] == "ok"
+    assert payload["csrf_trusted_origins"] == ["http://localhost:3000"]
+
+
+def test_secure_proxy_ssl_header_disabled_by_default() -> None:
+    payload = _run_settings_probe(
+        secret=_SYNTHETIC_TEST_SECRET_KEY,
+        debug="false",
+        allowed_hosts="example.test",
+        throttle_cache_url=_SYNTHETIC_REDIS_URL,
+    )
+    assert payload["status"] == "ok"
+    assert payload["proxy_ssl_header_enabled"] is False
+
+
+def test_secure_proxy_ssl_header_opt_in() -> None:
+    payload = _run_settings_probe(
+        secret=_SYNTHETIC_TEST_SECRET_KEY,
+        debug="false",
+        allowed_hosts="example.test",
+        throttle_cache_url=_SYNTHETIC_REDIS_URL,
+        extra_env={"DJANGO_SECURE_PROXY_SSL_HEADER": "true"},
+    )
+    assert payload["status"] == "ok"
+    assert payload["proxy_ssl_header_enabled"] is True
+
+
+@override_settings(SECURE_PROXY_SSL_HEADER=None)
+def test_secure_proxy_ssl_header_spoofing_prevented_when_disabled() -> None:
+    request = RequestFactory().get("/", HTTP_X_FORWARDED_PROTO="https")
+    assert request.is_secure() is False
+
+
+@override_settings(SECURE_PROXY_SSL_HEADER=("HTTP_X_FORWARDED_PROTO", "https"))
+def test_secure_proxy_ssl_header_honored_when_enabled() -> None:
+    request = RequestFactory().get("/", HTTP_X_FORWARDED_PROTO="https")
+    assert request.is_secure() is True
+
+
+def test_num_proxies_invalid_string_raises() -> None:
+    payload = _run_settings_probe(
+        secret=_SYNTHETIC_TEST_SECRET_KEY,
+        debug="false",
+        allowed_hosts="example.test",
+        throttle_cache_url=_SYNTHETIC_REDIS_URL,
+        extra_env={"DJANGO_NUM_PROXIES": "not-an-int"},
+    )
+    assert payload["status"] == "improperly_configured"
+    assert "DJANGO_NUM_PROXIES" in payload.get("message", "")
+
+
+def test_num_proxies_negative_int_raises() -> None:
+    payload = _run_settings_probe(
+        secret=_SYNTHETIC_TEST_SECRET_KEY,
+        debug="false",
+        allowed_hosts="example.test",
+        throttle_cache_url=_SYNTHETIC_REDIS_URL,
+        extra_env={"DJANGO_NUM_PROXIES": "-1"},
+    )
+    assert payload["status"] == "improperly_configured"
+    assert "DJANGO_NUM_PROXIES" in payload.get("message", "")
 
 
 def test_production_like_environment_enables_https_security_flags() -> None:

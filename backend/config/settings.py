@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 from datetime import timedelta
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
@@ -112,6 +113,48 @@ def _allowed_hosts(*, debug: bool) -> list[str]:
             "when DEBUG is false."
         )
     return hosts
+
+
+def _csrf_trusted_origins(
+    *, raw_explicit: str | None, cors_origins: list[str]
+) -> list[str]:
+    raw_origins = (
+        raw_explicit.split(",")
+        if raw_explicit is not None and raw_explicit.strip()
+        else cors_origins
+    )
+    trusted_origins: list[str] = []
+    for raw_origin in raw_origins:
+        origin = raw_origin.strip()
+        if not origin:
+            continue
+        if not origin.startswith(("http://", "https://")) or "*" in origin:
+            raise ImproperlyConfigured(
+                f"Invalid CSRF trusted origin {origin!r}: expected an explicit "
+                "http:// or https:// origin without wildcards."
+            )
+        try:
+            parsed = urlsplit(origin)
+            username = parsed.username
+            password = parsed.password
+        except ValueError:
+            raise ImproperlyConfigured(
+                f"Invalid CSRF trusted origin {origin!r}: malformed origin."
+            ) from None
+        if (
+            not parsed.netloc
+            or username is not None
+            or password is not None
+            or parsed.query
+            or parsed.fragment
+            or parsed.path not in ("", "/")
+        ):
+            raise ImproperlyConfigured(
+                f"Invalid CSRF trusted origin {origin!r}: userinfo, paths, "
+                "queries, and fragments are not allowed."
+            )
+        trusted_origins.append(f"{parsed.scheme}://{parsed.netloc}")
+    return trusted_origins
 
 
 SECRET_KEY = _require_secret_key()
@@ -255,6 +298,10 @@ CORS_ALLOWED_ORIGINS: list[str] = [
     for origin in os.getenv("CORS_ALLOWED_ORIGINS", "http://localhost:3000").split(",")
     if origin.strip()
 ]
+CSRF_TRUSTED_ORIGINS = _csrf_trusted_origins(
+    raw_explicit=os.getenv("DJANGO_CSRF_TRUSTED_ORIGINS"),
+    cors_origins=CORS_ALLOWED_ORIGINS,
+)
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_ALL_ORIGINS = DEBUG
 # Retry-After is not a CORS-safelisted response header, so a cross-origin
@@ -277,6 +324,14 @@ SECURE_HSTS_SECONDS = _HSTS_SECONDS if not DEBUG else 0
 # residual here rather than something to silence. test_security_settings.py
 # asserts that W021 is still emitted.
 SECURE_HSTS_INCLUDE_SUBDOMAINS = not DEBUG
+
+# Enable only behind a proxy that overwrites or strips client-supplied
+# X-Forwarded-Proto. Proxy configuration belongs to Slice 4.
+SECURE_PROXY_SSL_HEADER = (
+    ("HTTP_X_FORWARDED_PROTO", "https")
+    if _env_flag("DJANGO_SECURE_PROXY_SSL_HEADER", default=False)
+    else None
+)
 
 # Framework defaults made explicit so a later edit cannot drop them silently.
 SECURE_CONTENT_TYPE_NOSNIFF = True
