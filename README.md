@@ -104,7 +104,7 @@ A pre-existing `.env` overrides new code defaults, is read once at process start
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `DJANGO_SECRET_KEY` | - | Django secret key (required). `./scripts/libretiles.sh` generates one into a freshly created `backend/.env` and never overwrites an existing file. |
-| `DEBUG` | `True` | Debug mode |
+| `DJANGO_DEBUG` | `false` (code); `true` in the local example | Enables local debug mode. Keep false in production. |
 | `DB_ENGINE` | `sqlite3` | `sqlite3` or `postgresql` |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:3000` | Frontend origin(s) |
 | `REDIS_URL` | `redis://127.0.0.1:6379/0` | Redis connection used by Django Channels; also the production fallback for the shared throttle cache |
@@ -188,6 +188,8 @@ Then set `DB_ENGINE=postgresql` in `backend/.env` and re-run `migrate`.
 `libretiles.sh` keeps PID and log files under `./.dev/`, adopts already-running Libre Tiles dev processes on ports `8000` and `3000`, and prevents accidental double-starts that leave ports busy.
 
 The scripts handle `.env` creation, dependency installation, migrations, and model seeding automatically.
+
+For an operator-owned production deployment on a systemd VPS, use the nginx/systemd templates and guarded scripts described in [the VPS deployment guide](docs/vps_deployment_guide.md). The local development supervisor above is not a production service manager.
 
 ### One-liner (SQLite dev mode)
 

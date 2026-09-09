@@ -8,7 +8,7 @@ This document describes the technical architecture of the Libre Tiles project. I
 
 Libre Tiles is a web application with three runtime components:
 
-1. **Next.js Frontend** (deployed on Vercel) -- UI, AI agent orchestration, model routing
+1. **Next.js Frontend** (self-hosted VPS) -- UI, AI agent orchestration, model routing
 2. **Django Backend** (self-hosted VPS) -- game state, matchmaking, validation, auth, admin, dictionary
 3. **Redis** -- Django Channels backing store for websocket rooms and realtime fan-out (human multiplayer only; not required for AI-only local play)
 
@@ -30,7 +30,7 @@ AI turns use **provider-diverse free rivals** in canonical direct priority: Groq
                 │ REST API (JWT Bearer) + websocket ticket bootstrap
                 ▼
 ┌───────────────────────────────────────┐
-│       Next.js Server (Vercel)         │
+│        Next.js Server (VPS)           │
 │                                       │
 │  /api/ai/move    -- AI agent route    │   ──────►  Groq / Gemini /
 │  /api/ai/judge   -- Word judge route  │            Cloudflare / Mistral /
@@ -305,9 +305,11 @@ The complete-game harness drives the real board, bag, Collins prefix search, leg
 
 ### Production
 
-- **Frontend**: Vercel (automatic deploys from `main` branch)
-- **Backend**: Self-hosted VPS with Docker Compose (Django + PostgreSQL + Redis)
+- **Edge**: nginx terminates TLS and explicitly splits Next.js routes from Django APIs; private callback and Django contrib-admin listeners bind only to loopback
+- **Frontend**: Next.js runs on the VPS under systemd, bound to `127.0.0.1:3000`
+- **Backend**: Daphne/Django runs under systemd on `127.0.0.1:8000`, with local PostgreSQL and Redis services
 - **AI**: provider-diverse free rivals with all credentials on the Next.js server; no provider secret or base URL is client-visible
+- **Operations**: render and install the repository templates using [the VPS deployment guide](vps_deployment_guide.md); repository scripts do not configure a host automatically
 
 ### Local development
 

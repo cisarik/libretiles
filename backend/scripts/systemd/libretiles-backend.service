@@ -1,0 +1,26 @@
+[Unit]
+Description=Libre Tiles Django ASGI backend
+Wants=network-online.target
+After=network-online.target postgresql.service redis-server.service
+Requires=postgresql.service redis-server.service
+
+[Service]
+Type=simple
+User=libretiles
+Group=libretiles
+WorkingDirectory=PROJECT_ROOT/backend
+EnvironmentFile=PROJECT_ROOT/backend/.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=PROJECT_ROOT/backend/.venv/bin/daphne -b 127.0.0.1 -p 8000 --access-log /dev/null config.asgi:application
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+StandardOutput=journal
+StandardError=journal
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
