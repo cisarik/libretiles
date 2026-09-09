@@ -6,12 +6,14 @@ Thank you for your interest in contributing! This guide covers everything you ne
 
 ### Prerequisites
 
-- Python 3.11+ with [Poetry](https://python-poetry.org/)
-- Node.js 20+ with npm
+- Python 3.12 recommended with [Poetry](https://python-poetry.org/) 2.3.2 or newer. The backend manifest permits Python >=3.11,<3.14; the documented VPS setup uses 3.12.
+- Node.js 24 recommended with npm; the documented tooling also supports Node 20.19+ or 22.12+.
 - Git
 - (Optional) Docker + Docker Compose for PostgreSQL/Redis
 
 ### First-time setup
+
+The recommended local supervisor in [README.md](README.md#local-development) generates the key when creating a new backend environment file. The manual setup below requires you to set it before migrations.
 
 ```bash
 # Clone and enter the project (this repo root is libretiles/)
@@ -22,6 +24,9 @@ cd libretiles
 cd backend
 python3.12 -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 [ -f .env ] || cp .env.example .env
+# Before continuing, privately set DJANGO_SECRET_KEY in .env:
+# at least 50 characters, at least 5 unique, no django-insecure- prefix.
+# The example is empty; preserve an existing valid key.
 poetry install
 poetry run python manage.py migrate
 poetry run python manage.py seed_models
@@ -30,7 +35,8 @@ poetry run python manage.py createsuperuser
 # Frontend
 cd ../frontend
 [ -f .env.local ] || cp .env.local.example .env.local
-# Set server-only OPENROUTER_API_KEY and/or NVIDIA_API_KEY.
+# For the seeded compatibility catalog, set server-only OPENROUTER_API_KEY and/or NVIDIA_API_KEY.
+# Other integrations need their documented credentials and explicit catalog activation.
 npm install
 ```
 
@@ -41,12 +47,16 @@ See **[AGENTS.md](AGENTS.md)** for architecture notes, validation rules, and tip
 AI-only play is two terminals. Redis is required only for human-vs-human websockets.
 
 ```bash
-# Terminal 1: Django backend
+# Terminal 1 (from repository root): Django backend
 cd backend && poetry run python manage.py runserver 127.0.0.1:8000
 
-# Terminal 2: Next.js frontend
+# Terminal 2 (from repository root): Next.js frontend
 cd frontend && npm run dev
 ```
+
+### Production deployment
+
+Production uses Next.js standalone and Daphne/Django under systemd behind nginx on a self-hosted VPS, with PostgreSQL and Redis. Follow the [VPS deployment guide](docs/vps_deployment_guide.md) for production setup; the commands above start development servers.
 
 ## Code Quality
 
@@ -58,7 +68,7 @@ We enforce code quality with automated tools. Please run these before submitting
 cd backend
 poetry run ruff check .              # Linter
 poetry run ruff format --check .     # Formatter
-poetry run mypy .                    # Type checker (strict mode)
+poetry run mypy config game gamecore accounts catalog    # Type checker (strict mode)
 poetry run pytest                    # Tests
 ```
 
@@ -73,7 +83,7 @@ poetry run pytest                    # Tests
 ```bash
 cd frontend
 npm run lint                         # ESLint
-npx tsc --noEmit                     # TypeScript strict check
+npm run typecheck                    # TypeScript strict check
 ```
 
 **Style rules:**
@@ -83,24 +93,15 @@ npx tsc --noEmit                     # TypeScript strict check
 
 ## Project Architecture
 
-```
-Backend (Django)           Frontend (Next.js)          AI Models
-┌──────────────┐          ┌──────────────────┐       ┌─────────────┐
-│ gamecore/    │◄─────────│ /api/ai/move     │──────►│ OpenRouter  │
-│ game/        │ validate │ /api/ai/judge    │       │ + NVIDIA NIM│
-│ accounts/    │ + score  │ /api/models      │       │ free rivals │
-│ catalog/     │          │ React UI         │       └─────────────┘
-│ config/      │          │ Zustand store    │
-└──────────────┘          └──────────────────┘
-```
+This repository is self-contained. Next.js serves the UI and orchestrates external AI calls; Django owns game state and authoritative validation; Django Channels and Redis provide human multiplayer. See [the architecture guide](docs/architecture.md) for data flows and [the VPS guide](docs/vps_deployment_guide.md) for production topology.
 
 ### Key principles
 
 1. **gamecore/ is pure Python** -- no Django imports, no network calls. It's the game engine.
 2. **Django handles state + validation** -- all game logic goes through `game/services.py`.
 3. **Next.js API routes handle AI** -- the AI agent runs in Next.js, calls Django for validation.
-4. **Admin-first catalog** -- `seed_models` writes the five curated bootstrap pairs. Optional later OpenRouter sync is `sync_openrouter_models` and must not own or disable the NIM row. `DYNAMIC_FREE_MODEL_CATALOG_ENABLED` (default false) selects bootstrap pairs vs the four newest eligible OpenRouter models plus seeded NIM. Django Admin `is_active` is the operational kill switch.
-5. **AI plays with tools** -- the AI model uses tool calling to validate its own moves. Play and Judge share one preference-first fallback queue capped at three distinct pairs.
+4. **Admin-first catalog** -- `seed_models` creates the compatibility bootstrap rows and inactive prepared direct/watchlist rows without changing existing activation. Eligible active direct rows precede the compatibility tail. `DYNAMIC_FREE_MODEL_CATALOG_ENABLED` changes only that tail: curated bootstrap pairs when false, up to four newest eligible OpenRouter rows plus eligible seeded NIM when true. Activation and fallback ordering use the reviewed Django Admin workflow; `is_active` remains the kill switch.
+5. **AI plays with tools** -- the AI model proposes moves through tools and Django validates them. Play and Judge share one preference-first fallback queue capped at three distinct pairs.
 6. **Free-only play** -- the product does not handle money. Historical `backend/billing/migrations/` files are an inert, uninstalled tombstone, not a live Django app or a credits feature.
 
 ### Where to find things
@@ -133,9 +134,9 @@ Backend (Django)           Frontend (Next.js)          AI Models
 
 ### Changing the free-rival shortlist
 
-Flag-off (default) ships five curated bootstrap `(provider, model_id)` pairs (OpenRouter plus NVIDIA NIM) from `backend/catalog/selection.py` `FREE_RIVAL_PAIRS`. Flag-on ranks the four newest eligible OpenRouter models plus the seeded NIM tuple. Stripe is rejected for this product direction. LM Studio and Vercel AI Gateway remain historical rejections, not live routing. Slovak dictionary and push/deploy remain out of this cut.
+Eligible active direct rows precede the NIM/OpenRouter compatibility tail. With `DYNAMIC_FREE_MODEL_CATALOG_ENABLED=false`, that tail uses the curated `FREE_RIVAL_PAIRS`; with the flag enabled, it uses up to four newest eligible OpenRouter models plus eligible seeded NIM. The reviewed Admin workflow controls activation and applicable ordering. Stripe is rejected for this product direction. LM Studio and Vercel AI Gateway remain historical rejections, not live routing.
 
-Bootstrap membership is `backend/catalog/selection.py` plus `seed_models.py`. Runtime validation lives in `frontend/src/lib/model-catalog.ts` (no static frontend ID allowlist). Use native IDs (never `openrouter/google/...`). The NIM id has no `:free` suffix. Production catalog refresh is the documented schedule `libretiles-openrouter-catalog-refresh` (daily 03:17 UTC); do not configure that host schedule from a contribution unless a separate production task grants it.
+Membership and selection live in `backend/catalog/selection.py` and `seed_models.py`. Frontend runtime validation uses exact registry pairs for direct/watchlist/NIM integrations and structural `:free` validation for OpenRouter, together with live Django catalog membership. Use native IDs; the NIM id has no `:free` suffix. See [provider activation and catalog operations](docs/architecture.md#catalog-operations-rollout-and-rollback). Configuring the documented `libretiles-openrouter-catalog-refresh` host schedule requires separate production authority.
 
 ### Modifying game rules
 
@@ -148,6 +149,8 @@ Bootstrap membership is `backend/catalog/selection.py` plus `seed_models.py`. Ru
 
 ### Backend tests
 
+Run these commands from `backend/`.
+
 ```bash
 # Fast offline tests (gamecore only)
 poetry run pytest tests/test_gamecore.py -v
@@ -157,16 +160,13 @@ poetry run pytest tests/test_api.py -v
 
 # All tests
 poetry run pytest -v
-
-# With coverage
-poetry run pytest --cov=. --cov-report=html
 ```
 
 ### Test categories
 
-- **Gamecore tests** -- pure Python, no network, no DB. Always pass.
+- **Gamecore tests** -- pure Python, no network, no DB; cover rules, scoring, and dictionary regressions.
 - **API tests** -- use Django TestCase, create real DB records.
-- **Live provider tests** -- not part of this cut; do not add an internet pytest suite here.
+- **Live provider probes** -- explicit operator checks, separate from ordinary tests; see [the capability-probe guide](docs/architecture.md#explicit-capability-probe-boundary).
 
 ## Submitting Changes
 

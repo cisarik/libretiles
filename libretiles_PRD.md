@@ -1,17 +1,17 @@
 # Libre Tiles — Product Requirements Document
 
-Updated: August 25, 2026
+Updated: September 9, 2026
 
 ## 1. Product in One Sentence
 
-Libre Tiles is an open-source web-based Libre Tiles game playable in twelve board languages with a twelve-locale interface, an eye-candy animated frontend, AI opponents via provider-diverse free rivals, and a lightweight Django backend with full admin control.
+Libre Tiles is an open-source web-based Libre Tiles game playable in twelve board languages with a twelve-locale interface, an eye-candy animated frontend, AI opponents via provider-diverse free rivals, live human-vs-human multiplayer, and a lightweight Django backend with full admin control.
 
 ## 2. Product Goals
 
 1. Deliver a visually stunning, native-feeling Libre Tiles experience in the browser (desktop + mobile).
-2. Let users choose a free rival from the selectable catalog. Flag-off (default) is five curated bootstrap pairs; flag-on is the four newest eligible OpenRouter models plus the seeded NIM tuple. The product does not handle money; play and Judge share one preference-first fallback queue. Provider quotas or trial terms are external and may change — they are not Libre Tiles credits or charges. Stripe is rejected for this product direction.
-3. Provide a Django Admin-first configuration model: all game settings and AI model catalog activation/availability managed through /admin/. Catalog Admin does not manage token or per-game prices.
-4. Prepare architecture for human-vs-human multiplayer (v2).
+2. Let users choose a free rival from the selectable catalog. Eligible active direct rows precede a compatibility tail; the dynamic flag selects the curated bootstrap cohort or up to four newest eligible OpenRouter rows plus eligible seeded NIM. The product does not handle money; play and Judge share one preference-first fallback queue. Provider quotas or trial terms are external and may change — they are not Libre Tiles credits or charges. Stripe is rejected for this product direction.
+3. Provide Django Admin control over catalog configuration through the reviewed activation and ordering workflow. In production, public `/admin` serves the Next.js staff console; Django contrib admin is private, as documented in the [VPS guide](docs/vps_deployment_guide.md#private-django-admin). Catalog Admin does not manage token or per-game prices.
+4. Support live human-vs-human multiplayer with queue matchmaking, websocket synchronization, and in-game chat.
 5. Maintain open-source quality: tests, documentation, clean architecture, GitHub-ready.
 
 ## 3. Target Users
@@ -23,9 +23,10 @@ Libre Tiles is an open-source web-based Libre Tiles game playable in twelve boar
 ## 4. Architecture Overview
 
 - **Frontend**: Next.js 16 (React 19, TypeScript, Tailwind CSS 4, Framer Motion, @dnd-kit), deployed as a standalone server on a **self-hosted VPS** behind nginx.
-- **AI**: Next.js API routes using Vercel AI SDK as an OpenAI-compatible adapter. Nine providers ship — `openrouter`, `nvidia-nim`, `groq`, `google-gemini`, `cloudflare-workers-ai`, `mistral`, `ibm-watsonx`, `aion`, `huggingface` — of which `EXACT_PROVIDER_METADATA` marks five `direct`, two `watchlist` and one `legacy`. Dispatch is `ai-runtimes.ts`: `nvidia-nim`, `openrouter` and `ibm-watsonx` have their own runtimes and every other provider goes through the shared OpenAI-compatible constructor. Credentials are server-only. Catalog gated by `DYNAMIC_FREE_MODEL_CATALOG_ENABLED` (default false = bootstrap pairs). Hardcoded bases; no Vercel AI Gateway, LM Studio, or base-URL env vars. There is no `NEXT_PUBLIC_DEFAULT_MODEL`.
-- **Backend**: Django 5.x + DRF on self-hosted VPS (game state, validation, auth, admin).
+- **AI**: Next.js API routes use Vercel AI SDK for nine external provider integrations: `openrouter`, `nvidia-nim`, `groq`, `google-gemini`, `cloudflare-workers-ai`, `mistral`, `ibm-watsonx`, `aion`, and `huggingface`. Dispatch uses dedicated OpenRouter, NIM and watsonx runtimes plus a shared OpenAI-compatible constructor. Credentials are server-only. Prepared direct/watchlist rows default inactive; the dynamic catalog flag affects only the compatibility tail. Provider endpoints are hardcoded; no Vercel AI Gateway, LM Studio, or provider base-URL environment variables. There is no `NEXT_PUBLIC_DEFAULT_MODEL`.
+- **Backend**: Daphne/Django 5.x + DRF under systemd on the self-hosted VPS; nginx routes HTTP and websocket traffic. Django owns game state, validation, authentication, and admin.
 - **Database**: PostgreSQL (production), SQLite (dev).
+- **Realtime**: Django Channels + Redis for human matchmaking, websocket synchronization, and chat. Redis also backs shared production throttling.
 - **Game Engine**: Pure Python `gamecore/` package ported from scrabgpt/core/ (zero UI dependencies).
 
 ## 5. Functional Requirements
@@ -46,53 +47,53 @@ Libre Tiles is an open-source web-based Libre Tiles game playable in twelve boar
 - Status: **Implemented** (accounts/).
 
 ### FR-03: Game Session Management
-- Create game (vs AI or vs human placeholder).
+- Create AI games or join/cancel the human matchmaking queue; human games start when a second player is matched.
 - Full game state persistence in database (board, racks, bag, scores, moves).
 - Move history with audit trail.
 - Starting draw animation data (which tiles drawn, who goes first).
 - Status: **Implemented** (game/).
 
 ### FR-04: AI Opponent via Provider-Diverse Free Rivals
-- AI models configured in Django Admin. `DYNAMIC_FREE_MODEL_CATALOG_ENABLED` (default false) returns the five curated bootstrap pairs (OpenRouter Gemma, NVIDIA NIM Nemotron, and three other OpenRouter rows). When true, `/api/catalog/models/` returns the four newest eligible OpenRouter models plus the seeded NIM tuple, newest-first, with only row 1 marked flagship. Admin `is_active` is the operational kill switch.
-- Frontend fetches available models from /api/catalog/models/. There is no static frontend ID allowlist (`frontend/src/lib/model-catalog.ts`).
+- Django Admin controls model activation and applicable ordering through its reviewed workflow. Eligible active direct rows precede the compatibility tail. `DYNAMIC_FREE_MODEL_CATALOG_ENABLED=false` selects that tail from the five curated bootstrap pairs; true selects up to four newest eligible OpenRouter models plus eligible seeded NIM. Only catalog row 1 is flagship/recommended. Seed and sync preserve existing `is_active` decisions.
+- Frontend fetches available models from /api/catalog/models/. External runtime pairs must pass frontend registry validation and live Django catalog membership checks (`frontend/src/lib/model-catalog.ts`).
 - User selects preferred rival in Settings (`model_id` preference). A valid preference is attempt 1; remaining attempts follow untouched catalog order. New users receive catalog row 1. Play and Judge share `buildFallbackQueue`, capped at three distinct pairs.
 - AI move generation through Next.js API route (/api/ai/move) using Vercel AI SDK against the selected provider runtime. Terminal SSE metadata includes `provider_requests_used`; `max_steps` is the remaining whole-turn provider-call budget.
-- AI uses tool calling: validate moves, check words, score moves via Django API endpoints. Collins 2019 on Django remains the move validator.
+- External AI move generation uses `validateMove` for backend validation and scoring, then `finishMove` only after a valid candidate. Django `WordAuthority.accepts_tokens` is the sole formed-word authority over physical tiles and the selected variant's lexicons; Collins 2019 applies to English. Free-form model text cannot authorize a move.
 - AI judge (Tier 3) via /api/ai/judge uses the same queue: up to three sequential attempts, `maxRetries: 0`, 10 s per attempt, 30 s overall, HTTP 503 on exhaustion, never synthesizing false invalid verdicts.
-- Move prompt: legality-first anchor search, early backend-validated scoring floor, budget-bounded diversity, strict JSON. Judge prompt: Collins-2019-only, no natural-usage override. Seeded Admin presets refresh only via reversible SHA-256 hash-gated migration `0010` (unmodified seed rows only).
+- Move prompt: non-overridable TypeScript CORE plus advisory SEARCH_PROFILE, legality-first anchor search, an early backend-validated scoring floor, and budget-bounded diversity. Judge prompt: Collins-2019-only, no natural-usage override. Seeded presets refresh through reversible SHA-256 hash-gated migrations `0010` and `0011`; customized rows are preserved.
 - Thinking overlay: ordered attempt pills with a lifecycle-bound gold/black ping-pong tile (zero artificial delay, reduced-motion safe, readable without Premium Look).
 - Status: **Implemented** (frontend/src/app/api/ai/, frontend/src/lib/prompts.ts, openrouter.ts, nvidia-nim.ts, ai-runtimes.ts, ai-fallback.ts, model-catalog.ts, AIThinkingOverlay.tsx).
 
 ### FR-05: 3-Tier Word Validation
 - Tier 1: Local per-variant word list, Collins 2019 for the English variant (in-memory frozenset, O(1) lookup).
-- Tier 2: Online dictionary API for words not in the Collins 2019 list (optional; the local list is comprehensive).
-- Tier 3: AI Judge via the shared free-rival fallback queue (up to three attempts; HTTP 503 on exhaustion).
-- Status: **Tier 1 + 3 implemented**, Tier 2 optional.
+- Tier 2: Optional online dictionary assistance is planned and not implemented.
+- Tier 3: Advisory Collins-2019-conservative AI Judge via the shared free-rival fallback queue (up to three attempts; HTTP 503 on exhaustion). It never overrides a persisted Django verdict.
+- Status: **Tier 1 + advisory Tier 3 implemented**; Tier 2 remains optional planned work.
 
 ### FR-06: Eye-Candy Frontend
 - Dark theme with warm accents, glassmorphism panels, deep layered shadows.
 - 3D tile feel with CSS perspective, embossed letters, spring animations.
-- Starting draw animation: tiles fly from bag, flip to reveal, winner announced.
+- Starting draw animation: tiles enter, flip to reveal letters, and highlight the starting player.
 - Drag-and-drop (rack to board) with @dnd-kit, snap-to-cell, ghost preview.
 - Tile exchange mode: tap to select tiles, confirm/cancel, fly-to-bag animation.
-- Blank tile letter picker: 26-letter grid modal.
+- Blank tile picker: grid modal using the selected variant's alphabet, with an English fallback.
 - Score display: animated slot-machine counters, "+N" popup, bingo explosion.
 - AI thinking: overlay with ordered fallback-rival pills and a lifecycle-bound ping-pong tile.
 - Game end: confetti explosion (victory), respectful "Game Over" (loss), score breakdown card.
-- Move history timeline with expandable word details.
-- Responsive: mobile bottom-sheet rack, pinch-zoom board, tap-to-place alternative.
-- Premium squares configurable for any letter (blank tiles).
+- Planned: per-game move timeline with expandable word details. Game-list history and reopening saved games are implemented.
+- Responsive layouts and touch drag-and-drop are implemented; mobile bottom-sheet rack and pinch-zoom remain planned.
+- Assigned blank tiles represent a selected variant token and score zero.
 - Animated judge results display (eye-candy word validation feedback).
-- Status: **Core implemented** (Board, Tile, TileRack, ScorePanel, GameControls, BlankPicker, DnD, confetti). Premium animations in progress.
+- Status: **Core implemented** (Board, Tile, TileRack, ScorePanel, GameControls, BlankPicker, DnD, confetti). Shared optional Premium Look chrome is implemented; remaining UI work is listed in Known Gaps.
 
 ### FR-07: Settings (MVP)
-- AI model selection: selectable free rivals from the catalog API (name, description, Free badge, provider badge, selected state). Flag-off shows the five bootstrap pairs; flag-on shows newest-four-plus-NIM.
+- AI model selection: selectable free rivals from the catalog API (name, description, Free badge, provider badge, selected state). Eligible active direct rows precede the flag-selected compatibility tail.
 - Fetched from Django catalog API.
 - Timeout and search-step controls remain.
 - Status: **Implemented** (frontend/src/app/settings/page.tsx).
 
 ### FR-08: Django Admin Configuration
-- AIModel: add/remove/toggle models, set quality tier; catalog activation and availability. No token or per-game prices.
+- AIModel: add inactive models and edit permitted metadata; activation and fallback ordering use the reviewed Admin workflow. Model deletion is disabled. No token or per-game prices.
 - GameSession: inspect active/finished games, view board state, moves.
 - Move: audit trail with AI metadata.
 - User: manage accounts, view preferred models.
@@ -100,21 +101,22 @@ Libre Tiles is an open-source web-based Libre Tiles game playable in twelve boar
 
 ### FR-09: Free-only play (no application money)
 - The product does not handle money: no app credits, USD balances, token prices, per-game charges, Stripe, or top-up UX.
-- Play and Judge use the selectable free-rival catalog only (flag-off: five curated bootstrap pairs; flag-on: four newest eligible OpenRouter models plus seeded NIM). Judge uses the same fallback queue as Play.
+- Play and Judge use the selectable free-rival catalog, with eligible active direct rows followed by the flag-selected compatibility tail. Judge uses the same preference-first fallback queue as Play.
 - Provider quotas or trial terms are external and may change; they are not Libre Tiles credits or charges.
 - Stripe is rejected for this product direction, not unfinished work.
 - Status: **Implemented**.
 
-### FR-10: Human vs Human Multiplayer (v2 Preparation)
-- Data model supports 2-player games (PlayerSlot with user FK).
-- Game lobby with invite links.
-- Real-time via WebSocket (Django Channels) or polling.
-- Status: **Data model ready**, implementation planned for v2.
+### FR-10: Human vs Human Multiplayer
+- Authenticated players join or cancel the human matchmaking queue.
+- A waiting room becomes an active two-player game when a compatible opponent joins.
+- Django Channels and Redis synchronize game state and in-game chat over authenticated websockets.
+- Django derives the acting player from authentication and returns only that player's private rack.
+- Status: **Implemented** (game services, websocket consumers, and frontend waiting-room/game flows).
 
 ### FR-11: Catalog refresh, rollout, and rollback
 - Documented production schedule name: `libretiles-openrouter-catalog-refresh`, daily at 03:17 UTC, invoking `python manage.py sync_openrouter_models` under a non-overlapping platform lock. One run: exactly one unauthenticated OpenRouter catalog GET, 20-second timeout, no retries, no per-model probes, no NVIDIA/NIM request. Host configuration is separate production authority.
-- Rollout: deploy backend with `DYNAMIC_FREE_MODEL_CATALOG_ENABLED=false` → deploy the dynamic-capable frontend → run migrate/sync evidence → enable the flag.
-- Rollback: set the flag false and restart Django; pause the schedule and/or deactivate rows in Admin; roll backend selection to curated-only before rolling back the dynamic-capable frontend.
+- Compatibility-tail rollout: deploy compatible code with `DYNAMIC_FREE_MODEL_CATALOG_ENABLED=false`, obtain migrate/sync evidence, then enable the flag and restart Django. Direct-provider activation is a separate credential, capability-probe, and reviewed Admin operation.
+- Compatibility-tail rollback: set the flag false and restart Django; pause the optional schedule and/or deactivate affected rows through the reviewed Admin workflow. Existing active direct rows remain ahead of the compatibility tail.
 - Status: **Documented**. Scheduler installation is not part of this cut.
 
 ### FR-12: Interface Localization
@@ -128,12 +130,12 @@ Libre Tiles is an open-source web-based Libre Tiles game playable in twelve boar
 ### NFR-01: Code Quality
 - Python: ruff + mypy strict.
 - TypeScript: ESLint + strict TypeScript.
-- Tests: pytest (backend), Vitest + Playwright (frontend).
+- Tests: pytest (backend) and Vitest (frontend); Playwright E2E coverage is planned.
 
 ### NFR-02: Performance
 - Game state reconstruction from DB: < 5ms per move.
 - Collins 2019 dictionary lookup: O(1) via frozenset.
-- AI move timeout: configurable via AI_MOVE_TIMEOUT_SECONDS.
+- AI turn timeout and provider-step budget are configurable in Settings (`aiTimeout`, `aiMaxSteps`); the move route bounds the requested per-attempt timeout and remaining steps.
 
 ### NFR-03: Responsive Design
 - Desktop (>1024px), Tablet (768-1024px), Mobile (<768px).
@@ -141,26 +143,24 @@ Libre Tiles is an open-source web-based Libre Tiles game playable in twelve boar
 
 ### NFR-04: Open Source
 - MIT license.
-- GitHub-ready: README, PRD, CI workflows, .env.example.
+- Repository documentation and environment examples are present; GitHub Actions workflows remain planned.
 - No secrets committed.
 
 ## 7. Testing Strategy
 
 - **Gamecore tests**: Pure Python, offline, fast. Must pass on every build.
 - **API tests**: Django TestCase, full request/response cycle.
-- **Live AI tests**: Not part of this cut. Do not add an internet pytest suite for OpenRouter.
-- **Frontend tests**: Vitest (components), Playwright (E2E).
-- **CI**: ruff + mypy + offline pytest (backend), eslint + tsc + vitest (frontend).
+- **Live AI probes**: Explicit operator-only capability checks; ordinary tests use synthetic behavior and skip live provider calls.
+- **Frontend tests**: Vitest unit and integration tests; Playwright E2E tests remain planned.
+- **Planned CI**: ruff + mypy + offline pytest (backend), eslint + tsc + vitest (frontend).
 
 ## 8. Known Gaps
 
 - The eight newest interface catalogs (German, Portuguese, Icelandic, Italian, Dutch, Danish, Swedish, Afrikaans) are machine-authored and have had no second-opinion review.
 - Localization tests pin exact expected wording for four of the twelve locales (`REVIEWED_LOCALES` = `en sk cs pl`) and cover the other eight structurally instead.
 - The Slovak word list is a hunspell expansion of the LibreOffice `sk_SK` dictionary: playable, not an SSS-official list.
-- Human vs human multiplayer deferred to v2.
-- Online dictionary API (Tier 2) may not be needed if the local Collins 2019 list is sufficient.
-- Starting draw animation not yet eye-candy (basic flow implemented).
-- Move history timeline UI not yet implemented.
+- Optional online dictionary assistance (Tier 2) is not implemented.
+- A per-game move timeline with expandable word details remains unimplemented; game-list history is available.
 - Mobile bottom-sheet rack and pinch-zoom not yet implemented.
 
 ## 9. Roadmap
@@ -169,7 +169,7 @@ Libre Tiles is an open-source web-based Libre Tiles game playable in twelve boar
 2. **Phase 2** (done): Django apps (accounts, catalog, game), REST API, admin. Historical `backend/billing/` remains an inert migration tombstone, not a live app.
 3. **Phase 3** (done): OpenRouter free-rival tool-calling (Next.js API routes, agent, prompts). Historical Gateway/direct-OpenAI/LM Studio paths remain out of this cut.
 4. **Phase 4** (done): Eye-candy frontend (board, tiles, DnD, animations, settings, game flow).
-5. **Phase 5**: Polish -- mobile UX, move history timeline, starting draw animation, AI thinking particles.
-6. **Phase 6**: Human vs human multiplayer (WebSocket, lobby, invites).
+5. **Phase 5** (partial): Starting draw animation, game-list history, and shared Premium Look chrome are implemented; mobile bottom-sheet/pinch-zoom UX, a per-game move timeline, and AI thinking particles remain planned.
+6. **Phase 6** (done): Human vs human multiplayer (queue join/cancel, waiting room, WebSocket synchronization, and in-game chat).
 7. **Phase 7**: Deployment (self-hosted VPS: Next.js standalone + Daphne/Django behind nginx). Stripe is rejected for this product direction.
 8. **Phase 8**: CI/CD (GitHub Actions), E2E tests (Playwright), performance optimization.
