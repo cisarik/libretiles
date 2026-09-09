@@ -8,6 +8,49 @@ from gamecore.variant_store import load_variant
 from .models import DiagnosticPly, GameSession, Move, PlayerSlot
 from .serializers import sanitize_ai_metadata
 
+# JS Number.MAX_SAFE_INTEGER; anything larger cannot round-trip as a JSON number.
+_MAX_SAFE_JS_INTEGER = 2**53 - 1
+
+_EARLIER_FAILURE_WALLET = frozenset(
+    {
+        "timeout",
+        "rate_limited",
+        "provider_auth_failed",
+        "provider_rate_limited",
+        "provider_unavailable",
+    }
+)
+
+
+def _project_ai_trace(value: Any) -> Any:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        return None
+    attempts = value.get("attempts")
+    if (
+        isinstance(attempts, bool)
+        or not isinstance(attempts, int)
+        or attempts < 0
+        or attempts > _MAX_SAFE_JS_INTEGER
+    ):
+        return {}
+    return {"attempts": attempts}
+
+
+def _project_earlier_attempt_failures(value: Any) -> Any:
+    if value is None:
+        return None
+    if not isinstance(value, list):
+        return None
+    projected: list[str] = []
+    for item in value[:3]:
+        if isinstance(item, str) and item in _EARLIER_FAILURE_WALLET:
+            projected.append(item)
+        else:
+            projected.append("redacted")
+    return projected
+
 
 def _racks_and_scores(session: GameSession) -> tuple[list[list[str]], list[int]]:
     # State transitions may have updated separate PlayerSlot instances while
@@ -88,9 +131,11 @@ def _diagnostic_ply_payload(ply: DiagnosticPly) -> dict[str, Any]:
         "wall_clock_ms": ply.wall_clock_ms,
         "malformed_or_non_tool": ply.malformed_or_non_tool,
         "fallback_attempt_index": ply.fallback_attempt_index,
-        "earlier_attempt_failures": deepcopy(ply.earlier_attempt_failures),
+        "earlier_attempt_failures": _project_earlier_attempt_failures(
+            ply.earlier_attempt_failures
+        ),
         "executed_runtime_mode": ply.executed_runtime_mode,
-        "ai_trace": deepcopy(ply.ai_trace),
+        "ai_trace": _project_ai_trace(ply.ai_trace),
         "created_at": ply.created_at.isoformat(),
     }
 

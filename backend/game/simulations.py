@@ -32,6 +32,13 @@ class SimulationConflictError(Exception):
         super().__init__(message)
 
 
+def _parse_simulation_id(game_id: str) -> uuid.UUID:
+    try:
+        return uuid.UUID(game_id)
+    except (ValueError, AttributeError, TypeError) as exc:
+        raise SimulationNotFoundError("Simulation not found") from exc
+
+
 def _slot_snapshot(config: dict[str, Any]) -> tuple[dict[str, Any], Any, Any]:
     if config["kind"] == "cpu":
         return (
@@ -142,10 +149,7 @@ def _simulation_queryset() -> Any:
 
 
 def get_playground_simulation(game_id: str) -> PlaygroundSimulation:
-    try:
-        parsed_game_id = uuid.UUID(game_id)
-    except (ValueError, AttributeError) as exc:
-        raise SimulationNotFoundError("Simulation not found") from exc
+    parsed_game_id = _parse_simulation_id(game_id)
     try:
         return cast(
             PlaygroundSimulation,
@@ -169,6 +173,45 @@ def _move_payload(move: Any | None) -> dict[str, Any] | None:
         "created_at": move.created_at.isoformat(),
         "ai_metadata": sanitize_ai_metadata(move.ai_metadata),
     }
+
+
+_PUBLIC_CONFIG_KEYS = (
+    "version",
+    "variant_slug",
+    "seed",
+    "ai_timeout",
+    "ai_max_steps",
+    "judge_mode",
+    "judge_model_id",
+)
+_PUBLIC_SLOT_KEYS = (
+    "kind",
+    "provider",
+    "model_id",
+    "display_name",
+    "prompt_id",
+    "prompt_name",
+)
+
+
+def _project_simulation_config(config: dict[str, Any]) -> dict[str, Any]:
+    public: dict[str, Any] = {
+        key: config[key] for key in _PUBLIC_CONFIG_KEYS if key in config
+    }
+    slots = config.get("slots")
+    if isinstance(slots, list):
+        projected_slots: list[dict[str, Any]] = []
+        for slot in slots:
+            if not isinstance(slot, dict):
+                continue
+            projected = {
+                key: slot[key] for key in _PUBLIC_SLOT_KEYS if key in slot
+            }
+            if "policy" in slot:
+                projected["policy"] = slot["policy"]
+            projected_slots.append(projected)
+        public["slots"] = projected_slots
+    return public
 
 
 def serialize_simulation_state(simulation: PlaygroundSimulation) -> dict[str, Any]:
@@ -197,7 +240,7 @@ def serialize_simulation_state(simulation: PlaygroundSimulation) -> dict[str, An
     return {
         "simulation_schema_version": 1,
         "game_id": str(game.public_id),
-        "config": simulation.config_json,
+        "config": _project_simulation_config(simulation.config_json),
         "status": game.status,
         "variant_slug": game.variant_slug,
         "board": services._wire_board(game.board_state),
@@ -311,12 +354,16 @@ def execute_cpu_step(
 def step_playground_simulation(
     *, game_id: str, user_id: int, expected_move_count: int
 ) -> dict[str, Any]:
+    parsed_game_id = _parse_simulation_id(game_id)
     with transaction.atomic():
-        simulation = (
-            _simulation_queryset().select_for_update().get(game__public_id=game_id)
-        )
-        if simulation.created_by_id != user_id:
-            raise SimulationNotFoundError("Simulation not found")
+        try:
+            simulation = (
+                _simulation_queryset()
+                .select_for_update()
+                .get(game__public_id=parsed_game_id, created_by_id=user_id)
+            )
+        except PlaygroundSimulation.DoesNotExist as exc:
+            raise SimulationNotFoundError("Simulation not found") from exc
         now = timezone.now()
         if simulation.lease_id and simulation.lease_expires_at and simulation.lease_expires_at > now:
             raise SimulationConflictError("A turn is already in progress.")
@@ -362,11 +409,12 @@ def step_playground_simulation(
 def _locked_lease(
     *, game_id: str, user_id: int, lease_id: uuid.UUID, expected_move_count: int
 ) -> tuple[PlaygroundSimulation, PlayerSlot]:
+    parsed_game_id = _parse_simulation_id(game_id)
     try:
         simulation = (
             PlaygroundSimulation.objects.select_for_update()
             .select_related("game")
-            .get(game__public_id=game_id, created_by_id=user_id)
+            .get(game__public_id=parsed_game_id, created_by_id=user_id)
         )
     except PlaygroundSimulation.DoesNotExist as exc:
         raise SimulationNotFoundError("Simulation not found") from exc
@@ -485,12 +533,13 @@ def simulation_action(
 
 
 def stop_playground_simulation(*, game_id: str, user_id: int) -> PlaygroundSimulation:
+    parsed_game_id = _parse_simulation_id(game_id)
     with transaction.atomic():
         try:
             simulation = (
                 PlaygroundSimulation.objects.select_for_update()
                 .select_related("game")
-                .get(game__public_id=game_id, created_by_id=user_id)
+                .get(game__public_id=parsed_game_id, created_by_id=user_id)
             )
         except PlaygroundSimulation.DoesNotExist as exc:
             raise SimulationNotFoundError("Simulation not found") from exc

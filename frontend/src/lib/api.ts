@@ -205,50 +205,91 @@ function humanMessageForStatus(
 }
 
 // Shared in-flight refresh so concurrent 401s trigger only one refresh call.
-let refreshPromise: Promise<string | null> | null = null;
+// The flight is keyed by the authEpoch it started from: a logout or an account
+// switch (both bump authEpoch) must never share or join an older flight.
+type RefreshSnapshot = {
+  epoch: number;
+  token: string;
+  refreshToken: string;
+};
 
-/**
- * Exchange the stored refresh token for a fresh access token.
- * Updates the store on success; clears auth (forcing re-login) on failure.
- */
-async function refreshAccessToken(): Promise<string | null> {
-  const { refreshToken } = useGameStore.getState();
-  if (!refreshToken) return null;
+let refreshFlight: { epoch: number; promise: Promise<string | null> } | null =
+  null;
 
-  if (!refreshPromise) {
-    refreshPromise = (async () => {
-      try {
-        const res = await fetch(`${resolveApiBase()}/api/auth/refresh/`, {
-          method: "POST",
-          cache: "no-store",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ refresh: refreshToken }),
-        });
-        if (!res.ok) {
-          useGameStore.getState().clearAuth();
-          return null;
-        }
-        const data = (await res.json().catch(() => null)) as
-          | { access?: string; refresh?: string }
-          | null;
-        if (!data?.access) {
-          useGameStore.getState().clearAuth();
-          return null;
-        }
-        useGameStore.getState().setToken(data.access);
-        if (data.refresh) {
-          useGameStore.getState().setRefreshToken(data.refresh);
-        }
-        return data.access;
-      } catch {
-        return null;
-      } finally {
-        refreshPromise = null;
-      }
-    })();
+function clearAuthIfMatches(snapshot: RefreshSnapshot): void {
+  const store = useGameStore.getState();
+  if (
+    store.authEpoch === snapshot.epoch &&
+    store.token === snapshot.token &&
+    store.refreshToken === snapshot.refreshToken
+  ) {
+    store.clearAuth();
   }
+}
 
-  return refreshPromise;
+async function performRefresh(snapshot: RefreshSnapshot): Promise<string | null> {
+  let res: Response;
+  try {
+    res = await fetch(`${resolveApiBase()}/api/auth/refresh/`, {
+      method: "POST",
+      cache: "no-store",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh: snapshot.refreshToken }),
+    });
+  } catch {
+    // Transport failure: keep the current tokens (today's behaviour).
+    return null;
+  }
+  if (!res.ok) {
+    clearAuthIfMatches(snapshot);
+    return null;
+  }
+  const data = await res.json().catch(() => null);
+  const access =
+    typeof data === "object" && data !== null
+      ? (data as { access?: unknown }).access
+      : undefined;
+  const refresh =
+    typeof data === "object" && data !== null
+      ? (data as { refresh?: unknown }).refresh
+      : undefined;
+  if (typeof access !== "string" || access.length === 0) {
+    clearAuthIfMatches(snapshot);
+    return null;
+  }
+  if (refresh !== undefined && (typeof refresh !== "string" || refresh.length === 0)) {
+    clearAuthIfMatches(snapshot);
+    return null;
+  }
+  const applied = useGameStore.getState().applyRefreshedAuth(
+    {
+      epoch: snapshot.epoch,
+      token: snapshot.token,
+      refreshToken: snapshot.refreshToken,
+    },
+    {
+      access,
+      ...(typeof refresh === "string" ? { refresh } : {}),
+    },
+  );
+  return applied ? access : null;
+}
+
+function refreshForEpoch(snapshot: RefreshSnapshot): Promise<string | null> {
+  if (refreshFlight && refreshFlight.epoch === snapshot.epoch) {
+    return refreshFlight.promise;
+  }
+  const flight: { epoch: number; promise: Promise<string | null> } = {
+    epoch: snapshot.epoch,
+    // Ownership is assigned before the refresh body can run, so a synthetic
+    // synchronous fetch failure can never leave the slot unwrapped.
+    promise: Promise.resolve().then(() => performRefresh(snapshot)),
+  };
+  flight.promise = flight.promise.finally(() => {
+    if (refreshFlight === flight) refreshFlight = null;
+  });
+  refreshFlight = flight;
+  return flight.promise;
 }
 
 function acceptLanguageFromCookie(): string | undefined {
@@ -283,14 +324,42 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
     });
   };
 
+  const requestEpoch = useGameStore.getState().authEpoch;
+  const requestUsedStoreToken =
+    opts.token !== null && opts.token === useGameStore.getState().token;
+
   let res = await sendRequest(opts.token);
 
   // Access tokens expire (2h). On an authenticated 401, transparently refresh
   // the access token once and retry, so the user is not kicked out mid-session.
+  // The refresh is owned by the session it started from (authEpoch + token
+  // pair): a logout or an account switch while the request is in flight
+  // invalidates the refresh and forbids a retry under the new identity.
   if (res.status === 401 && opts.token) {
-    const newAccess = await refreshAccessToken();
-    if (newAccess) {
-      res = await sendRequest(newAccess);
+    const store = useGameStore.getState();
+    if (store.authEpoch !== requestEpoch) {
+      // Identity changed mid-flight: no refresh, no retry under the new session.
+    } else if (opts.token === store.token) {
+      if (store.refreshToken) {
+        const newAccess = await refreshForEpoch({
+          epoch: requestEpoch,
+          token: store.token,
+          refreshToken: store.refreshToken,
+        });
+        if (newAccess) {
+          // Re-verify before the retry: the session must still be the same
+          // one and the store must carry the refreshed access token.
+          const current = useGameStore.getState();
+          if (current.authEpoch === requestEpoch && current.token === newAccess) {
+            res = await sendRequest(newAccess);
+          }
+        }
+      }
+    } else if (requestUsedStoreToken) {
+      // A sibling refresh rotated the access token while this request was in
+      // flight; retry once with the newer token instead of starting another
+      // refresh wave.
+      res = await sendRequest(store.token);
     }
   }
 

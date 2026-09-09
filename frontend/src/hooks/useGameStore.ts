@@ -36,6 +36,12 @@ interface GameStore {
   refreshToken: string | null;
   setRefreshToken: (token: string | null) => void;
   clearAuth: () => void;
+  /** Transient session generation; never persisted. */
+  authEpoch: number;
+  applyRefreshedAuth: (
+    expected: { epoch: number; token: string | null; refreshToken?: string },
+    next: { access: string; refresh?: string },
+  ) => boolean;
 
   // AI model selection (empty string = unresolved; pages resolve from catalog row 1)
   selectedModelId: string;
@@ -132,12 +138,43 @@ interface GameStore {
 
 export const useGameStore = create<GameStore>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       token: null,
-      setToken: (token) => set({ token }),
+      setToken: (token) => set((s) => ({ token, authEpoch: s.authEpoch + 1 })),
       refreshToken: null,
-      setRefreshToken: (refreshToken) => set({ refreshToken }),
-      clearAuth: () => set({ token: null, refreshToken: null }),
+      setRefreshToken: (refreshToken) =>
+        set((s) => ({ refreshToken, authEpoch: s.authEpoch + 1 })),
+      clearAuth: () =>
+        set((s) => ({
+          token: null,
+          refreshToken: null,
+          authEpoch: s.authEpoch + 1,
+        })),
+      authEpoch: 0,
+      // A refresh completion applies ONLY when the session it started from is
+      // still the live one: same epoch and same token pair. `expected` is the
+      // snapshot captured when the refresh started; `next` carries the new
+      // tokens. A logout or an account switch (both bump authEpoch) makes the
+      // apply a no-op, so a late refresh can never restore a logged-out
+      // session or overwrite a newer account. The epoch is NOT bumped here.
+      applyRefreshedAuth: (expected, next) => {
+        const current = get();
+        if (
+          current.authEpoch !== expected.epoch ||
+          current.token !== expected.token ||
+          (expected.refreshToken !== undefined &&
+            current.refreshToken !== expected.refreshToken)
+        ) {
+          return false;
+        }
+        set({
+          token: next.access,
+          ...(next.refresh !== undefined
+            ? { refreshToken: next.refresh }
+            : {}),
+        });
+        return true;
+      },
 
       selectedModelId: "",
       setSelectedModelId: (selectedModelId) => set({ selectedModelId }),
@@ -322,15 +359,29 @@ export const useGameStore = create<GameStore>()(
         }
         return incoming as unknown as GameStore;
       },
-      onRehydrateStorage: () => () => {
-        if (typeof navigator === "undefined") return;
-        const languages =
-          navigator.languages && navigator.languages.length > 0
-            ? Array.from(navigator.languages)
-            : navigator.language
-              ? [navigator.language]
-              : [];
-        adoptBrowserLocaleIfUnset(languages);
+      onRehydrateStorage: () => (state) => {
+        if (typeof navigator !== "undefined") {
+          const languages =
+            navigator.languages && navigator.languages.length > 0
+              ? Array.from(navigator.languages)
+              : navigator.language
+                ? [navigator.language]
+                : [];
+          adoptBrowserLocaleIfUnset(languages);
+        }
+        if (
+          state !== null &&
+          typeof state === "object" &&
+          typeof state.token === "string" &&
+          typeof state.refreshToken === "string"
+        ) {
+          // A token pair restored from storage belongs to a previous runtime;
+          // in-flight refresh work from that runtime must not be able to
+          // commit against it. Runs after the store exists, so the module
+          // reference is safe here.
+          const current = useGameStore.getState();
+          useGameStore.setState({ authEpoch: current.authEpoch + 1 });
+        }
       },
       storage: createJSONStorage(() =>
         typeof window !== "undefined" ? localStorage : {
