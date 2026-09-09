@@ -177,8 +177,26 @@ ASGI_APPLICATION = "config.asgi.application"
 
 # Database — PostgreSQL in production, SQLite for dev/test convenience
 _DB_ENGINE = os.getenv("DB_ENGINE", "sqlite3")
-DATABASES: dict[str, dict[str, str | Path]]
+DATABASES: dict[str, dict[str, str | Path | int | bool]]
 if _DB_ENGINE == "postgresql":
+    # Connection persistence (PostgreSQL only). SQLite stays on Django's
+    # defaults: a reused persistent connection to a single-file database
+    # invites "database is locked" under concurrent ASGI/test workers.
+    _conn_max_age_raw = os.getenv("DB_CONN_MAX_AGE", "600")
+    try:
+        _conn_max_age = int(_conn_max_age_raw)
+    except ValueError:
+        raise ImproperlyConfigured(
+            "DB_CONN_MAX_AGE must be a non-negative integer of seconds "
+            "(0 disables persistent connections); got "
+            f"{_conn_max_age_raw!r}."
+        ) from None
+    if _conn_max_age < 0:
+        raise ImproperlyConfigured(
+            "DB_CONN_MAX_AGE must be a non-negative integer of seconds "
+            "(0 disables persistent connections); got "
+            f"{_conn_max_age_raw!r}."
+        )
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.postgresql",
@@ -187,6 +205,8 @@ if _DB_ENGINE == "postgresql":
             "PASSWORD": os.getenv("DB_PASSWORD", "libretiles"),
             "HOST": os.getenv("DB_HOST", "localhost"),
             "PORT": os.getenv("DB_PORT", "5432"),
+            "CONN_MAX_AGE": _conn_max_age,
+            "CONN_HEALTH_CHECKS": _env_flag("DB_CONN_HEALTH_CHECKS", default=True),
         }
     }
 else:

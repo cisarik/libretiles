@@ -75,6 +75,7 @@ asyncio_mode = "auto"
 markers = [
     "internet: tests requiring live API calls",
     "slow: deterministic extended acceptance tests",
+    "postgres: tests requiring a running PostgreSQL database",
 ]
 
 [build-system]

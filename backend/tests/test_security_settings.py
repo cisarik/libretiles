@@ -104,6 +104,13 @@ payload = {
     "cache_backend": str(settings_mod.CACHES["default"]["BACKEND"]),
 }
 
+# DATABASES persistence keys, default alias only. Credentials (NAME, USER,
+# PASSWORD) are deliberately never emitted.
+_default_db = settings_mod.DATABASES["default"]
+payload["db_engine"] = str(_default_db.get("ENGINE", ""))
+payload["conn_max_age"] = _default_db.get("CONN_MAX_AGE")
+payload["conn_health_checks"] = _default_db.get("CONN_HEALTH_CHECKS")
+
 if os.environ.get("LIBRETILES_SECURITY_PROBE_CHECKS") == "1":
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
     import django
@@ -131,8 +138,13 @@ def _run_settings_probe(
     run_checks: bool = False,
     throttle_cache_url: str | None = None,
     redis_url: str | None = None,
+    extra_env: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     env = _base_env()
+    # Database settings must come only from extra_env: never inherit the
+    # parent process DB_* variables (which may be dotenv-loaded).
+    for name in [item for item in env if item.startswith("DB_")]:
+        del env[name]
     if secret is None:
         env.pop("DJANGO_SECRET_KEY", None)
     else:
@@ -155,6 +167,9 @@ def _run_settings_probe(
         env["REDIS_URL"] = redis_url
     if run_checks:
         env["LIBRETILES_SECURITY_PROBE_CHECKS"] = "1"
+    if extra_env:
+        for name, value in extra_env.items():
+            env[name] = value
 
     completed = subprocess.run(
         [sys.executable, "-c", _PROBE_SOURCE],
@@ -443,6 +458,85 @@ def test_debug_true_keeps_locmem_cache_without_redis() -> None:
     )
     assert payload["status"] == "ok"
     assert payload["cache_backend"] == _LOCMEM_BACKEND
+
+
+def _postgresql_probe_env() -> dict[str, str]:
+    return {"DB_ENGINE": "postgresql"}
+
+
+def test_settings_probe_postgresql_persistence_keys() -> None:
+    payload = _run_settings_probe(
+        secret=_SYNTHETIC_TEST_SECRET_KEY,
+        debug="false",
+        allowed_hosts="example.test",
+        throttle_cache_url=_SYNTHETIC_REDIS_URL,
+        extra_env=_postgresql_probe_env(),
+    )
+    assert payload["status"] == "ok"
+    assert payload["db_engine"] == "django.db.backends.postgresql"
+    assert payload["conn_max_age"] == 600
+    assert payload["conn_health_checks"] is True
+
+
+def test_settings_probe_sqlite_omits_persistence_keys() -> None:
+    payload = _run_settings_probe(
+        secret=_SYNTHETIC_TEST_SECRET_KEY,
+        debug="true",
+        allowed_hosts="localhost",
+        extra_env={"DB_ENGINE": "sqlite3"},
+    )
+    assert payload["status"] == "ok"
+    assert payload["db_engine"] == "django.db.backends.sqlite3"
+    assert payload["conn_max_age"] in (None, 0)
+    assert payload["conn_health_checks"] in (None, False)
+
+
+def test_settings_probe_invalid_conn_max_age_fails() -> None:
+    payload = _run_settings_probe(
+        secret=_SYNTHETIC_TEST_SECRET_KEY,
+        debug="false",
+        allowed_hosts="example.test",
+        throttle_cache_url=_SYNTHETIC_REDIS_URL,
+        extra_env={**_postgresql_probe_env(), "DB_CONN_MAX_AGE": "not-an-int"},
+    )
+    assert payload["status"] == "improperly_configured"
+    assert "DB_CONN_MAX_AGE" in payload.get("message", "")
+
+
+def test_settings_probe_negative_conn_max_age_fails() -> None:
+    payload = _run_settings_probe(
+        secret=_SYNTHETIC_TEST_SECRET_KEY,
+        debug="false",
+        allowed_hosts="example.test",
+        throttle_cache_url=_SYNTHETIC_REDIS_URL,
+        extra_env={**_postgresql_probe_env(), "DB_CONN_MAX_AGE": "-1"},
+    )
+    assert payload["status"] == "improperly_configured"
+    assert "DB_CONN_MAX_AGE" in payload.get("message", "")
+
+
+def test_settings_probe_conn_max_age_zero_allowed() -> None:
+    payload = _run_settings_probe(
+        secret=_SYNTHETIC_TEST_SECRET_KEY,
+        debug="false",
+        allowed_hosts="example.test",
+        throttle_cache_url=_SYNTHETIC_REDIS_URL,
+        extra_env={**_postgresql_probe_env(), "DB_CONN_MAX_AGE": "0"},
+    )
+    assert payload["status"] == "ok"
+    assert payload["conn_max_age"] == 0
+
+
+def test_settings_probe_health_checks_false() -> None:
+    payload = _run_settings_probe(
+        secret=_SYNTHETIC_TEST_SECRET_KEY,
+        debug="false",
+        allowed_hosts="example.test",
+        throttle_cache_url=_SYNTHETIC_REDIS_URL,
+        extra_env={**_postgresql_probe_env(), "DB_CONN_HEALTH_CHECKS": "false"},
+    )
+    assert payload["status"] == "ok"
+    assert payload["conn_health_checks"] is False
 
 
 def test_logging_configures_project_loggers_without_disabling_existing() -> None:

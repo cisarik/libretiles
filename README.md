@@ -105,7 +105,7 @@ A pre-existing `.env` overrides new code defaults, is read once at process start
 |----------|---------|-------------|
 | `DJANGO_SECRET_KEY` | - | Django secret key (required). `./scripts/libretiles.sh` generates one into a freshly created `backend/.env` and never overwrites an existing file. |
 | `DEBUG` | `True` | Debug mode |
-| `DB_ENGINE` | `sqlite` | `sqlite` or `postgresql` |
+| `DB_ENGINE` | `sqlite3` | `sqlite3` or `postgresql` |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:3000` | Frontend origin(s) |
 | `REDIS_URL` | `redis://127.0.0.1:6379/0` | Redis connection used by Django Channels; also the production fallback for the shared throttle cache |
 | `DJANGO_THROTTLE_CACHE_URL` | unset | Required only when `DJANGO_DEBUG` is false: `redis://` or `rediss://` URL for the shared DRF throttle cache. If unset, `REDIS_URL` is used; if both are empty, Django refuses to start. Unused for local `DEBUG=true` boot. |
