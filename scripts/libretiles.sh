@@ -418,7 +418,7 @@ start_service() {
 
     case "$service" in
         backend)
-            cmd='exec poetry run python manage.py runserver 0.0.0.0:8000'
+            cmd='exec poetry run python manage.py runserver 127.0.0.1:8000'
             ;;
         frontend)
             cmd='exec npm run dev:host'

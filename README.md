@@ -74,7 +74,7 @@ poetry install                                    # install Python dependencies
 poetry run python manage.py migrate               # create database tables
 poetry run python manage.py seed_models           # seed compatibility + inactive direct rows
 poetry run python manage.py createsuperuser       # (optional) admin account
-poetry run python manage.py runserver 0.0.0.0:8000
+poetry run python manage.py runserver 127.0.0.1:8000
 ```
 
 Backend runs at http://localhost:8000. Django Admin at http://localhost:8000/admin/.
@@ -108,7 +108,7 @@ A pre-existing `.env` overrides new code defaults, is read once at process start
 | `DB_ENGINE` | `sqlite3` | `sqlite3` or `postgresql` |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:3000` | Frontend origin(s) |
 | `REDIS_URL` | `redis://127.0.0.1:6379/0` | Redis connection used by Django Channels; also the production fallback for the shared throttle cache |
-| `DJANGO_THROTTLE_CACHE_URL` | unset | Required only when `DJANGO_DEBUG` is false: `redis://` or `rediss://` URL for the shared DRF throttle cache. If unset, `REDIS_URL` is used; if both are empty, Django refuses to start. Unused for local `DEBUG=true` boot. |
+| `DJANGO_THROTTLE_CACHE_URL` | unset | Required only when `DJANGO_DEBUG` is false: `redis://` or `rediss://` URL for the shared DRF throttle cache. If unset, `REDIS_URL` is used; if both are empty, Django refuses to start. Unused for local `DJANGO_DEBUG=true` boot. |
 | `DJANGO_NUM_PROXIES` | `0` | Trusted reverse-proxy count for DRF unauthenticated throttle identity. `0` keys buckets on `REMOTE_ADDR`. Set to the real proxy count in a deployment; a mismatch either over-throttles or trusts `X-Forwarded-For`. |
 | `GAME_WS_TICKET_MAX_AGE_SECONDS` | `10` | Max age for signed websocket tickets |
 | `DYNAMIC_FREE_MODEL_CATALOG_ENABLED` | `false` | Controls only the NIM/OpenRouter compatibility tail: curated bootstrap when false, newest-four OpenRouter plus NIM when true. Active direct rows always remain first. |
@@ -200,7 +200,7 @@ For an operator-owned production deployment on a systemd VPS, use the nginx/syst
 cd backend && [ -f .env ] || cp .env.example .env && poetry install && \
   poetry run python manage.py migrate && \
   poetry run python manage.py seed_models && \
-  poetry run python manage.py runserver 0.0.0.0:8000
+  poetry run python manage.py runserver 127.0.0.1:8000
 
 # Terminal 2 (frontend):
 cd frontend && [ -f .env.local ] || cp .env.local.example .env.local && npm install && npm run dev

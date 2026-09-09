@@ -42,7 +42,7 @@ AI-only play is two terminals. Redis is required only for human-vs-human websock
 
 ```bash
 # Terminal 1: Django backend
-cd backend && poetry run python manage.py runserver 0.0.0.0:8000
+cd backend && poetry run python manage.py runserver 127.0.0.1:8000
 
 # Terminal 2: Next.js frontend
 cd frontend && npm run dev

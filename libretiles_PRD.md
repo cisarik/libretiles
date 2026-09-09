@@ -22,7 +22,7 @@ Libre Tiles is an open-source web-based Libre Tiles game playable in twelve boar
 
 ## 4. Architecture Overview
 
-- **Frontend**: Next.js 16 (React 19, TypeScript, Tailwind CSS 4, Framer Motion, @dnd-kit) deployed on **Vercel**.
+- **Frontend**: Next.js 16 (React 19, TypeScript, Tailwind CSS 4, Framer Motion, @dnd-kit), deployed as a standalone server on a **self-hosted VPS** behind nginx.
 - **AI**: Next.js API routes using Vercel AI SDK as an OpenAI-compatible adapter. Nine providers ship — `openrouter`, `nvidia-nim`, `groq`, `google-gemini`, `cloudflare-workers-ai`, `mistral`, `ibm-watsonx`, `aion`, `huggingface` — of which `EXACT_PROVIDER_METADATA` marks five `direct`, two `watchlist` and one `legacy`. Dispatch is `ai-runtimes.ts`: `nvidia-nim`, `openrouter` and `ibm-watsonx` have their own runtimes and every other provider goes through the shared OpenAI-compatible constructor. Credentials are server-only. Catalog gated by `DYNAMIC_FREE_MODEL_CATALOG_ENABLED` (default false = bootstrap pairs). Hardcoded bases; no Vercel AI Gateway, LM Studio, or base-URL env vars. There is no `NEXT_PUBLIC_DEFAULT_MODEL`.
 - **Backend**: Django 5.x + DRF on self-hosted VPS (game state, validation, auth, admin).
 - **Database**: PostgreSQL (production), SQLite (dev).
@@ -171,5 +171,5 @@ Libre Tiles is an open-source web-based Libre Tiles game playable in twelve boar
 4. **Phase 4** (done): Eye-candy frontend (board, tiles, DnD, animations, settings, game flow).
 5. **Phase 5**: Polish -- mobile UX, move history timeline, starting draw animation, AI thinking particles.
 6. **Phase 6**: Human vs human multiplayer (WebSocket, lobby, invites).
-7. **Phase 7**: Deployment (Vercel + VPS). Stripe is rejected for this product direction.
+7. **Phase 7**: Deployment (self-hosted VPS: Next.js standalone + Daphne/Django behind nginx). Stripe is rejected for this product direction.
 8. **Phase 8**: CI/CD (GitHub Actions), E2E tests (Playwright), performance optimization.

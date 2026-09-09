@@ -29,7 +29,7 @@ AI-only local play needs two terminals (Django + Next.js). Redis is required onl
    [ -f .env ] || cp .env.example .env
    poetry run python manage.py migrate
    poetry run python manage.py seed_models
-   poetry run python manage.py runserver 0.0.0.0:8000
+   poetry run python manage.py runserver 127.0.0.1:8000
    ```
 
    `seed_models` loads the offline five-pair bootstrap shortlist (four OpenRouter rows plus one NVIDIA NIM row). Do not require `sync_openrouter_models` to start; that optional public catalog fetch is later and non-blocking. It must not own or disable the NIM row. There is no NIM catalog discovery.
@@ -184,7 +184,7 @@ Rollback:
 
 ## Deployment
 
-- Frontend: Vercel (env from `frontend/.env.local.example`).
+- Frontend: self-hosted VPS; Next.js standalone `frontend/.next/standalone/server.js` under systemd on `127.0.0.1:3000` behind nginx (env names from `frontend/.env.local.example`; see [the VPS deployment guide](docs/vps_deployment_guide.md)).
 - Backend: VPS / PaaS with PostgreSQL in production; see [docs/architecture.md](docs/architecture.md) and [README.md](README.md).
 
 ## Security

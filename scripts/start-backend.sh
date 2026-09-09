@@ -30,4 +30,4 @@ echo "Admin: http://localhost:8000/admin/"
 echo "Press Ctrl+C to stop."
 echo ""
 
-poetry run python manage.py runserver 0.0.0.0:8000
+poetry run python manage.py runserver 127.0.0.1:8000

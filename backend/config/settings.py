@@ -292,7 +292,7 @@ STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-# CORS — allow Vercel frontend
+# CORS — frontend origins allowed to call this API
 CORS_ALLOWED_ORIGINS: list[str] = [
     origin.strip()
     for origin in os.getenv("CORS_ALLOWED_ORIGINS", "http://localhost:3000").split(",")
