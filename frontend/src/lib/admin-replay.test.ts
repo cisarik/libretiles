@@ -8,14 +8,15 @@ describe("admin replay ingress and reconstruction", () => {
     const frames = buildReplayFrames(payload);
     expect(frames).toHaveLength(3);
     expect(frames[0].board?.[7][7]).toBeNull();
-    expect(frames[1].board?.[7][7]).toEqual({ token: "?", blank_as: "SZ" });
+    expect(frames[1].board?.[7][7]).toEqual({ token: "A", blank_as: null });
+    expect(frames[1].board?.[7][8]).toEqual({ token: "T", blank_as: null });
     expect(frames[2].board).toBe(frames[1].board);
     expect(frames[1].board?.[6]).toBe(frames[0].board?.[6]);
   });
 
   it("rejects schema drift, malformed blanks, and non-increasing sequences", () => {
     expect(() => parseAdminReplay({ ...adminReplayFixture(), replay_schema_version: 2 })).toThrow();
-    const malformed = adminReplayFixture(); malformed.plies[0].board_delta[0].blank_as = null;
+    const malformed = adminReplayFixture(); malformed.plies[0].board_delta[0].token = "?";
     expect(() => parseAdminReplay(malformed)).toThrow();
     const unordered = adminReplayFixture(); unordered.plies[1].seq = 1;
     expect(() => parseAdminReplay(unordered)).toThrow();
