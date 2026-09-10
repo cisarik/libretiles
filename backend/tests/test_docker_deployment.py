@@ -498,6 +498,14 @@ def test_nginx_proxy_headers_streaming_and_bootstrap_fail_closed() -> None:
     assert "nginx -s reload" in entrypoint
 
 
+def test_nginx_template_suppresses_nextjs_powered_by_header() -> None:
+    template = _text(NGINX)
+    assert "proxy_hide_header X-Powered-By;" in template, (
+        "nginx template must suppress X-Powered-By to avoid "
+        "leaking Next.js version on public responses"
+    )
+
+
 def test_full_mode_http_fallback_redirects_to_literal_validated_domain() -> None:
     entrypoint = _text(NGINX_ENTRYPOINT)
     template = _text(NGINX)

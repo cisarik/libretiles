@@ -36,6 +36,14 @@ fail() {
     exit 1
 }
 
+# L1: suppressed X-Powered-By
+if grep -q 'proxy_hide_header X-Powered-By;' "$ROOT_DIR/deploy/nginx/nginx.conf.template"; then
+    echo "PASS  nginx template hides X-Powered-By"
+else
+    echo "FAIL  nginx template must suppress X-Powered-By header" >&2
+    fail "nginx template must suppress X-Powered-By header"
+fi
+
 restore_secret_directory_mode() {
     chmod 0700 "$TMP_ROOT/secrets"
 }
