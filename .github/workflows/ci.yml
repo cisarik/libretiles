@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: backend
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      DJANGO_DEBUG: "true"
+      DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1
+      DB_ENGINE: sqlite3
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Generate Django CI secret
+        working-directory: .
+        run: |
+          python -c 'import secrets; print("DJANGO_SECRET_KEY=" + secrets.token_urlsafe(64))' >> "$GITHUB_ENV"
+
+      - name: Install Poetry
+        working-directory: .
+        run: pip install "poetry==2.3.2"
+
+      - name: Install backend dependencies
+        run: poetry install --no-interaction --no-ansi
+
+      - name: mypy
+        run: poetry run mypy config game gamecore accounts catalog
+
+      - name: ruff
+        run: poetry run ruff check .
+
+      - name: makemigrations check
+        run: poetry run python manage.py makemigrations --check --dry-run
+
+  frontend:
+    name: frontend
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
