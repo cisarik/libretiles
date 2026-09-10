@@ -105,10 +105,10 @@ def _num_proxies() -> int:
     # addresses from the right of X-Forwarded-For. The correct non-zero value
     # is a deployment fact this repository does not contain.
     #
-    # django-axes independently keys on REMOTE_ADDR because ipware is not
-    # installed. The two brakes must agree: if DRF trusted a client-supplied
-    # header while axes used the socket address, a username spray would
-    # bypass the unauthenticated throttle.
+    # django-axes uses ipware (django-ipware) to read the real peer from
+    # nginx's X-Forwarded-For overwrite. The two brakes now agree: both DRF
+    # throttles and axes lockout key on the real peer IP when
+    # DJANGO_NUM_PROXIES > 0.
     #
     # Trade-off: with NUM_PROXIES=0 behind a real reverse proxy, every client
     # shares the proxy's socket address and IP-keyed throttles become
@@ -474,6 +474,21 @@ AXES_RESET_ON_SUCCESS = True
 AXES_LOCKOUT_PARAMETERS: list[list[str]] = [["username", "ip_address"]]
 AXES_HTTP_RESPONSE_CODE = 429
 AXES_ENABLE_ADMIN = True
+
+# ipware reads the real peer through nginx's X-Forwarded-For overwrite model.
+# nginx sets X-Forwarded-For to $remote_addr (single element). python-ipware
+# (django-ipware 7) treats proxy_count as the number of *in-header* proxies
+# excluding the client and, in strict mode, requires len(ips) - 1 == count.
+# Overwrite therefore needs count=0 so the sole XFF element is the client.
+# That integer is not DJANGO_NUM_PROXIES: DRF NUM_PROXIES=1 means "take one
+# address from the right of XFF", which is the same single element. Binding
+# AXES_IPWARE_PROXY_COUNT to _num_proxies() returns None for every overwrite
+# request and collapses lockout to one empty bucket.
+# Locally, DJANGO_NUM_PROXIES=0 and XFF is absent; ipware then uses
+# REMOTE_ADDR — the socket address, which IS the real peer with no proxy.
+AXES_IPWARE_META_PRECEDENCE_ORDER = ("HTTP_X_FORWARDED_FOR", "REMOTE_ADDR")
+AXES_IPWARE_PROXY_ORDER = "right-most"
+AXES_IPWARE_PROXY_COUNT = 0
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0")
 CHANNEL_LAYERS = {

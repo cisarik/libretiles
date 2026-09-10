@@ -840,3 +840,33 @@ def test_axes_middleware_remains_last_and_check_omits_w002() -> None:
     call_command("check", stdout=stdout, stderr=stderr)
     combined = stdout.getvalue() + stderr.getvalue()
     assert "axes.W002" not in combined
+
+
+def test_axes_ipware_returns_real_peer_in_proxied_topology() -> None:
+    """Two proxied peers must not share a lockout bucket (gard-04-F01)."""
+    from axes.helpers import get_client_ip_address
+    from django.test import override_settings
+
+    peer_a = "203.0.113.10"
+    peer_b = "198.51.100.7"
+    proxy_addr = "10.0.0.1"
+
+    def _req(peer: str):
+        return type("req", (), {
+            "META": {
+                "REMOTE_ADDR": proxy_addr,
+                "HTTP_X_FORWARDED_FOR": peer,
+            },
+            "axes_locked_out": False,
+        })()
+
+    with override_settings(
+        AXES_IPWARE_META_PRECEDENCE_ORDER=("HTTP_X_FORWARDED_FOR", "REMOTE_ADDR"),
+        AXES_IPWARE_PROXY_ORDER="right-most",
+        AXES_IPWARE_PROXY_COUNT=0,
+    ):
+        ip_a = get_client_ip_address(_req(peer_a))
+        ip_b = get_client_ip_address(_req(peer_b))
+        assert ip_a == peer_a, f"expected {peer_a}, got {ip_a}"
+        assert ip_b == peer_b, f"expected {peer_b}, got {ip_b}"
+        assert ip_a != ip_b, "different peers must not share a lockout bucket"
