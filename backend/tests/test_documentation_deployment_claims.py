@@ -1,4 +1,4 @@
-"""Mechanical guard: the repository must not teach wildcard Django binds or Vercel hosting.
+"""Mechanical guards for local loopback and the Docker production owner.
 
 Whole 16 landed a production VPS architecture with strict loopback binds and a self-hosted
 standalone Next.js server. This module makes it impossible to silently reintroduce the old
@@ -122,7 +122,11 @@ def test_authoritative_deployment_descriptions_are_present() -> None:
 
     vps = _text(_REPO / "docs" / "vps_deployment_guide.md")
     assert "HOSTNAME=127.0.0.1" in vps, "vps_deployment_guide.md missing 'HOSTNAME=127.0.0.1'"
-    assert "127.0.0.1:8000" in vps, "vps_deployment_guide.md missing '127.0.0.1:8000'"
+    assert "network_mode: service:nginx" in vps
+    assert "/run/libretiles/backend.sock" in vps
+
+    for path in (_REPO / "AGENTS.md", _REPO / "README.md", _REPO / "CONTRIBUTING.md", _REPO / "docs" / "architecture.md"):
+        assert "under systemd" not in _text(path).lower(), path
 
     settings = _text(_REPO / "backend" / "config" / "settings.py")
     assert "# CORS — frontend origins allowed to call this API" in settings, (
@@ -134,7 +138,7 @@ def test_prd_phase_seven_names_standalone_vps_deployment() -> None:
     """PRD Phase 7 must describe Next.js standalone + Daphne/Django on self-hosted VPS."""
     prd = _text(_REPO / "libretiles_PRD.md")
     expected = (
-        "7. **Phase 7**: Deployment (self-hosted VPS: Next.js standalone + "
+        "7. **Phase 7**: Deployment (self-hosted VPS: Docker Compose with Next.js standalone + "
         "Daphne/Django behind nginx). Stripe is rejected for this product direction."
     )
     assert expected in prd, (

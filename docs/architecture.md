@@ -305,9 +305,11 @@ The complete-game harness drives the real board, bag, Collins prefix search, leg
 
 ### Production
 
-- **Edge**: nginx terminates TLS and explicitly splits Next.js routes from Django APIs; private callback and Django contrib-admin listeners bind only to loopback
-- **Frontend**: Next.js standalone `frontend/.next/standalone/server.js` runs under systemd on `127.0.0.1:3000`; deployment copies `public/` and `.next/static` into the standalone tree.
-- **Backend**: Daphne/Django runs under systemd on `127.0.0.1:8000`, with local PostgreSQL and Redis services
+- **Owner**: root `docker-compose.yml` is the sole production topology; systemd and host-nginx artifacts are superseded.
+- **Edge**: the nginx container runs its PID-1 master as UID 0/GID 10001 to bind low ports and use group-restricted socket/certificate/marker access, with request workers dropping to the unprivileged `edge` identity (10002:10001). This deliberate exception is constrained by read-only root, `no-new-privileges`, and exactly `NET_BIND_SERVICE`, `SETGID`, and `SETUID`; the identity-transition capabilities exist solely so the master can drop request workers, which retain zero effective capabilities. A small master runtime tmpfs, dedicated worker-owned temp tmpfs mounts, and no Docker socket further constrain the service. Private keys are group-readable only. All other services remain non-root and capability-free. The nginx container alone publishes host 80/443 plus private host-loopback 8443, terminates Certbot-managed TLS, and explicitly splits Next.js routes from Django APIs.
+- **Frontend**: Next.js standalone `server.js` is a separate container using `network_mode: service:nginx` and the enforced `HOSTNAME=127.0.0.1 PORT=3000` runtime. Public assets and `.next/static` are copied into standalone output.
+- **Backend**: Daphne/Django serves only a group-restricted Unix socket mounted by nginx; PostgreSQL and Redis use separate internal networks.
+- **Secrets**: file-backed Compose preserves host metadata, so production sources are `0:10004/0440` inside a root-owned mode-`0700` directory. Supplemental GID 10004 is limited to postgres, backend-init, backend, frontend, and db-tools; explicit mounts still limit each service to only the secret it needs. Nginx, Redis, and Certbot have neither the group nor application-secret mounts.
 - **AI**: provider-diverse free rivals with all credentials on the Next.js server; no provider secret or base URL is client-visible
 - **Operations**: render and install the repository templates using [the VPS deployment guide](vps_deployment_guide.md); repository scripts do not configure a host automatically
 
@@ -316,7 +318,7 @@ The complete-game harness drives the real board, bag, Collins prefix search, leg
 - Backend: `poetry run python manage.py runserver` (SQLite); `seed_models` for compatibility plus inactive prepared rows; leave `DYNAMIC_FREE_MODEL_CATALOG_ENABLED` false unless changing only the compatibility tail locally
 - Frontend: `npm run dev` (one or more server-only provider credentials; UI boots when they are absent)
 - Redis: required for human multiplayer, websocket sync, and chat; not required for AI-only play
-- Database: SQLite (zero config) or Docker Compose PostgreSQL
+- Database: SQLite (zero config) or explicitly invoked `docker-compose.dev.yml` PostgreSQL
 
 ## Catalog operations, rollout, and rollback
 

@@ -1,19 +1,328 @@
+x-service-security: &service-security
+  init: true
+  read_only: true
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "3"
+
+x-backend-environment: &backend-environment
+  DJANGO_DEBUG: "false"
+  DJANGO_ALLOWED_HOSTS: "${DOMAIN:?Set DOMAIN in .env.docker}"
+  CORS_ALLOWED_ORIGINS: "https://${DOMAIN:?Set DOMAIN in .env.docker}"
+  DJANGO_CSRF_TRUSTED_ORIGINS: "https://${DOMAIN:?Set DOMAIN in .env.docker}"
+  DJANGO_NUM_PROXIES: "1"
+  DJANGO_SECURE_PROXY_SSL_HEADER: "true"
+  DJANGO_SECRET_KEY_FILE: /run/secrets/django_secret_key
+  DB_ENGINE: postgresql
+  DB_NAME: "${POSTGRES_DB:?Set POSTGRES_DB in .env.docker}"
+  DB_USER: "${POSTGRES_USER:?Set POSTGRES_USER in .env.docker}"
+  DB_PASSWORD_FILE: /run/secrets/postgres_password
+  DB_HOST: postgres
+  DB_PORT: "5432"
+  REDIS_URL: redis://redis:6379/0
+  DJANGO_THROTTLE_CACHE_URL: redis://redis:6379/1
+  DYNAMIC_FREE_MODEL_CATALOG_ENABLED: "false"
+  ALLOW_DESTRUCTIVE_GAME_STATE_RESET: "false"
+  PYTHONDONTWRITEBYTECODE: "1"
+
 services:
   postgres:
-    image: postgres:16-alpine
+    <<: *service-security
+    build:
+      context: ./deploy/postgres
+    image: "${IMAGE_PREFIX:?Set IMAGE_PREFIX}${APP_VERSION:?Set APP_VERSION}-postgres"
+    user: "70:70"
+    group_add:
+      - "10004"
     environment:
-      POSTGRES_DB: libretiles
-      POSTGRES_USER: libretiles
-      POSTGRES_PASSWORD: libretiles
-    ports:
-      - "5432:5432"
+      POSTGRES_DB: "${POSTGRES_DB:?Set POSTGRES_DB in .env.docker}"
+      POSTGRES_USER: "${POSTGRES_USER:?Set POSTGRES_USER in .env.docker}"
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - source: postgres_password
+        target: postgres_password
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
+    tmpfs:
+      - /tmp:size=32m,mode=1770,uid=70,gid=70
+      - /var/run/postgresql:size=8m,mode=0770,uid=70,gid=70
+    networks:
+      - data_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -q -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+    pids_limit: 200
 
   redis:
-    image: redis:7-alpine
+    <<: *service-security
+    image: redis:7.4.11-alpine3.21@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
+    user: "999:1000"
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--protected-mode", "yes"]
+    tmpfs:
+      - /data:size=64m,mode=0770,uid=999,gid=1000
+      - /tmp:size=8m,mode=1770,uid=999,gid=1000
+    networks:
+      - cache_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+    pids_limit: 100
+
+  backend-init:
+    <<: *service-security
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: "${IMAGE_PREFIX:?Set IMAGE_PREFIX}${APP_VERSION:?Set APP_VERSION}-backend"
+    user: "10001:10001"
+    group_add:
+      - "10004"
+    command: ["/app/backend/docker/start.sh", "init"]
+    environment: *backend-environment
+    secrets:
+      - source: django_secret_key
+        target: django_secret_key
+      - source: postgres_password
+        target: postgres_password
+    volumes:
+      - django_static:/app/backend/staticfiles
+    tmpfs:
+      - /tmp:size=64m,mode=1770,uid=10001,gid=10001
+    networks:
+      - data_net
+      - cache_net
+      - backend_egress
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: "no"
+    pids_limit: 200
+
+  backend:
+    <<: *service-security
+    image: "${IMAGE_PREFIX:?Set IMAGE_PREFIX}${APP_VERSION:?Set APP_VERSION}-backend"
+    user: "10001:10001"
+    group_add:
+      - "10004"
+    command: ["/app/backend/docker/start.sh", "serve"]
+    environment: *backend-environment
+    secrets:
+      - source: django_secret_key
+        target: django_secret_key
+      - source: postgres_password
+        target: postgres_password
+    volumes:
+      - backend_socket:/run/libretiles
+    tmpfs:
+      - /tmp:size=64m,mode=1770,uid=10001,gid=10001
+    networks:
+      - data_net
+      - cache_net
+      - backend_egress
+    depends_on:
+      backend-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/app/.venv/bin/python", "/app/backend/docker/healthcheck.py"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+    stop_grace_period: 30s
+    pids_limit: 300
+
+  nginx:
+    <<: *service-security
+    init: false
+    build:
+      context: ./deploy/nginx
+    image: "${IMAGE_PREFIX:?Set IMAGE_PREFIX}${APP_VERSION:?Set APP_VERSION}-nginx"
+    # Deliberate exception: nginx master runs as root (UID 0) inside its
+    # container with NET_BIND_SERVICE for low ports plus SETGID and SETUID only
+    # to drop request workers to edge (10002:10001) via nginx's "user"
+    # directive. Workers retain zero effective capabilities. This container is
+    # constrained by read-only root, no-new-privileges, cap_drop ALL plus this
+    # exact three-capability set, no Docker socket, and no host filesystem. All
+    # other services remain non-root and capability-free.
+    user: "0:10001"
+    environment:
+      DOMAIN: "${DOMAIN:?Set DOMAIN in .env.docker}"
     ports:
-      - "6379:6379"
+      - "${HTTP_BIND:-0.0.0.0}:${HTTP_PORT:-80}:80"
+      - "${HTTPS_BIND:-0.0.0.0}:${HTTPS_PORT:-443}:443"
+      - "127.0.0.1:${ADMIN_PORT:-8443}:444"
+    cap_add:
+      - NET_BIND_SERVICE
+      - SETGID
+      - SETUID
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: "1024"
+    volumes:
+      - backend_socket:/run/libretiles:ro
+      - django_static:/srv/django-static:ro
+      - certbot_config:/etc/letsencrypt:ro
+      - certbot_www:/var/www/certbot:ro
+      - certbot_reload:/var/run/libretiles-certbot
+    tmpfs:
+      - /run/nginx-master:size=4m,mode=0750,uid=0,gid=10001
+      - /var/cache/nginx/client-body:size=8m,mode=0770,uid=10002,gid=10001
+      - /var/cache/nginx/proxy:size=8m,mode=0770,uid=10002,gid=10001
+      - /var/cache/nginx/fastcgi:size=8m,mode=0770,uid=10002,gid=10001
+      - /var/cache/nginx/uwsgi:size=8m,mode=0770,uid=10002,gid=10001
+      - /var/cache/nginx/scgi:size=8m,mode=0770,uid=10002,gid=10001
+    networks:
+      - edge_egress_net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1/healthz | grep -qx healthy"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    restart: unless-stopped
+    stop_grace_period: 30s
+    pids_limit: 200
+
+  frontend:
+    <<: *service-security
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: "https://${DOMAIN:?Set DOMAIN in .env.docker}"
+    image: "${IMAGE_PREFIX:?Set IMAGE_PREFIX}${APP_VERSION:?Set APP_VERSION}-frontend"
+    user: "10003:10003"
+    group_add:
+      - "10004"
+    network_mode: service:nginx
+    environment:
+      HOSTNAME: 127.0.0.1
+      PORT: "3000"
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: "https://${DOMAIN:?Set DOMAIN in .env.docker}"
+      BACKEND_URL: http://127.0.0.1:8001
+      LIBRETILES_FRONTEND_SECRETS_FILE: /run/secrets/frontend_credentials
+    secrets:
+      - source: frontend_credentials
+        target: frontend_credentials
+    tmpfs:
+      - /tmp:size=64m,mode=1770,uid=10003,gid=10003
+      - /app/.next/cache:size=128m,mode=0770,uid=10003,gid=10003
+    depends_on:
+      nginx:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "/opt/libretiles/healthcheck.cjs"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+    stop_grace_period: 30s
+    pids_limit: 300
+
+  certbot:
+    <<: *service-security
+    profiles: ["tls"]
+    build:
+      context: ./deploy/certbot
+    image: "${IMAGE_PREFIX:?Set IMAGE_PREFIX}${APP_VERSION:?Set APP_VERSION}-certbot"
+    user: "10002:10001"
+    command: ["renew-loop"]
+    environment:
+      DOMAIN: "${DOMAIN:?Set DOMAIN in .env.docker}"
+      ACME_EMAIL: "${ACME_EMAIL:?Set ACME_EMAIL in .env.docker}"
+    volumes:
+      - certbot_config:/etc/letsencrypt
+      - certbot_www:/var/www/certbot
+      - certbot_reload:/var/run/libretiles-certbot
+    tmpfs:
+      - /tmp:size=64m,mode=1770,uid=10002,gid=10001
+    networks:
+      - acme_egress_net
+    depends_on:
+      nginx:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/certbot.sh", "health"]
+      interval: 1h
+      timeout: 10s
+      retries: 2
+      start_period: 2m
+    restart: "no"
+    pids_limit: 100
+
+  db-tools:
+    <<: *service-security
+    profiles: ["ops"]
+    image: "${IMAGE_PREFIX:?Set IMAGE_PREFIX}${APP_VERSION:?Set APP_VERSION}-postgres"
+    user: "70:70"
+    group_add:
+      - "10004"
+    entrypoint: ["/usr/local/bin/backup.sh"]
+    environment:
+      DB_HOST: postgres
+      DB_NAME: "${POSTGRES_DB:?Set POSTGRES_DB in .env.docker}"
+      DB_USER: "${POSTGRES_USER:?Set POSTGRES_USER in .env.docker}"
+      DB_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - source: postgres_password
+        target: postgres_password
+    volumes:
+      - postgres_backups:/backups
+    tmpfs:
+      - /tmp:size=64m,mode=1770,uid=70,gid=70
+    networks:
+      - data_net
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    pids_limit: 100
+
+networks:
+  edge_egress_net: {}
+  acme_egress_net: {}
+  backend_egress: {}
+  data_net:
+    internal: true
+  cache_net:
+    internal: true
 
 volumes:
-  pgdata:
+  postgres_data:
+    name: "${POSTGRES_DATA_VOLUME:?Set POSTGRES_DATA_VOLUME in .env.docker}"
+  postgres_backups:
+    name: "${POSTGRES_BACKUP_VOLUME:?Set POSTGRES_BACKUP_VOLUME in .env.docker}"
+  django_static: {}
+  backend_socket: {}
+  certbot_config:
+    name: "${CERTBOT_CONFIG_VOLUME:?Set CERTBOT_CONFIG_VOLUME in .env.docker}"
+  certbot_www: {}
+  certbot_reload: {}
+
+secrets:
+  django_secret_key:
+    file: "${DJANGO_SECRET_KEY_FILE:?Set DJANGO_SECRET_KEY_FILE in .env.docker}"
+  postgres_password:
+    file: "${POSTGRES_PASSWORD_FILE:?Set POSTGRES_PASSWORD_FILE in .env.docker}"
+  frontend_credentials:
+    file: "${FRONTEND_CREDENTIALS_FILE:?Set FRONTEND_CREDENTIALS_FILE in .env.docker}"

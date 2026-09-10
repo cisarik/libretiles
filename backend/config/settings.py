@@ -7,6 +7,7 @@ is managed through Django Admin at /admin/.
 from __future__ import annotations
 
 import os
+import stat
 from datetime import timedelta
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -22,10 +23,49 @@ _SECRET_KEY_MIN_LENGTH = 50
 _SECRET_KEY_MIN_UNIQUE_CHARACTERS = 5
 _SECRET_KEY_INSECURE_PREFIX = "django-insecure-"
 _HSTS_SECONDS = 31536000
+_SECRET_FILE_MAX_BYTES = 64 * 1024
+
+
+def _value_or_file(name: str, *, secret: bool = False) -> str | None:
+    direct = os.getenv(name)
+    file_name = os.getenv(f"{name}_FILE")
+    if direct is not None and file_name is not None:
+        raise ImproperlyConfigured(f"Set exactly one of {name} or {name}_FILE, not both.")
+    if file_name is None:
+        return direct
+    path_text = file_name.strip()
+    if not path_text or not Path(path_text).is_absolute():
+        raise ImproperlyConfigured(f"{name}_FILE must be an absolute path.")
+    path = Path(path_text)
+    try:
+        file_stat = path.lstat()
+    except OSError as exc:
+        raise ImproperlyConfigured(f"{name}_FILE is not readable.") from exc
+    if not stat.S_ISREG(file_stat.st_mode) or path.is_symlink():
+        raise ImproperlyConfigured(f"{name}_FILE must be a regular, non-symlink file.")
+    if file_stat.st_size <= 0 or file_stat.st_size > _SECRET_FILE_MAX_BYTES:
+        raise ImproperlyConfigured(f"{name}_FILE has an invalid size.")
+    if secret and file_stat.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+        raise ImproperlyConfigured(f"{name}_FILE must not be group/other writable.")
+    try:
+        value = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise ImproperlyConfigured(f"{name}_FILE is not valid readable UTF-8.") from exc
+    value = value.rstrip("\r\n")
+    if not value or "\x00" in value or "\n" in value or "\r" in value:
+        raise ImproperlyConfigured(f"{name}_FILE must contain exactly one non-empty value.")
+    return value
+
+
+def _required_value(name: str, *, secret: bool = False) -> str:
+    value = _value_or_file(name, secret=secret)
+    if value is None or not value.strip():
+        raise ImproperlyConfigured(f"{name} must be set explicitly.")
+    return value.strip()
 
 
 def _require_secret_key() -> str:
-    raw = os.getenv("DJANGO_SECRET_KEY")
+    raw = _value_or_file("DJANGO_SECRET_KEY", secret=True)
     if raw is None:
         raise ImproperlyConfigured(
             "DJANGO_SECRET_KEY is not set. Refusing to start without an explicit secret."
@@ -243,10 +283,10 @@ if _DB_ENGINE == "postgresql":
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.postgresql",
-            "NAME": os.getenv("DB_NAME", "libretiles"),
-            "USER": os.getenv("DB_USER", "libretiles"),
-            "PASSWORD": os.getenv("DB_PASSWORD", "libretiles"),
-            "HOST": os.getenv("DB_HOST", "localhost"),
+            "NAME": _required_value("DB_NAME"),
+            "USER": _required_value("DB_USER"),
+            "PASSWORD": _required_value("DB_PASSWORD", secret=True),
+            "HOST": _required_value("DB_HOST"),
             "PORT": os.getenv("DB_PORT", "5432"),
             "CONN_MAX_AGE": _conn_max_age,
             "CONN_HEALTH_CHECKS": _env_flag("DB_CONN_HEALTH_CHECKS", default=True),

@@ -1,0 +1,290 @@
+user edge libretiles;
+pid /run/nginx-master/nginx.pid;
+error_log /dev/stderr warn;
+
+events {
+    worker_connections 1024;
+}
+
+http {
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+    server_tokens off;
+    client_body_temp_path /var/cache/nginx/client-body;
+    proxy_temp_path /var/cache/nginx/proxy;
+    fastcgi_temp_path /var/cache/nginx/fastcgi;
+    uwsgi_temp_path /var/cache/nginx/uwsgi;
+    scgi_temp_path /var/cache/nginx/scgi;
+    client_max_body_size 1m;
+
+    map $http_upgrade $libretiles_connection_upgrade {
+        default upgrade;
+        '' close;
+    }
+
+    log_format libretiles '$remote_addr - [$time_local] '
+                          '"$request_method $uri $server_protocol" '
+                          '$status $body_bytes_sent';
+    access_log /dev/stdout libretiles;
+
+    server {
+        listen 80 default_server;
+        server_name __DOMAIN__;
+
+        location = /healthz {
+            access_log off;
+            default_type text/plain;
+            return 200 'healthy\n';
+        }
+
+        location ^~ /.well-known/acme-challenge/ {
+            root /var/www/certbot;
+            default_type text/plain;
+            try_files $uri =404;
+        }
+
+        location / {
+            return __HTTP_FALLBACK__;
+        }
+    }
+
+    # TLS_BEGIN
+    server {
+        listen 443 ssl default_server;
+        server_name __DOMAIN__;
+        ssl_certificate /etc/letsencrypt/live/__DOMAIN__/fullchain.pem;
+        ssl_certificate_key /etc/letsencrypt/live/__DOMAIN__/privkey.pem;
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_session_cache shared:TLS:10m;
+        ssl_session_timeout 1d;
+
+        if ($host != __DOMAIN__) {
+            return 444;
+        }
+
+        location ^~ /api/ai/ {
+            proxy_pass http://127.0.0.1:3000;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Forwarded-Host $host;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-Port 443;
+            proxy_set_header X-Forwarded-For $remote_addr;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header Forwarded "";
+            proxy_set_header Upgrade "";
+            proxy_set_header Connection "";
+            proxy_cache off;
+            proxy_buffering off;
+            proxy_request_buffering off;
+            gzip off;
+            proxy_read_timeout 660s;
+            proxy_send_timeout 660s;
+        }
+
+        location = /api/models {
+            proxy_pass http://127.0.0.1:3000;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Forwarded-Host $host;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-Port 443;
+            proxy_set_header X-Forwarded-For $remote_addr;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header Forwarded "";
+            proxy_set_header Upgrade "";
+            proxy_set_header Connection "";
+            proxy_cache off;
+        }
+
+        location = /api/models/ {
+            proxy_pass http://127.0.0.1:3000;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Forwarded-Host $host;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-Port 443;
+            proxy_set_header X-Forwarded-For $remote_addr;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header Forwarded "";
+            proxy_set_header Upgrade "";
+            proxy_set_header Connection "";
+            proxy_cache off;
+        }
+
+        location = /api/prompts {
+            proxy_pass http://127.0.0.1:3000;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Forwarded-Host $host;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-Port 443;
+            proxy_set_header X-Forwarded-For $remote_addr;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header Forwarded "";
+            proxy_set_header Upgrade "";
+            proxy_set_header Connection "";
+            proxy_cache off;
+        }
+
+        location = /api/prompts/ {
+            proxy_pass http://127.0.0.1:3000;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Forwarded-Host $host;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-Port 443;
+            proxy_set_header X-Forwarded-For $remote_addr;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header Forwarded "";
+            proxy_set_header Upgrade "";
+            proxy_set_header Connection "";
+            proxy_cache off;
+        }
+
+        location ~ ^/api/admin/simulate/[^/]+/turn/?$ {
+            proxy_pass http://127.0.0.1:3000;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Forwarded-Host $host;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-Port 443;
+            proxy_set_header X-Forwarded-For $remote_addr;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header Forwarded "";
+            proxy_set_header Upgrade "";
+            proxy_set_header Connection "";
+            proxy_cache off;
+            proxy_buffering off;
+            proxy_request_buffering off;
+            gzip off;
+            proxy_read_timeout 660s;
+            proxy_send_timeout 660s;
+        }
+
+        location /api/admin/ {
+            proxy_pass http://unix:/run/libretiles/backend.sock:;
+            include /run/nginx-master/nginx-proxy-headers.conf;
+        }
+
+        location /api/catalog/ {
+            proxy_pass http://unix:/run/libretiles/backend.sock:;
+            include /run/nginx-master/nginx-proxy-headers.conf;
+        }
+
+        location /api/game/ {
+            proxy_pass http://unix:/run/libretiles/backend.sock:;
+            include /run/nginx-master/nginx-proxy-headers.conf;
+        }
+
+        location /api/auth/ {
+            proxy_pass http://unix:/run/libretiles/backend.sock:;
+            include /run/nginx-master/nginx-proxy-headers.conf;
+        }
+
+        location /ws/ {
+            proxy_pass http://unix:/run/libretiles/backend.sock:;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Forwarded-Host $host;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-Port 443;
+            proxy_set_header X-Forwarded-For $remote_addr;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header Forwarded "";
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection $libretiles_connection_upgrade;
+            proxy_cache off;
+            proxy_read_timeout 3600s;
+        }
+
+        location = /api {
+            return 404;
+        }
+
+        location /api/ {
+            return 404;
+        }
+
+        location ^~ /static/ {
+            return 404;
+        }
+
+        location = /admin {
+            proxy_pass http://127.0.0.1:3000;
+            include /run/nginx-master/nginx-proxy-headers.conf;
+        }
+
+        location /admin/ {
+            proxy_pass http://127.0.0.1:3000;
+            include /run/nginx-master/nginx-proxy-headers.conf;
+        }
+
+        location / {
+            proxy_pass http://127.0.0.1:3000;
+            include /run/nginx-master/nginx-proxy-headers.conf;
+        }
+    }
+
+    server {
+        listen 127.0.0.1:8001;
+        server_name __DOMAIN__;
+
+        location /api/auth/ {
+            proxy_pass http://unix:/run/libretiles/backend.sock:;
+            include /run/nginx-master/nginx-callback-headers.conf;
+        }
+
+        location /api/catalog/ {
+            proxy_pass http://unix:/run/libretiles/backend.sock:;
+            include /run/nginx-master/nginx-callback-headers.conf;
+        }
+
+        location /api/game/ {
+            proxy_pass http://unix:/run/libretiles/backend.sock:;
+            include /run/nginx-master/nginx-callback-headers.conf;
+        }
+
+        location /api/admin/ {
+            proxy_pass http://unix:/run/libretiles/backend.sock:;
+            include /run/nginx-master/nginx-callback-headers.conf;
+        }
+
+        location / {
+            return 404;
+        }
+    }
+
+    server {
+        listen 444 ssl;
+        server_name __DOMAIN__;
+        ssl_certificate /etc/letsencrypt/live/__DOMAIN__/fullchain.pem;
+        ssl_certificate_key /etc/letsencrypt/live/__DOMAIN__/privkey.pem;
+        ssl_protocols TLSv1.2 TLSv1.3;
+
+        location /admin/ {
+            proxy_pass http://unix:/run/libretiles/backend.sock:;
+            proxy_http_version 1.1;
+            proxy_set_header Host __DOMAIN__:8443;
+            proxy_set_header X-Forwarded-Host __DOMAIN__:8443;
+            proxy_set_header X-Forwarded-Proto https;
+            proxy_set_header X-Forwarded-Port 8443;
+            proxy_set_header X-Forwarded-For $remote_addr;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header Forwarded "";
+            proxy_set_header Upgrade "";
+            proxy_set_header Connection "";
+            proxy_cache off;
+        }
+
+        location /static/ {
+            alias /srv/django-static/;
+            autoindex off;
+        }
+
+        location / {
+            return 404;
+        }
+    }
+    # TLS_END
+}

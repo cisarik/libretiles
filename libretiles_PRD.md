@@ -24,8 +24,9 @@ Libre Tiles is an open-source web-based Libre Tiles game playable in twelve boar
 
 - **Frontend**: Next.js 16 (React 19, TypeScript, Tailwind CSS 4, Framer Motion, @dnd-kit), deployed as a standalone server on a **self-hosted VPS** behind nginx.
 - **AI**: Next.js API routes use Vercel AI SDK for nine external provider integrations: `openrouter`, `nvidia-nim`, `groq`, `google-gemini`, `cloudflare-workers-ai`, `mistral`, `ibm-watsonx`, `aion`, and `huggingface`. Dispatch uses dedicated OpenRouter, NIM and watsonx runtimes plus a shared OpenAI-compatible constructor. Credentials are server-only. Prepared direct/watchlist rows default inactive; the dynamic catalog flag affects only the compatibility tail. Provider endpoints are hardcoded; no Vercel AI Gateway, LM Studio, or provider base-URL environment variables. There is no `NEXT_PUBLIC_DEFAULT_MODEL`.
-- **Backend**: Daphne/Django 5.x + DRF under systemd on the self-hosted VPS; nginx routes HTTP and websocket traffic. Django owns game state, validation, authentication, and admin.
+- **Deployment**: one Docker Compose project on the self-hosted VPS. Nginx alone publishes host ports; Next standalone retains `127.0.0.1:3000` in nginx's network namespace, while Daphne serves a group-restricted Unix socket. Django owns game state, validation, authentication, and admin.
 - **Database**: PostgreSQL (production), SQLite (dev).
+- **Production secrets**: host file sources are root-owned, group-owned by dedicated reader GID 10004, and mode `0440` inside a root-owned mode-`0700` directory. Only intended consumers receive GID 10004, and explicit per-service mounts preserve least-scope visibility.
 - **Realtime**: Django Channels + Redis for human matchmaking, websocket synchronization, and chat. Redis also backs shared production throttling.
 - **Game Engine**: Pure Python `gamecore/` package ported from scrabgpt/core/ (zero UI dependencies).
 
@@ -171,5 +172,5 @@ Libre Tiles is an open-source web-based Libre Tiles game playable in twelve boar
 4. **Phase 4** (done): Eye-candy frontend (board, tiles, DnD, animations, settings, game flow).
 5. **Phase 5** (partial): Starting draw animation, game-list history, and shared Premium Look chrome are implemented; mobile bottom-sheet/pinch-zoom UX, a per-game move timeline, and AI thinking particles remain planned.
 6. **Phase 6** (done): Human vs human multiplayer (queue join/cancel, waiting room, WebSocket synchronization, and in-game chat).
-7. **Phase 7**: Deployment (self-hosted VPS: Next.js standalone + Daphne/Django behind nginx). Stripe is rejected for this product direction.
+7. **Phase 7**: Deployment (self-hosted VPS: Docker Compose with Next.js standalone + Daphne/Django behind nginx). Stripe is rejected for this product direction.
 8. **Phase 8**: CI/CD (GitHub Actions), E2E tests (Playwright), performance optimization.

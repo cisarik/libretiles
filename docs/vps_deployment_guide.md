@@ -1,102 +1,265 @@
-# VPS Deployment Guide
+# Dockerized VPS Deployment Guide
 
-This runbook describes an operator-owned production deployment on an Ubuntu-style systemd VPS. The repository supplies reviewed templates; it does not install packages, configure a firewall, obtain certificates, open SSH access, or operate a host automatically. Run the commands only on the intended VPS under separate production authority.
+This is the sole Libre Tiles production deployment runbook. Production uses one
+Docker Compose project; the root development scripts remain local-only. The
+repository does not operate a host, issue a real certificate, configure DNS,
+SSH, a firewall, backups, or schedules without separate production authority.
 
-## Topology And Prerequisites
+## Topology
 
-Use `/srv/libretiles` as the default installation root and a pre-created, non-login `libretiles` service account. The public nginx listener exposes only ports 80 and 443. All application listeners are loopback-only:
+Nginx is the only host-published service. PostgreSQL, Redis, Django, and Next do
+not publish ports.
 
-| Listener | Purpose |
+| Host listener | Purpose |
 |---|---|
-| `127.0.0.1:3000` | Next.js UI and frontend API routes |
-| `127.0.0.1:8000` | Daphne/Django HTTP and websocket upstream |
-| `127.0.0.1:8001` | nginx callback from Next.js to Django |
-| `127.0.0.1:8443` | private TLS Django contrib admin |
+| Public `80` | ACME HTTP-01 and HTTPS redirect |
+| Public `443` | Application TLS edge |
+| `127.0.0.1:8443` | Private TLS Django contrib admin through an SSH tunnel |
 
-PostgreSQL and Redis also remain private. The deployment expects Python 3.12 with venv support, Poetry 2.x version 2.3.2 or newer, Node 20.19+, 22.12+, or 24+ (Node 24 is the documented default), npm, PostgreSQL and Redis tools and active services, nginx, systemd, `runuser`, `flock`, and UFW status visibility. Keep the repository and runtime state outside `/home`; the units use `ProtectHome=true`.
+Next and nginx are separate containers sharing nginx's network namespace. The
+standalone server is forced to `HOSTNAME=127.0.0.1 PORT=3000`; nginx reaches it
+on loopback. Next reaches Django through nginx's restricted callback at
+`BACKEND_URL=http://127.0.0.1:8001`. Django listens only on the group-restricted
+`/run/libretiles/backend.sock` Unix socket.
 
-Prepare DNS, certificates, host packages, firewall policy, the service account, `/srv/libretiles` ownership, and SSH access separately. Permit public inbound traffic only on 80 and 443. A deployment stops the frontend and backend and therefore requires a maintenance window.
+Nginx/Next have no PostgreSQL or Redis network membership. Backend uses isolated
+database/cache networks. Certbot has a separate ACME-egress network and shares
+only certificate, challenge, and reload-coordination volumes.
 
-## Recovery Preparation
+Nginx is the narrow container-root exception. Its PID-1 master runs as UID 0
+with shared GID 10001 and exactly `NET_BIND_SERVICE`, `SETGID`, and `SETUID`;
+this is not host-root authority. `SETGID` and `SETUID` exist solely so nginx can
+drop request workers to `10002:10001`; those workers retain zero effective
+capabilities. The master writes only its small `/run/nginx-master` tmpfs, while
+five dedicated `/var/cache/nginx/*` tmpfs mounts are owned by the worker
+identity. The shared group provides access to the backend socket, Certbot
+marker, and certificate paths. Certbot normalizes certificate directories to
+`0750` and the full chain and private key to `0640`; private keys are never
+world-readable.
 
-Before deployment, create and verify a PostgreSQL backup and retain recoverable copies of the previous application commit, dependency state, frontend build, rendered nginx site, systemd units, and environment files. Restore the matching frontend build and frontend unit together during rollback; the standalone layout and launch command are one deployment contract. Test the restoration process independently. A code revert does not automatically reverse a database schema change; review every migration before choosing a schema rollback.
+## Host Prerequisites
 
-The deployment script leaves application services stopped after a failed deployment. Restore the known-good code, dependencies, build, and configuration only after assessing whether migrations committed durable changes. Do not blindly restart old code against a partially migrated database.
+Prepare these separately on the intended VPS:
 
-## Environment Files
+- Docker Engine with Compose plugin support for `network_mode: service:...`,
+  health dependencies, secrets, profiles, `init`, and service sysctls.
+- DNS for the operator-selected hostname pointing at the VPS.
+- Public inbound TCP 80 and 443 only; keep 8443 host-loopback-only.
+- SSH access, host patching, disk capacity monitoring, and encrypted off-host
+  backup storage.
+- A clone at the exact reviewed commit and enough storage to retain the prior
+  images and database backup for rollback.
 
-Create `backend/.env` and `frontend/.env.local` privately on the VPS, owned and readable only as required by the `libretiles` service. Do not commit, source, print, or copy credential values into command output. Use literal assignments compatible with Django and Next.js.
+Do not deploy directly from an unreviewed dirty working tree.
 
-Required production-facing names include:
+## Configuration And Secrets
 
-| Process | Variables and requirements |
-|---|---|
-| Django security | Set `DJANGO_SECRET_KEY` privately, `DJANGO_DEBUG=false`, and `DJANGO_ALLOWED_HOSTS=YOUR_DOMAIN`. |
-| Browser origins | Set `CORS_ALLOWED_ORIGINS=https://YOUR_DOMAIN` and `DJANGO_CSRF_TRUSTED_ORIGINS=https://YOUR_DOMAIN`. |
-| Proxy trust | Set `DJANGO_NUM_PROXIES=1`. Set `DJANGO_SECURE_PROXY_SSL_HEADER=true` only after the supplied stripping nginx configuration is rendered, installed, and validated. |
-| PostgreSQL | Set `DB_ENGINE=postgresql` plus `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_HOST`, and `DB_PORT`. Review optional `DB_CONN_MAX_AGE` and connection-health settings for the local service. |
-| Redis | Set `REDIS_URL` for Channels and `DJANGO_THROTTLE_CACHE_URL` for shared throttling. When the latter is absent, production uses `REDIS_URL` as its fallback. |
-| Catalog and reset controls | Keep `DYNAMIC_FREE_MODEL_CATALOG_ENABLED=false` and `ALLOW_DESTRUCTIVE_GAME_STATE_RESET=false` unless a separately reviewed operation changes them. |
-| Next origins | Set `NEXT_PUBLIC_API_URL=https://YOUR_DOMAIN` and `BACKEND_URL=http://127.0.0.1:8001`. Do not point `BACKEND_URL` directly at Daphne on port 8000: production HTTPS redirects and canonical host validation require the callback listener's overwritten headers. |
-| Next providers | Configure only the server-side credential names needed from `frontend/.env.local.example`, including `GROQ_API_KEY`, `GEMINI_API_KEY`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `MISTRAL_API_KEY`, `IBM_CLOUD_API_KEY`, `IBM_WATSONX_PROJECT_ID`, `IBM_WATSONX_REGION`, `AION_API_KEY`, `HF_TOKEN`, `OPENROUTER_API_KEY`, and `NVIDIA_API_KEY`. Never use `NEXT_PUBLIC_` for credentials or copy provider credentials into Django. |
-
-`NEXT_PUBLIC_API_URL` is embedded during the frontend build, while server-only values are consumed by the running process. A pre-existing dotenv file overrides code defaults and is loaded at process start. After changing backend variables, restart the backend; after changing a build-time public variable, rebuild and restart the frontend. Remove or reconcile conflicting dotenv files rather than depending on load order.
-
-The stripping proxy is a security prerequisite for proxy SSL trust. Its proxy locations overwrite forwarded host, protocol, port, and client-address headers instead of trusting inbound forwarding headers. Do not enable `DJANGO_SECURE_PROXY_SSL_HEADER` before that exact behavior is installed. `DJANGO_NUM_PROXIES=1` lets DRF derive the public client identity through the one nginx hop. It does not change django-axes socket-peer handling; Next-to-Django callback traffic also originates from loopback.
-
-## Render Nginx And Systemd
-
-`backend/scripts/nginx/libretiles.conf` is an nginx `http`-context snippet, not a replacement for `/etc/nginx/nginx.conf`. Render `YOUR_DOMAIN`, `PROJECT_ROOT`, `CERTIFICATE_PATH`, and `CERTIFICATE_KEY_PATH` outside Git. Obtain certificates separately. Review that 80/443 are public and that 8001/8443 contain explicit `127.0.0.1` binds before installing the site. Test the complete nginx configuration before reload. Only after this stripping proxy is installed and validated should the operator enable `DJANGO_SECURE_PROXY_SSL_HEADER=true` and restart Django.
-
-Render `PROJECT_ROOT` in both files under `backend/scripts/systemd/`, install them as `libretiles-backend.service` and `libretiles-frontend.service`, then reload the systemd manager. Before deploying this revision, the updated frontend unit must be re-rendered, reviewed, installed, and loaded by systemd under separate host authority. The units require their environment files and run as `libretiles`; they do not migrate, seed, install, or build. Enable the units for future boots only after rendering and review, without prematurely starting unbuilt services.
-
-The production frontend runs `frontend/.next/standalone/server.js` with `frontend/.next/standalone` as its working directory and requires `frontend/.env.local` at its original path. Its command is `/usr/bin/env HOSTNAME=127.0.0.1 PORT=3000 /usr/bin/node PROJECT_ROOT/frontend/.next/standalone/server.js`; the command prefix enforces loopback even if the environment file defines conflicting `HOSTNAME` or `PORT` values. Local development remains unchanged and continues to use `npm run dev`.
-
-The repository commands below illustrate the intended later host sequence; adjust only paths already rendered for that host:
+Create the non-secret selector file:
 
 ```bash
-PROJECT_ROOT/backend/scripts/vps_preflight.sh
-PROJECT_ROOT/backend/scripts/vps_deploy.sh --confirm-vps
+cp .env.docker.example .env.docker
+chmod 0600 .env.docker
 ```
 
-Preflight is read-only and fails when requirements or service/UFW status cannot be verified. Deployment acquires a host lock, verifies existing nginx and required files, stops frontend then backend, performs locked dependency installs and the frontend build as `libretiles`, and verifies `.next/standalone/server.js`. It then copies the contents of `public/` to `.next/standalone/public/` and `.next/static/` to `.next/standalone/.next/static/` as `libretiles`, before checking and migrating Django, seeding catalog rows without changing existing activation, collecting static files, and starting backend then frontend. Environment files are not copied into the standalone tree by this sequence.
+Replace every `example.invalid` and `replace-me` selector. `APP_VERSION` should
+be the reviewed Git commit. Keep
+`DYNAMIC_FREE_MODEL_CATALOG_ENABLED=false` for initial rollout.
 
-To replace the nginx site as part of that deployment, supply an absolute path to an operator-rendered candidate:
+Provision dedicated numeric secret-reader GID 10004 as a separate R5 host
+operation, then create these gitignored sources as root-owned regular files with
+GID 10004 and mode `0440` inside root-owned mode-`0700` `deploy/secrets/`.
+Use a private editor or secret-delivery mechanism; never print, source, or pass
+values as command arguments:
+
+```text
+deploy/secrets/django-secret-key
+deploy/secrets/postgres-password
+deploy/secrets/frontend-credentials.json
+```
+
+The Django file contains one strong key as specified by
+`backend/.env.example`. The PostgreSQL file contains one password line. The
+frontend file is one closed-key JSON object; `{}` intentionally permits UI boot
+without an AI credential. See `deploy/secrets/README.md`. Never copy the
+committed invalid placeholders into production. That README gives the complete
+newbie-legible, temporary-file-plus-atomic-rename provisioning and rotation
+procedure and numeric metadata checks.
+
+Local file-backed Compose preserves host ownership and mode; it does not enforce
+secret-target `uid`, `gid`, or `mode` declarations. The production Compose file
+therefore gives supplemental GID 10004 only to postgres, backend-init, backend,
+frontend, and db-tools. Explicit per-service mounts remain mandatory:
+PostgreSQL/db-tools receive only the database password; backend/backend-init
+receive the database password and Django key; frontend receives only its JSON.
+Nginx, Redis, and Certbot receive neither the reader group nor these mounts.
+
+Compose fails when selectors or secret files are missing. Rendered Compose
+configuration contains secret paths, not values:
 
 ```bash
-PROJECT_ROOT/backend/scripts/vps_deploy.sh --confirm-vps \
-  --install-site /ABSOLUTE/RENDERED_CONF
+docker compose --env-file .env.docker --profile tls --profile ops config
 ```
 
-That option installs the site atomically, restores the previous site when `nginx -t` fails, and reloads nginx only after both applications start successfully. Without `--install-site`, deployment does not replace or reload nginx. The script does not create users, install OS packages, write environment files, configure UFW, obtain certificates, change Git, install schedules, run catalog synchronization, or call providers.
+Review the output before building: only nginx may have `ports`; private admin
+must map from host `127.0.0.1`; frontend must use
+`network_mode: service:nginx`; database/cache networks must be internal.
+Also verify every secret source with metadata-only `stat`: each must be a regular
+file ending in `0:10004 440`, while `deploy/secrets/` must end in
+`0:0 700 directory`. Stop rather than weakening a file to world-readable.
 
-## Operational Checks
+## Build And First Start
 
-Perform these checks after deployment under host authority; this repository implementation does not execute them:
+Images use exact version tags plus immutable multi-architecture digests. Build
+from the committed lockfiles:
 
-- Confirm port 80 redirects to canonical `https://YOUR_DOMAIN`, the landing page works, and catalog, `/api/models`, and `/api/prompts` return through their intended upstreams.
-- Request `/api/auth/me/` without credentials and confirm an authentication failure rather than an HTTP-to-HTTPS callback redirect.
-- Confirm public `/admin` shows the Next staff console and no public path reaches Django contrib admin.
-- Confirm a locale flag such as `/de.png`, `/drevo.jpeg`, and page-referenced `/_next/static/` assets are served through Next.
-- Confirm unauthenticated staff API requests fail before any provider activity.
-- Start a separately authorized multiplayer session and inspect a fresh-ticket `wss://YOUR_DOMAIN/ws/game/...` request for a 101 upgrade.
-- During a separately authorized game or simulation, confirm SSE events arrive incrementally rather than at response completion.
-- Use socket and systemd status inspection to verify Next, Daphne, the callback, and private admin remain bound only to loopback and both application units are active.
-- Inspect journald and the bounded nginx access logs for failures. The nginx log format omits query strings, credentials, cookies, and Referer, including websocket tickets.
-- Monitor certificate expiry, PostgreSQL/Redis health, service restarts, disk capacity, and backup success.
+```bash
+docker compose --env-file .env.docker --profile tls --profile ops build
+docker compose --env-file .env.docker up -d
+docker compose --env-file .env.docker ps
+```
 
-These checks establish routing and readiness, not provider capability. Provider probes and games consume external quota and require separate authorization.
+`backend-init` checks Django, applies migrations, seeds catalog rows, and
+collects static files before backend starts. A failure leaves backend stopped.
+Redis is intentionally non-durable; PostgreSQL uses its named data volume.
+
+Before a certificate exists, nginx serves only `/healthz` and
+`/.well-known/acme-challenge/` over HTTP. Application traffic receives 503;
+plaintext fallback is never enabled.
+
+## TLS Bootstrap And Renewal
+
+Real issuance contacts ACME and requires separate production authority. Verify
+DNS and public port 80 first, then run exactly one issuance attempt:
+
+```bash
+docker compose --env-file .env.docker --profile tls run --rm certbot issue
+docker compose --env-file .env.docker --profile tls up -d certbot
+```
+
+The committed `example.invalid` hostname and email are rejected. Issuance does
+not retry automatically, avoiding an ACME rate-limit loop. On success Certbot
+signals nginx through a shared marker; nginx renders the TLS configuration,
+runs `nginx -t`, and reloads only after validation.
+
+The long-running Certbot service checks renewal twice daily. Successful renewal
+uses the same validated reload path. A failed renewal exits nonzero and retains
+the current certificate. Monitor Certbot health and certificate expiry outside
+the container; alerts and host scheduling are deployment/host-hardening work.
+
+## Health And Exposure Checks
+
+After startup verify, under production authority:
+
+- All required services are healthy and `backend-init` exited zero.
+- Port 80 redirects to the canonical hostname after TLS bootstrap.
+- Public `/admin` is the Next staff console; public `/static/` is denied.
+- Unmatched `/api/` paths return 404.
+- `/api/catalog/models/` reaches Django and forged forwarding headers are
+  overwritten by nginx.
+- Websocket upgrades work and SSE events stream without proxy buffering.
+- No host listener exists for 3000, 8000, 8001, 5432, or 6379.
+- Nginx/Next do not belong to the PostgreSQL or Redis networks.
+- Logs omit query strings, Authorization, cookies, Referer, bodies, and secrets.
+- Nginx PID 1 is `0:10001` with exactly `NET_BIND_SERVICE`, `SETGID`, and
+  `SETUID`; the identity-transition capabilities exist solely to drop every
+  request worker to `10002:10001` with zero effective capabilities. Workers can
+  write only the dedicated temp tmpfs paths.
+- The backend socket, certificate files, and consumed reload marker demonstrate
+  shared-GID access without `DAC_OVERRIDE` or `CHOWN`; the master's `SETUID` and
+  `SETGID` are not used to bypass their group-only modes.
+
+`scripts/validate_docker_deployment.sh` performs the corresponding synthetic
+local checks and a disposable restore rehearsal without contacting ACME or an
+AI provider.
+
+## Updates And Namespace Coupling
+
+Nginx owns the network namespace used by frontend. A certificate/configuration
+reload is safe, but recreating nginx alone can strand frontend in the old
+namespace. Never use nginx-only `--force-recreate`, `up --no-deps nginx`, or an
+equivalent replacement.
+
+Before every update, create and verify a backup. Change `APP_VERSION` to the new
+reviewed commit, build all affected images, and recreate nginx and frontend
+together whenever either image or their Compose/network configuration changes:
+
+```bash
+docker compose --env-file .env.docker --profile tls --profile ops build
+docker compose --env-file .env.docker up -d --force-recreate nginx frontend
+docker compose --env-file .env.docker up -d
+docker compose --env-file .env.docker ps
+```
+
+Verify both containers share one network namespace and repeat route/exposure
+checks. Compose `restart` does not restart dependants and is not a substitute
+for paired recreation.
+
+## Backup And Restore Rehearsal
+
+Create a custom-format logical backup with a safe unique basename:
+
+```bash
+docker compose --env-file .env.docker --profile ops run --rm \
+  db-tools backup backup-YYYYMMDDTHHMMSSZ.dump
+docker compose --env-file .env.docker --profile ops run --rm \
+  db-tools verify backup-YYYYMMDDTHHMMSSZ.dump
+```
+
+The tool rejects paths, symlinks, existing destinations, unsafe names, and
+unverified archives. Dumps use `--no-owner --no-acl`, are written atomically,
+and end mode `0600` in the named backup volume.
+
+Treat dumps as sensitive. Retain a verified backup before each deployment,
+seven daily copies, and four weekly copies. Export each to approved encrypted
+off-host storage. The local backup volume is not an adequate sole copy.
+
+Restore is deliberately limited to an explicitly disposable, empty database on
+a host name different from the source. Run the repository validation script for
+the routine rehearsal. A real recovery must create a new PostgreSQL data volume,
+restore and validate there, stop application writes, then change
+`POSTGRES_DATA_VOLUME`; never overwrite the source volume or run an older
+PostgreSQL major against a newer data directory.
+
+## Rollback
+
+Retain the previous Compose source, exact images, and pre-update backup. For a
+code-only rollback, restore prior image selectors only after confirming schema
+compatibility. If schema/data is incompatible, restore the verified dump into a
+new volume and validate it before switching the configured volume name. Never
+blindly run old code against a partially migrated database.
+
+Do not keep systemd or host nginx running as a parallel deployment. Re-enabling
+a superseded owner is a separate rollback decision requiring host authority and
+database compatibility evidence.
 
 ## Private Django Admin
 
-Django contrib admin is available only through TLS on `127.0.0.1:8443`. From an authorized workstation, create an SSH local forward from local port 8443 to VPS `127.0.0.1:8443`, and temporarily resolve `YOUR_DOMAIN` to local loopback on that workstation. Browse to `https://YOUR_DOMAIN:8443/admin/` so TLS, secure cookies, Host, and CSRF all retain the canonical hostname and private port. Remove the temporary hostname mapping and close the tunnel when finished. Do not expose 8443 publicly or replace Django's existing authentication and CSRF controls.
+Create an SSH local forward from workstation port 8443 to VPS
+`127.0.0.1:8443`. Temporarily resolve the production hostname to local loopback
+on that workstation, then browse to:
 
-## Catalog Operation Reminder
+```text
+https://YOUR_DOMAIN:8443/admin/
+```
 
-The optional OpenRouter catalog refresh remains a separately authorized production schedule, not part of deployment:
+Using the canonical hostname preserves TLS, secure cookies, Host validation,
+and CSRF. Close the tunnel and remove the temporary mapping afterward. Never
+publish host port 8443 on a non-loopback address.
+
+## Monitoring And Deferred Host Work
+
+Monitor service health/restarts, certificate expiry and renewal, PostgreSQL
+backup success, restore rehearsals, disk/inode capacity, Docker storage growth,
+and application errors. Host firewall, SSH hardening, Docker daemon access,
+patching, disk encryption, external alerts, resource sizing, and off-host
+backup credentials require a separate R5 host audit.
+
+The optional OpenRouter catalog refresh remains separately authorized and is
+not installed by Compose:
 
 - Name: `libretiles-openrouter-catalog-refresh`
 - Cadence: daily at 03:17 UTC
-- Command: `PROJECT_ROOT/backend/.venv/bin/python manage.py sync_openrouter_models` under a non-overlapping platform lock
+- Command: `python manage.py sync_openrouter_models` under a non-overlapping lock
 
-Do not install that schedule through these scripts. Review [the architecture guide](architecture.md) for catalog rollout and rollback details.
+Provider probes, games, catalog synchronization, real ACME calls, and all live
+host changes remain outside repository-only implementation and validation.

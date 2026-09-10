@@ -184,12 +184,14 @@ Rollback:
 
 ## Deployment
 
-- Frontend: self-hosted VPS; Next.js standalone `frontend/.next/standalone/server.js` under systemd on `127.0.0.1:3000` behind nginx (env names from `frontend/.env.local.example`; see [the VPS deployment guide](docs/vps_deployment_guide.md)).
-- Backend: VPS / PaaS with PostgreSQL in production; see [docs/architecture.md](docs/architecture.md) and [README.md](README.md).
+- Production: the root `docker-compose.yml` is the sole deployment topology on a self-hosted VPS. Nginx is the only host-published service; Next standalone is forced to `127.0.0.1:3000` in nginx's shared network namespace, and Daphne uses a group-restricted Unix socket.
+- **Nginx master/worker exception**: the nginx container runs its PID-1 master as UID 0 with the existing shared service GID 10001. The master retains exactly `NET_BIND_SERVICE` to bind low ports (80/443/444) plus `SETGID` and `SETUID` solely so nginx can drop request workers to the unprivileged `edge` identity (UID 10002, GID 10001); request workers retain zero effective capabilities. Group permissions provide access to the backend socket, certificates, and Certbot reload marker. This is a deliberate narrow exception: container UID 0 is not host root authority. The master is constrained by a read-only filesystem, `no-new-privileges`, all other capabilities dropped, a small master-only runtime tmpfs, dedicated worker-owned temp tmpfs mounts, no host filesystem or Docker socket, and nginx-only public exposure. Private keys remain group-readable only, never world-readable. All other production services (frontend, backend, postgres, redis, certbot) remain non-root and capability-free.
+- **Production file secrets**: local Compose preserves host source metadata. The three production sources are root-owned, dedicated secret-reader GID 10004, mode `0440`, under a root-owned mode-`0700` directory. Only postgres, backend-init, backend, frontend, and db-tools receive supplemental GID 10004, and each still mounts only its required secret. Nginx, Redis, and Certbot receive neither that group nor any application secret mount. Provisioning and rotation remain an R5 host responsibility; see `deploy/secrets/README.md`.
+- TLS, PostgreSQL/Redis isolation, secrets, backup/restore, paired nginx/frontend recreation, and private Django admin are documented in [the VPS deployment guide](docs/vps_deployment_guide.md). Root `scripts/` remain local-development tools only.
 
 ## Security
 
-- Never commit `.env`, `backend/.env`, or `frontend/.env.local`.
+- Never commit `.env`, `.env.docker`, `backend/.env`, `frontend/.env.local`, or files under `deploy/secrets/` without the `.example` suffix.
 - Template files `.env.example` / `.env.local.example` are fine to commit.
 - A pre-existing `.env` overrides new code defaults, is read once at process start, and must be reviewed after any settings change. New variables such as `DJANGO_THROTTLE_CACHE_URL` inherit that hazard.
 

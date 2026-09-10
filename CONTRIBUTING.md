@@ -9,7 +9,7 @@ Thank you for your interest in contributing! This guide covers everything you ne
 - Python 3.12 recommended with [Poetry](https://python-poetry.org/) 2.3.2 or newer. The backend manifest permits Python >=3.11,<3.14; the documented VPS setup uses 3.12.
 - Node.js 24 recommended with npm; the documented tooling also supports Node 20.19+ or 22.12+.
 - Git
-- (Optional) Docker + Docker Compose for PostgreSQL/Redis
+- (Optional) Docker + Docker Compose for the explicitly invoked local PostgreSQL/Redis file
 
 ### First-time setup
 
@@ -56,7 +56,13 @@ cd frontend && npm run dev
 
 ### Production deployment
 
-Production uses Next.js standalone and Daphne/Django under systemd behind nginx on a self-hosted VPS, with PostgreSQL and Redis. Follow the [VPS deployment guide](docs/vps_deployment_guide.md) for production setup; the commands above start development servers.
+Production uses the root Docker Compose topology on a self-hosted VPS. Nginx is the only host-published service, Next standalone retains its loopback bind in nginx's network namespace, and Daphne uses a Unix socket. Follow the [VPS deployment guide](docs/vps_deployment_guide.md); the commands above and root scripts remain development-only.
+
+Production file secrets are an R5 host responsibility: sources must be
+`0:10004/0440` in the private root-owned secrets directory. Compose services
+receive the dedicated reader group only when they also mount a required secret;
+see [deploy/secrets/README.md](deploy/secrets/README.md). Do not reproduce this
+production ownership model in `docker-compose.dev.yml`.
 
 ## Code Quality
 

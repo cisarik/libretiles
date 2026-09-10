@@ -130,15 +130,24 @@ Production requires shared Redis throttling, with `REDIS_URL` as the fallback.
 
 ### Production (VPS)
 
-Production uses a self-hosted VPS with nginx terminating TLS and systemd managing
-Next.js standalone and Daphne/Django. Next.js runs
-`frontend/.next/standalone/server.js` on `127.0.0.1:3000`; Daphne listens on
-`127.0.0.1:8000`. PostgreSQL and Redis remain private.
+Production uses the root Docker Compose topology on a self-hosted VPS. Nginx is
+the only host-published service. Next.js standalone runs on
+`127.0.0.1:3000` in nginx's shared network namespace; Daphne uses a
+group-restricted Unix socket. Nginx's PID-1 master is the sole container-root
+exception: UID 0 with shared GID 10001 and exactly `NET_BIND_SERVICE`, `SETGID`,
+and `SETUID`. The latter two exist solely so nginx can drop request workers to
+`10002:10001`; those workers retain zero effective capabilities. PostgreSQL and
+Redis remain capability-free on private networks. File-backed secret sources
+use root ownership, dedicated reader GID 10004, and mode `0440` in a private
+host directory; only a service with both GID 10004 and an explicit per-secret
+mount can read one.
 
 Follow the [VPS deployment guide](docs/vps_deployment_guide.md) for prerequisites,
 environment settings, rendered templates, deployment, verification, and recovery.
-It also explains the private Django Admin listener and the Next-to-Django callback
-at `127.0.0.1:8001`. Production uses `DJANGO_DEBUG=false`.
+It also explains Certbot bootstrap/renewal, file-mounted secrets, backup/restore,
+paired nginx/frontend recreation, the private Django Admin listener, and the
+Next-to-Django callback at `127.0.0.1:8001`. Production uses
+`DJANGO_DEBUG=false`.
 
 The development supervisor and commands above are for local development.
 Production host changes and the optional catalog-refresh schedule require separate

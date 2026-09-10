@@ -1,0 +1,16 @@
+*
+!README.md
+!backend/
+backend/.env
+backend/.venv/
+backend/__pycache__/
+backend/**/__pycache__/
+backend/.pytest_cache/
+backend/.mypy_cache/
+backend/.ruff_cache/
+backend/db.sqlite3
+backend/staticfiles/
+backend/media/
+backend/tests/
+backend/scripts/
+backend/var/

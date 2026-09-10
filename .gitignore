@@ -71,6 +71,14 @@ coverage/
 
 # ---- Docker ----
 docker-compose.override.yml
+.env.docker
+deploy/secrets/django-secret-key
+deploy/secrets/postgres-password
+deploy/secrets/frontend-credentials.json
+deploy/secrets/.django-secret-key.*
+deploy/secrets/.postgres-password.*
+deploy/secrets/.frontend-credentials.json.*
+docker-backups/
 
 # ---- Diagnostic runner artifacts (logs, reports) ----
 backend/var/

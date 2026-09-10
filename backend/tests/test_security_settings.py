@@ -231,6 +231,50 @@ def test_secret_key_sufficiently_strong_loads() -> None:
     assert payload["status"] == "ok"
 
 
+def test_secret_key_file_loads_without_exposing_value(tmp_path: Path) -> None:
+    secret_file = tmp_path / "django-secret"
+    secret_file.write_text(_SYNTHETIC_TEST_SECRET_KEY + "\n", encoding="utf-8")
+    secret_file.chmod(0o600)
+    payload = _run_settings_probe(
+        secret=None,
+        debug="false",
+        allowed_hosts="example.test",
+        throttle_cache_url=_SYNTHETIC_REDIS_URL,
+        extra_env={"DJANGO_SECRET_KEY_FILE": str(secret_file)},
+    )
+    assert payload["status"] == "ok"
+    assert _SYNTHETIC_TEST_SECRET_KEY not in json.dumps(payload)
+
+
+def test_secret_key_direct_and_file_conflict_fails(tmp_path: Path) -> None:
+    secret_file = tmp_path / "django-secret"
+    secret_file.write_text(_SYNTHETIC_TEST_SECRET_KEY, encoding="utf-8")
+    secret_file.chmod(0o600)
+    payload = _run_settings_probe(
+        secret=_SYNTHETIC_TEST_SECRET_KEY,
+        extra_env={"DJANGO_SECRET_KEY_FILE": str(secret_file)},
+    )
+    assert payload["status"] == "improperly_configured"
+    assert "exactly one" in payload.get("message", "")
+
+
+def test_secret_key_file_rejects_relative_and_writable_paths(tmp_path: Path) -> None:
+    relative = _run_settings_probe(
+        secret=None,
+        extra_env={"DJANGO_SECRET_KEY_FILE": "relative-secret"},
+    )
+    assert relative["status"] == "improperly_configured"
+
+    secret_file = tmp_path / "django-secret"
+    secret_file.write_text(_SYNTHETIC_TEST_SECRET_KEY, encoding="utf-8")
+    secret_file.chmod(0o622)
+    writable = _run_settings_probe(
+        secret=None,
+        extra_env={"DJANGO_SECRET_KEY_FILE": str(secret_file)},
+    )
+    assert writable["status"] == "improperly_configured"
+
+
 def test_debug_absent_defaults_false() -> None:
     payload = _run_settings_probe(
         secret=_SYNTHETIC_TEST_SECRET_KEY,
@@ -653,7 +697,44 @@ def test_debug_true_keeps_locmem_cache_without_redis() -> None:
 
 
 def _postgresql_probe_env() -> dict[str, str]:
-    return {"DB_ENGINE": "postgresql"}
+    return {
+        "DB_ENGINE": "postgresql",
+        "DB_NAME": "libretiles_test",
+        "DB_USER": "libretiles_test",
+        "DB_PASSWORD": "synthetic-test-database-password",
+        "DB_HOST": "127.0.0.1",
+    }
+
+
+def test_settings_probe_postgresql_missing_password_fails() -> None:
+    postgres_env = _postgresql_probe_env()
+    del postgres_env["DB_PASSWORD"]
+    payload = _run_settings_probe(
+        secret=_SYNTHETIC_TEST_SECRET_KEY,
+        debug="false",
+        allowed_hosts="example.test",
+        throttle_cache_url=_SYNTHETIC_REDIS_URL,
+        extra_env=postgres_env,
+    )
+    assert payload["status"] == "improperly_configured"
+    assert "DB_PASSWORD" in payload.get("message", "")
+
+
+def test_settings_probe_postgresql_password_file_loads(tmp_path: Path) -> None:
+    password_file = tmp_path / "postgres-password"
+    password_file.write_text("synthetic-test-database-password\n", encoding="utf-8")
+    password_file.chmod(0o600)
+    postgres_env = _postgresql_probe_env()
+    del postgres_env["DB_PASSWORD"]
+    postgres_env["DB_PASSWORD_FILE"] = str(password_file)
+    payload = _run_settings_probe(
+        secret=_SYNTHETIC_TEST_SECRET_KEY,
+        debug="false",
+        allowed_hosts="example.test",
+        throttle_cache_url=_SYNTHETIC_REDIS_URL,
+        extra_env=postgres_env,
+    )
+    assert payload["status"] == "ok"
 
 
 def test_settings_probe_postgresql_persistence_keys() -> None:
