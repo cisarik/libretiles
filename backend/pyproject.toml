@@ -1,6 +1,7 @@
 [tool.poetry]
 name = "libretiles-backend"
 version = "0.1.0"
+license = "MIT"
 description = "Libre Tiles — Django backend for a web-based Libre Tiles game with AI opponents via OpenRouter free rivals."
 authors = ["Libre Tiles Contributors"]
 readme = "../README.md"
