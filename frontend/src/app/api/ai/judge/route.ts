@@ -8,7 +8,7 @@
  *
  * Validation pipeline:
  *   Tier 1: Local Collins 2019 dictionary (279,496 words, O(1) lookup) — Django
- *   Tier 2: Online dictionary API (optional) — Django
+ *   Tier 2: Online dictionary API (planned, not implemented) — Django
  *   Tier 3: AI Judge (this route) — newest-first free-rival fallback queue
  *
  * Fallback contract:
