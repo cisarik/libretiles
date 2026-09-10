@@ -997,6 +997,15 @@ def test_slovak_rejection_fixture_matches_the_pinned_baseline() -> None:
     ]
 
 
+# Persist-path payload re-pin: commit e2c2549 introduced capture_move_inspection,
+# so words_formed now carries a canonical `inspection` block. Drift of that block
+# is a deliberate re-pin of PERSISTED_INSPECTION_SHA256 and the expected literal
+# below, never a silent edit to keep the test green.
+PERSISTED_INSPECTION_SHA256 = (
+    "f7556c7ffc818dde3c69af7f756d8997823b046dadb04ff4482a41d148e3d000"
+)
+
+
 class PersistedPayloadParityTests(TestCase):
     """The human persist path: verdict loop, rack, bag and persisted payload."""
 
@@ -1046,14 +1055,76 @@ class PersistedPayloadParityTests(TestCase):
         move = session.moves.get()
         assert move.kind == "place"
         assert move.points == 4
+        assert move.words_formed[0]["word"] == "AT"
+        assert move.words_formed[0]["score"] == 4
+        assert move.words_formed[0]["multiplier"] == 2
+        assert move.words_formed[0]["coords"] == [
+            {"row": 7, "col": 6},
+            {"row": 7, "col": 7},
+        ]
+        # Canonical payload captured from submit_move_for_user at baseline
+        # 996d9c78 (post e2c2549 capture_move_inspection). Re-pin deliberately
+        # if the inspection serializer changes; do not silently edit this literal.
         assert move.words_formed == [
             {
                 "word": "AT",
                 "score": 4,
                 "multiplier": 2,
                 "coords": [{"row": 7, "col": 6}, {"row": 7, "col": 7}],
+                "inspection": {
+                    "version": 1,
+                    "physical_cells": [
+                        {
+                            "row": 7,
+                            "col": 6,
+                            "token": "A",
+                            "blank_as": None,
+                            "base_points": 1,
+                            "is_new": True,
+                            "premium": None,
+                            "premium_applied": False,
+                            "letter_multiplier": 1,
+                        },
+                        {
+                            "row": 7,
+                            "col": 7,
+                            "token": "T",
+                            "blank_as": None,
+                            "base_points": 1,
+                            "is_new": True,
+                            "premium": "DW",
+                            "premium_applied": True,
+                            "letter_multiplier": 1,
+                        },
+                    ],
+                    "base_points": 2,
+                    "letter_bonus_points": 0,
+                    "word_multiplier": 2,
+                    "word_total": 4,
+                    "authority": {
+                        "name": "WordAuthority",
+                        "valid": True,
+                        "physical_tile_count": 2,
+                        "route": "main",
+                        "main_lexicon_id": "collins2019",
+                        "two_tile_lexicon_id": None,
+                        "lexicon_source": "Collins Scrabble Words (2019)",
+                    },
+                },
             }
         ]
+        import json
+
+        assert (
+            hashlib.sha256(
+                json.dumps(
+                    move.words_formed[0]["inspection"],
+                    sort_keys=True,
+                    ensure_ascii=True,
+                ).encode()
+            ).hexdigest()
+            == PERSISTED_INSPECTION_SHA256
+        )
 
     def test_human_persisted_move_rejects_an_invalid_word_through_the_authority(
         self,
