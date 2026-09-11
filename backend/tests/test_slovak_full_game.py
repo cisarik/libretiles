@@ -32,6 +32,7 @@ from gamecore.selfplay import (
     POLICY_WITNESS, _tile_counter, _fingerprint as fingerprint,
     _rack_points as rack_points,
 )
+from tests.opt_in import requires_simulation
 
 _VARIANT = load_variant("slovak")
 _INDEX = load_prefix_index(_VARIANT.dictionary_path)
@@ -293,6 +294,8 @@ def test_apply_final_scoring_uses_slovak_tile_points_for_leftover_rack() -> None
     assert english_player.score == 100 - _ENGLISH_LEFTOVER_POINTS
 
 
+@pytest.mark.slow
+@requires_simulation
 def test_slovak_full_game_terminates_with_variant_scoring() -> None:
     started = perf_counter()
     result = _simulate(0)
@@ -307,6 +310,8 @@ def test_slovak_full_game_terminates_with_variant_scoring() -> None:
     assert result.plies >= 1
 
 
+@pytest.mark.slow
+@requires_simulation
 def test_node_bound_slovak_regression_tuple() -> None:
     """New candidate baseline under node bounds, separate from extraction-equivalence evidence."""
     result = _simulate(0, node_bound=True)

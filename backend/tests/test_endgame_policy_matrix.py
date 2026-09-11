@@ -63,6 +63,7 @@ from gamecore.selfplay import (
     POLICY_IDS, POLICY_RANKED_BEST, POLICY_RANKED_RACK, RARE_BONUS, SCORE_LOSS_THRESHOLD,
     _choose, _unplayed_rare, _on_board_rare,
 )
+from tests.opt_in import requires_simulation
 
 VARIANT_SLUGS = ("slovak", "english")
 DEFAULT_SEEDS = (0,)
@@ -416,6 +417,8 @@ def _requested_fields(seeds: Sequence[int]) -> dict[str, str | int]:
     }
 
 
+@pytest.mark.slow
+@requires_simulation
 def test_policy_matrix_default_run_reports_all_three_policies() -> None:
     started = perf_counter()
     samples = _matrix(DEFAULT_SEEDS)
@@ -434,6 +437,8 @@ def test_policy_matrix_default_run_reports_all_three_policies() -> None:
     assert len(samples) == len(VARIANT_SLUGS) * len(POLICY_IDS) * len(DEFAULT_SEEDS)
 
 
+@pytest.mark.slow
+@requires_simulation
 def test_node_bound_matrix_regression_tuples() -> None:
     """New candidate baselines under node bounds, separate from extraction-equivalence evidence."""
     samples = [
@@ -454,6 +459,8 @@ def test_node_bound_matrix_regression_tuples() -> None:
     ]
 
 
+@pytest.mark.slow
+@requires_simulation
 def test_late_game_matrix_terminates_and_is_deterministic() -> None:
     """Strategic late-game cohort beside the pinned legacy tuples."""
     samples = [
@@ -478,6 +485,8 @@ def test_late_game_matrix_terminates_and_is_deterministic() -> None:
     assert repeat.end_reason == samples[0].end_reason
 
 
+@pytest.mark.slow
+@requires_simulation
 def test_slovak_endgame_metrics_are_deterministic_for_a_fixed_seed() -> None:
     first = _run_sample("slovak", POLICY_WITNESS, 0)
     second = _run_sample("slovak", POLICY_WITNESS, 0)
@@ -521,6 +530,8 @@ def test_english_control_matrix_has_no_ascii_only_predicate() -> None:
     assert _RARE_TILES["english"] == frozenset()
 
 
+@pytest.mark.slow
+@requires_simulation
 def test_every_game_terminates_with_an_allowed_end_reason() -> None:
     samples = _matrix(DEFAULT_SEEDS)
     allowed = {reason.name for reason in ALLOWED_END_REASONS}
@@ -530,6 +541,8 @@ def test_every_game_terminates_with_an_allowed_end_reason() -> None:
         assert sample.plies <= MAX_PLIES
 
 
+@pytest.mark.slow
+@requires_simulation
 def test_two_letter_policy_holds_for_every_played_move_in_every_policy() -> None:
     classifier_source = inspect.getsource(classify_complete_formed_words)
     assert ".find(" not in classifier_source
@@ -550,6 +563,8 @@ def test_two_letter_policy_holds_for_every_played_move_in_every_policy() -> None
         assert rejected == ()
 
 
+@pytest.mark.slow
+@requires_simulation
 def test_tile_conservation_holds_for_every_policy() -> None:
     samples = _matrix(DEFAULT_SEEDS)
     for sample in samples:
@@ -565,6 +580,8 @@ def test_tile_conservation_holds_for_every_policy() -> None:
             assert sample.rare_unplayed == 0
 
 
+@pytest.mark.slow
+@requires_simulation
 def test_policy_comparison_report_matches_v1_conventions(tmp_path: Path) -> None:
     samples = _matrix(DEFAULT_SEEDS)
     report = build_policy_comparison_report(

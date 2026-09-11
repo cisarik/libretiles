@@ -60,6 +60,11 @@ poetry run mypy config game gamecore accounts catalog
 poetry run pytest
 ```
 
+Default pytest deselects ``slow`` engine self-play, diagnostic search matrices, and
+long acceptance harnesses. Re-enable with ``LIBRETILES_RUN_SIMULATION=1`` (or the
+matching ``LIBRETILES_RUN_BENCHMARKS`` / ``LIBRETILES_RUN_*_ACCEPTANCE`` env var).
+Do not comment those tests out.
+
 From `frontend/`:
 
 ```bash

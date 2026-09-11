@@ -57,6 +57,7 @@ from gamecore.board import Board
 from gamecore.legality import REASON_INVALID_WORD, evaluate_scoring_move
 from gamecore.types import Placement, WordFound
 from gamecore.variant_store import load_two_tile_words, load_variant
+from tests.opt_in import requires_simulation
 
 _OSAMENIU = "OSAMENIU"
 _OSAMENIU_SCORE = 74
@@ -165,6 +166,8 @@ def _assert_engine_report_v1(payload: object) -> dict[str, Any]:
     return payload
 
 
+@pytest.mark.slow
+@requires_simulation
 def test_engine_cli_writes_v1_json_for_named_fixture() -> None:
     stdout = StringIO()
     stderr = StringIO()
@@ -194,6 +197,8 @@ def test_engine_cli_writes_v1_json_for_named_fixture() -> None:
     assert set(schema["required"]) == _SCHEMA_REQUIRED
 
 
+@pytest.mark.slow
+@requires_simulation
 def test_seeded_engine_probe_is_repeatable() -> None:
     def run_once() -> dict[str, Any]:
         stdout = StringIO()

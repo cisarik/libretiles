@@ -34,6 +34,7 @@ from gamecore.move_search import (
 )
 from gamecore.tile_tracking import late_game_context_for_game
 from gamecore.tiles import get_tile_distribution, get_tile_points
+from tests.opt_in import requires_simulation
 
 _SMALL = PositionSetConfig(
     variant_slug="english",
@@ -57,6 +58,8 @@ def small_pair() -> tuple[dict[str, object], dict[str, object]]:
     return first, second
 
 
+@pytest.mark.slow
+@requires_simulation
 def test_f3_same_config_is_byte_identical(
     small_pair: tuple[dict[str, object], dict[str, object]],
 ) -> None:
@@ -68,6 +71,8 @@ def test_f3_same_config_is_byte_identical(
     assert _selfplay_config(_SMALL, 300).board_defense_enabled is False
 
 
+@pytest.mark.slow
+@requires_simulation
 def test_f4_structured_cells_and_conservation(
     small_pair: tuple[dict[str, object], dict[str, object]],
 ) -> None:
@@ -123,6 +128,8 @@ def test_f4_structured_cells_and_conservation(
         assert snapshot["phase"] == classify_phase(occupied, pool_size)
 
 
+@pytest.mark.slow
+@requires_simulation
 def test_f5_node_bound_capture_is_stable(
     small_pair: tuple[dict[str, object], dict[str, object]],
 ) -> None:
@@ -148,6 +155,8 @@ def test_f5_node_bound_capture_is_stable(
         assert isinstance(baseline["ranked_search_complete"], bool)
 
 
+@pytest.mark.slow
+@requires_simulation
 def test_f8_snapshot_is_self_contained(
     small_pair: tuple[dict[str, object], dict[str, object]],
 ) -> None:
@@ -169,6 +178,8 @@ def test_f8_snapshot_is_self_contained(
         assert "bag_rng_state" in snapshot
 
 
+@pytest.mark.slow
+@requires_simulation
 def test_f9_mount_equivalence_from_json_roundtrip(
     small_pair: tuple[dict[str, object], dict[str, object]],
 ) -> None:
@@ -238,6 +249,8 @@ def test_f10_conditions_digest_includes_asset_content_hashes() -> None:
     assert restored == baseline
 
 
+@pytest.mark.slow
+@requires_simulation
 def test_f6_cli_writes_asset_and_rejects_bad_input(tmp_path: Path) -> None:
     stdout = StringIO()
     target = tmp_path / "english-sample.json"

@@ -25,6 +25,7 @@ from gamecore.selfplay import (
     POLICY_WITNESS, _tile_counter, _fingerprint as fingerprint,
     _rack_points as rack_points,
 )
+from tests.opt_in import requires_simulation
 
 _DICTIONARY_PATH = Path(get_assets_path()) / "dicts" / "collins2019.txt"
 _INDEX = load_prefix_index(_DICTIONARY_PATH)
@@ -219,17 +220,22 @@ def _run_seeds(seeds: range, *, label: str) -> list[SimulationResult]:
     return results
 
 
+@pytest.mark.slow
+@requires_simulation
 def test_ci_twenty_seed_complete_games() -> None:
     results = _run_seeds(range(20), label="ci-20")
     assert len(results) == 20
 
 
 @pytest.mark.slow
+@requires_simulation
 def test_acceptance_one_hundred_seed_complete_games() -> None:
     results = _run_seeds(range(100), label="acceptance-100")
     assert len(results) == 100
 
 
+@pytest.mark.slow
+@requires_simulation
 def test_node_bound_english_regression_tuple(monkeypatch: pytest.MonkeyPatch) -> None:
     """New candidate baseline under node bounds, separate from extraction-equivalence evidence."""
     samples = []

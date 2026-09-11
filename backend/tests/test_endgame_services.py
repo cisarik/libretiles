@@ -16,6 +16,7 @@ from functools import lru_cache
 from typing import Any
 from unittest.mock import patch
 
+import pytest
 from django.test import TestCase
 from rest_framework.test import APIClient
 
@@ -34,6 +35,9 @@ from gamecore.selfplay import (
     SelfPlayContext,
     simulate_engine_game,
 )
+from tests.opt_in import requires_simulation
+
+pytestmark = [pytest.mark.slow, requires_simulation]
 
 _PARITY_RANKED_MAX_NODES = 20_000
 _PARITY_MAX_ELAPSED_MS = 10_000_000

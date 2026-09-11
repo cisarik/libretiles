@@ -75,7 +75,7 @@ addopts = "-q"
 asyncio_mode = "auto"
 markers = [
     "internet: tests requiring live API calls",
-    "slow: deterministic extended acceptance tests",
+    "slow: engine self-play, diagnostic search matrices, and extended acceptance; deselected unless a LIBRETILES_RUN_* opt-in env var is 1",
     "postgres: tests requiring a running PostgreSQL database",
 ]
 

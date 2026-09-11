@@ -205,9 +205,9 @@ def test_p4_entry_count_equals_the_real_surviving_word_count(
 
     ⛔ NOT SAMPLED. This reads the whole lexicon — four files, about 154 MB in total,
     measured at roughly 10 s of wall clock for the shipped set. It is deliberately NOT
-    marked ``slow``: the project's ``slow`` marker is not excluded by default today, but a
-    future ``-m "not slow"`` would silently stop verifying the one number in the manifest
-    that a reader is most likely to trust.
+    marked ``slow``: default pytest deselects ``slow`` (engine self-play) unless a
+    ``LIBRETILES_RUN_*`` opt-in is set. Marking this slow would silently stop verifying
+    the one number in the manifest that a reader is most likely to trust.
     """
     declared = _provenance(variant).entry_count
     assert isinstance(declared, int), f"{variant.slug}: entry_count is not an integer"

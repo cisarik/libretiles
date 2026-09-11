@@ -75,7 +75,7 @@ cd backend
 poetry run ruff check .              # Linter
 poetry run ruff format --check .     # Formatter
 poetry run mypy config game gamecore accounts catalog    # Type checker (strict mode)
-poetry run pytest                    # Tests
+poetry run pytest                    # Tests (engine self-play deactivated by default)
 ```
 
 **Style rules:**

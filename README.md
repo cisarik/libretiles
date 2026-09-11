@@ -175,8 +175,9 @@ Deeper reading: [AI agent workflow](docs/architecture.md#ai-agent-workflow), [pr
 Backend, from `backend/`:
 
 ```bash
-poetry run pytest                                        # All tests
+poetry run pytest                                        # Default suite (engine self-play off)
 poetry run pytest tests/test_gamecore.py                 # Pure game logic (fast, offline)
+LIBRETILES_RUN_SIMULATION=1 poetry run pytest -m slow    # Opt-in self-play / diagnostic search
 poetry run ruff check .                                  # Lint
 poetry run mypy config game gamecore accounts catalog    # Type check
 ```
